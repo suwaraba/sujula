@@ -22,6 +22,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.access.prepost.PostAuthorize;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -41,21 +42,21 @@ public class VendorServiceImpl implements VendorService {
 
     @Override
     @Transactional(readOnly = true)
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #id == authentication.principal.id)")
+    @PostAuthorize("hasRole('ADMIN') or returnObject.userId == authentication.principal.id")
     public VendorResponse findById(Long id) {
         return VendorResponse.from(findVendorById(id));
     }
 
     @Override
     @Transactional(readOnly = true)
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #userId == authentication.principal.id)")
+    @PostAuthorize("hasRole('ADMIN') or returnObject.userId == authentication.principal.id")
     public VendorResponse findByUserId(Long userId) {
         return VendorResponse.from(findVendorByUserId(userId));
     }
 
     @Override
     @Transactional(readOnly = true)
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #userId == authentication.principal.id)")
+    @PostAuthorize("hasRole('ADMIN') or returnObject.userId == authentication.principal.id")
     public VendorResponse findByStoreSlug(String slug) {
         return vendorRepository.findByStoreSlug(slug)
                 .map(VendorResponse::from)
@@ -64,14 +65,14 @@ public class VendorServiceImpl implements VendorService {
 
     @Override
     @Transactional(readOnly = true)
-    @PreAuthorize("hasRole('ADMIN')")
+    @PostAuthorize("hasRole('ADMIN')")
     public Page<VendorResponse> findAll(Pageable pageable) {
         return vendorRepository.findAll(pageable).map(VendorResponse::from);
     }
 
     @Override
     @Transactional(readOnly = true)
-    @PreAuthorize("hasRole('ADMIN')")
+    @PostAuthorize("hasRole('ADMIN')")
     public Page<VendorResponse> findByStatus(PartnerStatus status, Pageable pageable) {
         return vendorRepository.findByStatus(status, pageable).map(VendorResponse::from);
     }
@@ -132,7 +133,7 @@ public class VendorServiceImpl implements VendorService {
 
     @Override
     @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #userId == authentication.principal.id)")
+    @PostAuthorize("hasRole('ADMIN') or returnObject.userId == authentication.principal.id")
     public VendorResponse updateProfile(Long userId, VendorUpdateProfileRequest request, String language) {
         if (request == null) {
             throw new BadRequestException("Vendor profile update request is required");
@@ -197,7 +198,7 @@ public class VendorServiceImpl implements VendorService {
 
     @Override
     @Transactional
-    @PreAuthorize("hasRole('ADMIN')")
+    @PostAuthorize("hasRole('ADMIN')")
     public VendorResponse updateStatus(Long vendorId, PartnerStatus newStatus, String reason) {
         Vendor vendor = findVendorById(vendorId);
         PartnerStatus oldStatus = vendor.getStatus();
