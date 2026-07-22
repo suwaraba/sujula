@@ -61,7 +61,7 @@ public class EmailServiceImpl implements EmailService {
                 "Hi " + fullName + ",\n\n"
                 + "We received a request to reset your password. Click the link below:\n\n"
                 + link + "\n\n"
-                + "This link expires in 1 hour.\n\n"
+                + "This link expires in 24 hour.\n\n"
                 + "If you did not request a password reset, please ignore this email.\n\n"
                 + "The Sujula Team");
     }

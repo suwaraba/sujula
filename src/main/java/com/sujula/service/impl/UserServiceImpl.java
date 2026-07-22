@@ -278,7 +278,7 @@ public class UserServiceImpl implements UserService {
             }
 
             user.setPasswordResetToken(generateSecureToken());
-            user.setPasswordResetTokenExpiry(LocalDateTime.now().plusHours(1));
+            user.setPasswordResetTokenExpiry(LocalDateTime.now().plusHours(24));
             User saved = userRepository.save(user);
             emailService.sendPasswordResetEmail(saved.getEmail(), saved.getFullName(), saved.getPasswordResetToken());
         });
