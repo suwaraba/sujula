@@ -1,7 +1,7 @@
 package com.sujula.repository.delivery;
 
-import com.sujula.model.Driver;
-import com.sujula.model.enums.DriverStatus;
+import com.sujula.model.constant.DriverStatus;
+import com.sujula.model.delivery.Driver;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
