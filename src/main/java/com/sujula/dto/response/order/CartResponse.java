@@ -1,107 +1,39 @@
 package com.sujula.dto.response.order;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.sujula.model.order.Cart;
-import com.sujula.model.order.CartItem;
+import com.sujula.model.products.Product;
+import com.sujula.model.products.ProductImage;
 import lombok.Builder;
 import lombok.Data;
 
-import java.math.BigDecimal;
-import java.util.List;
+import java.util.Comparator;
 
 @Data
 @Builder
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class CartResponse {
 
-    private Long cartId;
-    private String sessionId;
-    private Boolean guest;
-    private List<CartItemResponse> items;
-    private String couponCode;
+    private Long id;
+    private String name;
+    private String slug;
+    private String imageUrl;
 
-    private BigDecimal subtotal;
-    private BigDecimal discount;
-    private BigDecimal total;
-    private int itemCount;
-
-    private String currency;
-
-    public static CartResponse from(
-            Cart cart,
-            BigDecimal subtotal,
-            BigDecimal discount,
-            BigDecimal total,
-            String currency
-    ) {
-
-        List<CartItemResponse> itemResponses = cart.getItems()
-                .stream()
-                .map(CartItemResponse::from)
-                .toList();
-
-        int itemCount = cart.getItems()
-                .stream()
-                .mapToInt(CartItem::getQuantity)
-                .sum();
-
+    public static CartResponse from(Product product) {
         return CartResponse.builder()
-                .cartId(cart.getId())
-                .sessionId(cart.getSessionId())
-                .guest(cart.getUser() == null)
-                .items(itemResponses)
-                .couponCode(cart.getCoupon() != null ? cart.getCoupon().getCode() : null)
-                .subtotal(subtotal)
-                .discount(discount)
-                .total(total)
-                .itemCount(itemCount)
-                .currency(currency)
+                .id(product.getId())
+                .name(product.getName())
+                .slug(product.getSlug())
+                .imageUrl(primaryImageUrl(product))
                 .build();
     }
 
-    @Data
-    @Builder
-    @JsonInclude(JsonInclude.Include.NON_NULL)
-    public static class CartItemResponse {
-
-        private Long itemId;
-        private Long productId;
-        private String productName;
-        private String productSlug;
-        private String imageUrl;
-        private Long variantId;
-        private String variantSku;
-        private Integer quantity;
-        private BigDecimal unitPrice;
-        private BigDecimal totalPrice;
-        private Integer availableStock;
-        private String priceCurrency;
-
-        public static CartItemResponse from(CartItem item) {
-
-            return CartItemResponse.builder()
-                    .itemId(item.getId())
-                    .productId(item.getProduct().getId())
-                    .productName(item.getProduct().getName())
-                    .productSlug(item.getProduct().getSlug())
-
-
-                    .variantId(item.getVariant() != null ? item.getVariant().getId() : null)
-                    .variantSku(item.getVariant() != null ? item.getVariant().getSku() : null)
-
-                    .quantity(item.getQuantity())
-                    .unitPrice(item.getUnitPrice())
-                    .totalPrice(item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
-
-                    // change according to your Product/ProductVariant
-                    .availableStock(
-                            item.getVariant() != null
-                                    ? item.getVariant().getStockQuantity()
-                                    : item.getProduct().getStockQuantity()
-                    )
-
-
-                    .build();
-        }
+    private static String primaryImageUrl(Product product) {
+        return product.getImages().stream()
+                .filter(ProductImage::isDefault)
+                .findFirst()
+                .or(() -> product.getImages().stream()
+                        .min(Comparator.comparing(ProductImage::getSortOrder, Comparator.nullsLast(Comparator.naturalOrder()))))
+                .map(ProductImage::getImageUrl)
+                .orElse(null);
     }
 }

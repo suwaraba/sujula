@@ -141,8 +141,6 @@ public class VendorServiceImpl implements VendorService {
 
         Vendor vendor = requireApproved(userId);
 
-        // Only validate the address when the request is actually changing location data.
-        // Partial updates (e.g. store name only) must not trigger a geo lookup with null coordinates.
         boolean updatingLocation = request.getLatitude() != null
                 || request.getLongitude() != null
                 || request.getAddressCity() != null
@@ -238,11 +236,7 @@ public class VendorServiceImpl implements VendorService {
         return vendor;
     }
 
-    /**
-     * Reverse-geocodes the given coordinates and verifies that the resolved
-     * city and country match what the caller declared. Throws BadRequestException
-     * if the lookup fails or either value doesn't match.
-     */
+
     private void validateAddressMatchesLocation(Double latitude, Double longitude,
                                                 String declaredCity, String declaredCountryCode,
                                                 String language) {
