@@ -1,15 +1,18 @@
 package com.sujula.service.impl;
 
-
+import com.sujula.model.R2Properties;
 import com.sujula.service.StorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
-import java.io.IOException;
-import java.util.Set;
-import java.util.UUID;
+import java.time.Duration;
 
 @Slf4j
 @Service
@@ -17,34 +20,38 @@ import java.util.UUID;
 public class StorageServiceImpl implements StorageService {
 
     private final S3Client r2Client;
+    private final S3Presigner r2Presigner;
     private final R2Properties r2Properties;
 
     @Override
-    public String upload(MultipartFile file, String folder, String filename) {
-        if (file == null || file.isEmpty()) {
-            throw new BadRequestException("File must not be empty");
-        }
+    public String presignUpload(String folder, String filename, String contentType, Duration ttl) {
+        String key = buildKey(folder, filename);
 
-        String key = folder + "/" + filename;
+        PutObjectRequest putRequest = PutObjectRequest.builder()
+                .bucket(r2Properties.getBucketName())
+                .key(key)
+                .contentType(contentType)
+                .build();
 
-        try {
-            PutObjectRequest request = PutObjectRequest.builder()
-                    .bucket(r2Properties.getBucketName())
-                    .key(key)
-                    .contentType(file.getContentType())
-                    .contentLength(file.getSize())
-                    .build();
+        PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
+                .signatureDuration(ttl)
+                .putObjectRequest(putRequest)
+                .build();
 
-            r2Client.putObject(request, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
-        } catch (IOException e) {
-            throw new BadRequestException("Failed to read uploaded file: " + e.getMessage());
-        } catch (Exception e) {
-            log.error("R2 upload failed for key={}: {}", key, e.getMessage(), e);
-            throw new BadRequestException("Storage upload failed: " + e.getMessage());
-        }
+        PresignedPutObjectRequest presigned = r2Presigner.presignPutObject(presignRequest);
+        return presigned.url().toString();
+    }
 
-        // Return the public CDN URL
-        return r2Properties.getPublicUrl().stripTrailing() + "/" + key;
+    @Override
+    public String publicUrl(String folder, String filename) {
+        return r2Properties.getPublicUrl().stripTrailing() + "/" + buildKey(folder, filename);
+    }
+
+    @Override
+    public boolean isManagedUrl(String url, String folder) {
+        if (url == null) return false;
+        String prefix = r2Properties.getPublicUrl().stripTrailing() + "/" + folder + "/";
+        return url.startsWith(prefix);
     }
 
     @Override
@@ -70,75 +77,7 @@ public class StorageServiceImpl implements StorageService {
         }
     }
 
-    private static final Set<String> ALLOWED_TYPES = Set.of(
-            "image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"
-    );
-
-    private final S3Client r2Client;
-    private final R2Properties r2Properties;
-
-    @Override
-    public String upload(MultipartFile file, String folder) {
-        validateContentType(file);
-
-        String key = buildKey(folder, file.getOriginalFilename());
-
-        try {
-            PutObjectRequest request = PutObjectRequest.builder()
-                    .bucket(r2Properties.getBucketName())
-                    .key(key)
-                    .contentType(file.getContentType())
-                    .contentLength(file.getSize())
-                    .build();
-
-            r2Client.putObject(request, RequestBody.fromBytes(file.getBytes()));
-        } catch (IOException e) {
-            throw new BadRequestException("Failed to read uploaded file: " + e.getMessage());
-        }
-
-        return publicUrl(key);
-    }
-
-
-    @Override
-    public void delete(String urlOrKey) {
-        String key = extractKey(urlOrKey);
-
-        r2Client.deleteObject(DeleteObjectRequest.builder()
-                .bucket(r2Properties.getBucketName())
-                .key(key)
-                .build());
-    }
-
-    @Override
-    public String publicUrl(String key) {
-        String base = r2Properties.getPublicUrl();
-        if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
-        return base + "/" + key;
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    private String buildKey(String folder, String originalFilename) {
-        String ext = "";
-        if (originalFilename != null && originalFilename.contains(".")) {
-            ext = originalFilename.substring(originalFilename.lastIndexOf('.'));
-        }
-        return folder.replaceAll("/$", "") + "/" + UUID.randomUUID() + ext;
-    }
-
-    private String extractKey(String urlOrKey) {
-        String base = r2Properties.getPublicUrl();
-        if (!base.endsWith("/")) base = base + "/";
-        return urlOrKey.startsWith(base) ? urlOrKey.substring(base.length()) : urlOrKey;
-    }
-
-    private void validateContentType(MultipartFile file) {
-        String contentType = file.getContentType();
-        if (contentType == null || !ALLOWED_TYPES.contains(contentType)) {
-            throw new BadRequestException(
-                    "Unsupported file type: " + contentType + ". Allowed: " + ALLOWED_TYPES
-            );
-        }
+    private String buildKey(String folder, String filename) {
+        return folder + "/" + filename;
     }
 }

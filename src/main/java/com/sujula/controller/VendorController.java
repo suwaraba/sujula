@@ -4,9 +4,12 @@ package com.sujula.controller;
 import com.sujula.dto.request.VendorApplicationRequest;
 import com.sujula.dto.request.VendorUpdateProfileRequest;
 import com.sujula.dto.response.PagedResponse;
+import com.sujula.dto.response.PresignedUploadResponse;
 import com.sujula.dto.response.VendorResponse;
+import com.sujula.exceptions.BadRequestException;
 import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.user.User;
+import com.sujula.service.StorageService;
 import com.sujula.service.VendorService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.PageRequest;
@@ -24,16 +27,27 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Duration;
+import java.util.Set;
+import java.util.UUID;
+
 @RestController
 @RequestMapping("/api/vendors")
 public class VendorController {
 
     private final VendorService vendorService;
 
-    public VendorController(VendorService vendorService) {
-        this.vendorService = vendorService;
-    }
+    private final StorageService storageService;
 
+
+    private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of("image/jpeg", "image/png", "image/webp");
+    private static final Duration PRESIGN_TTL = Duration.ofMinutes(10);
+
+
+    public VendorController(VendorService vendorService, StorageService storageService) {
+        this.vendorService = vendorService;
+        this.storageService = storageService;
+    }
     @PostMapping("/apply")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<VendorResponse> apply(
@@ -63,16 +77,16 @@ public class VendorController {
         return ResponseEntity.ok(vendorService.updateProfile(userId, request, language));
     }
 
-    @PutMapping("/user/{userId}/logo")
+    @PostMapping("/user/{userId}/logo/presign")
     @PreAuthorize("hasRole('ADMIN') or @userSecurity.isSelf(authentication, #userId)")
-                                                     public ResponseEntity<VendorResponse> updateLogo(@PathVariable Long userId, @RequestParam String logoUrl) {
-        return ResponseEntity.ok(vendorService.updateLogo(userId, logoUrl));
+    public ResponseEntity<PresignedUploadResponse> presignLogoUpload(@PathVariable Long userId, @RequestParam String contentType) {
+        return ResponseEntity.ok(presignImageUpload("logo-" + userId, contentType));
     }
 
-    @PutMapping("/user/{userId}/banner")
+    @PostMapping("/user/{userId}/banner/presign")
     @PreAuthorize("hasRole('ADMIN') or @userSecurity.isSelf(authentication, #userId)")
-    public ResponseEntity<VendorResponse> updateBanner(@PathVariable Long userId, @RequestParam String bannerUrl) {
-        return ResponseEntity.ok(vendorService.updateBanner(userId, bannerUrl));
+    public ResponseEntity<PresignedUploadResponse> presignBannerUpload(@PathVariable Long userId, @RequestParam String contentType) {
+        return ResponseEntity.ok(presignImageUpload("banner-" + userId, contentType));
     }
 
     @GetMapping("/{id}")
@@ -117,5 +131,29 @@ public class VendorController {
             return user.getId();
         }
         throw new AccessDeniedException("Authentication is required");
+    }
+
+    private PresignedUploadResponse presignImageUpload(String namePrefix, String contentType) {
+        if (!ALLOWED_IMAGE_TYPES.contains(contentType)) {
+            throw new BadRequestException("Unsupported content type: " + contentType + ". Allowed: " + ALLOWED_IMAGE_TYPES);
+        }
+
+        String filename = namePrefix + "-" + UUID.randomUUID() + extensionFor(contentType);
+        String uploadUrl = storageService.presignUpload("vendors", filename, contentType, PRESIGN_TTL);
+        String publicUrl = storageService.publicUrl("vendors", filename);
+
+        return PresignedUploadResponse.builder()
+                .uploadUrl(uploadUrl)
+                .publicUrl(publicUrl)
+                .build();
+    }
+
+    private static String extensionFor(String contentType) {
+        return switch (contentType) {
+            case "image/jpeg" -> ".jpg";
+            case "image/png" -> ".png";
+            case "image/webp" -> ".webp";
+            default -> "";
+        };
     }
 }

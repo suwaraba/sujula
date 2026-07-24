@@ -6,6 +6,7 @@ import com.sujula.repository.product.CategoryRepository;
 import com.sujula.repository.product.ProductImageRepository;
 import com.sujula.repository.product.ProductRepository;
 import com.sujula.service.ProductService;
+import com.sujula.service.StorageService;
 import com.sujula.service.VendorService;
 import lombok.RequiredArgsConstructor;
 import org.hibernate.Hibernate;
@@ -30,8 +31,8 @@ public class ProductServiceImpl implements ProductService {
     private final ProductImageRepository productImageRepository;
     private final CategoryRepository categoryRepository;
     private final BrandRepository brandRepository;
-    private final VendorService          vendorService;
-    private final StorageService        storageService;
+    private final VendorService vendorService;
+    private final StorageService storageService;
 
     // ── Read ──────────────────────────────────────────────────────────────────
 
@@ -345,5 +346,5 @@ public class ProductServiceImpl implements ProductService {
     }
 
 
- 
+
 }
