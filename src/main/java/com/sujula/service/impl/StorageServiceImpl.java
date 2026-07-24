@@ -17,7 +17,7 @@ import java.io.IOException;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class R2StorageServiceImpl implements StorageService {
+public class StorageServiceImpl implements StorageService {
 
     private final S3Client r2Client;
     private final R2Properties r2Properties;

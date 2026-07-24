@@ -1,18 +1,12 @@
 package com.sujula.service.impl;
 
-import com.sujula.dto.request.CreateProductRequest;
-import com.sujula.exception.BadRequestException;
-import com.sujula.exception.ResourceNotFoundException;
-import com.sujula.exception.UnauthorizedException;
-import com.sujula.model.enums.DeliveryScope;
+
+import com.sujula.repository.product.BrandRepository;
 import com.sujula.repository.product.CategoryRepository;
 import com.sujula.repository.product.ProductImageRepository;
 import com.sujula.repository.product.ProductRepository;
 import com.sujula.service.ProductService;
-import com.sujula.service.StorageService;
 import com.sujula.service.VendorService;
-import com.sujula.util.ImageValidator;
-import com.sujula.util.SlugUtils;
 import lombok.RequiredArgsConstructor;
 import org.hibernate.Hibernate;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -35,10 +29,9 @@ public class ProductServiceImpl implements ProductService {
     private final ProductRepository productRepository;
     private final ProductImageRepository productImageRepository;
     private final CategoryRepository categoryRepository;
-    private final BrandRepository        brandRepository;
-    private final TaxClassRepository     taxClassRepository;
+    private final BrandRepository brandRepository;
     private final VendorService          vendorService;
-    private final StorageService         storageService;
+    private final StorageService        storageService;
 
     // ── Read ──────────────────────────────────────────────────────────────────
 

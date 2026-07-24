@@ -1,14 +1,8 @@
 package com.sujula.service;
 
-import com.sujula.config.R2Properties;
-import com.sujula.exception.BadRequestException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.IOException;
 import java.util.Set;
@@ -16,7 +10,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
-public class R2StorageService {
+public class StorageService {
 
     private static final Set<String> ALLOWED_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"
@@ -25,13 +19,6 @@ public class R2StorageService {
     private final S3Client r2Client;
     private final R2Properties r2Properties;
 
-    /**
-     * Uploads a file to R2 and returns its public URL.
-     *
-     * @param file   the multipart file from the request
-     * @param folder logical folder prefix, e.g. "products", "avatars", "banners"
-     * @return full public URL of the uploaded object
-     */
     public String upload(MultipartFile file, String folder) {
         validateContentType(file);
 
