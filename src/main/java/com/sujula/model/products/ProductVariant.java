@@ -10,14 +10,9 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * A specific purchasable combination of option values for a product
- * (e.g. T-shirt in Size=Large + Color=Red, SKU "TSH-L-RED").
- * Shopizer equivalent: ProductInstance / ProductVariant.
- */
+
 @Entity
 @Table(name = "product_variants")
-@Getter @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
@@ -27,42 +22,54 @@ public class ProductVariant {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @Column(nullable = false, length = 60)
+    private String sku;
+
+    @Column(nullable = false)
+    private Integer stock;
+
+    @Column(name = "price_override", precision = 12, scale = 2)
+    private BigDecimal priceOverride;
+
+    @Column(nullable = false)
+    private boolean active = true;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
-    @Column(nullable = false, unique = true)
-    private String sku;
+    @ManyToMany
+    @JoinTable(name = "variant_option_values",
+            joinColumns = @JoinColumn(name = "variant_id"),
+            inverseJoinColumns = @JoinColumn(name = "option_value_id"),
+            uniqueConstraints = @UniqueConstraint(
+                    name = "uk_variant_value_once",
+                    columnNames = {"variant_id", "option_value_id"}))
+    private List<ProductOptionValue> selectedValues = new ArrayList<>();
 
-    // null = fall back to product.price
-    @Column(precision = 10, scale = 2)
-    private BigDecimal price;
+    /** Base + surcharges, unless overridden. */
+    @Transient
+    public BigDecimal getEffectivePrice() {
+        if (priceOverride != null) return priceOverride;
+        BigDecimal total = product.getPrice();
+        for (ProductOptionValue v : selectedValues) {
+            total = total.add(BigDecimal.valueOf(v.getExtraPrice()));
+        }
+        return total;
+    }
 
-    @Column(precision = 10, scale = 2)
-    private BigDecimal compareAtPrice;
-
-    @Column(nullable = false)
-    @Builder.Default
-    private Integer stockQuantity = 0;
-
-    @Column(nullable = false)
-    @Builder.Default
-    private boolean available = true;
-
-    // Override image for this variant (e.g. red variant shows red photo)
-    private String imageUrl;
-
-    @Builder.Default
-    private Integer sortOrder = 0;
-
-    @OneToMany(mappedBy = "variant", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @Builder.Default
-    private List<ProductVariantValue> values = new ArrayList<>();
-
-    @CreationTimestamp
-    @Column(updatable = false)
-    private LocalDateTime createdAt;
-
-    @UpdateTimestamp
-    private LocalDateTime updatedAt;
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public String getSku() { return sku; }
+    public void setSku(String sku) { this.sku = sku; }
+    public Integer getStock() { return stock; }
+    public void setStock(Integer stock) { this.stock = stock; }
+    public BigDecimal getPriceOverride() { return priceOverride; }
+    public void setPriceOverride(BigDecimal priceOverride) { this.priceOverride = priceOverride; }
+    public boolean isActive() { return active; }
+    public void setActive(boolean active) { this.active = active; }
+    public Product getProduct() { return product; }
+    public void setProduct(Product product) { this.product = product; }
+    public List<ProductOptionValue> getSelectedValues() { return selectedValues; }
+    public void setSelectedValues(List<ProductOptionValue> selectedValues) { this.selectedValues = selectedValues; }
 }

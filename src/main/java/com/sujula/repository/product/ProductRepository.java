@@ -24,7 +24,9 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 //    Page<Product> findByActiveTrue(Pageable pageable);
 //    long countByActiveTrue();
 //    Page<Product> findByFeaturedTrueAndActiveTrue(Pageable pageable);
-//    boolean existsBySlug(String slug);
+    boolean existsBySlug(String slug);
+
+    boolean existsByVendorIdAndNameIgnoreCase(Long vendorId, String productName);
 //
 //    // ── Admin queries — eagerly fetch vendor/category to avoid LazyInitializationException ──
 //

@@ -31,6 +31,11 @@ public class ProductOption {
     private String code;          // slug-like: "size", "color"
 
 
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "product_id", nullable = false)
+    private Product product;
+
+
     @Builder.Default
     private Integer sortOrder = 0;
 

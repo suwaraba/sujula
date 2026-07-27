@@ -117,6 +117,9 @@ public class Vendor {
     @Builder.Default
     private Integer totalSold = 0;
 
+    @Builder.Default
+    private Boolean acive;
+
     // --- Legal ---
     private String businessRegistrationNumber;
     private String taxNumber;

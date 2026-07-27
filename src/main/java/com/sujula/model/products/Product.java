@@ -67,7 +67,6 @@ public class Product {
     @JoinColumn(name = "brand_id")
     private Brand brand;
 
-
     @Column(nullable = false)
     @Builder.Default
     private boolean active = true;
@@ -114,6 +113,10 @@ public class Product {
     @Builder.Default
     private List<ProductVariant> variants = new ArrayList<>();
 
+    @Builder.Default
+    @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<ProductOption> options = new ArrayList<>();
+
     // Free-form specification attributes (Battery: 5000 mAh, RAM: 16 GB…)
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @Builder.Default
@@ -124,7 +127,7 @@ public class Product {
     private List<Review> reviews = new ArrayList<>();
 
     // ── Inventory management fields ───────────────────────────────────────────
-    private Integer lowStockThreshold;
+    private Integer lowStockThreshold=3;
 
     @Column(nullable = false)
     @Builder.Default

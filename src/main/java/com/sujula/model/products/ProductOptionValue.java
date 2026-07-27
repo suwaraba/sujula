@@ -3,10 +3,7 @@ package com.sujula.model.products;
 import jakarta.persistence.*;
 import lombok.*;
 
-/**
- * A concrete value for a ProductOption (e.g. Size → "Large", Color → "Red").
- * Shopizer equivalent: ProductOptionValue.
- */
+
 @Entity
 @Table(name = "product_option_values",
        uniqueConstraints = @UniqueConstraint(columnNames = {"option_id", "value"}))
@@ -30,9 +27,14 @@ public class ProductOptionValue {
     @Column(nullable = false)
     private String displayValue;   // shown to user: "Large", "Red"
 
+    @Builder.Default
+    private double extraPrice=0;
+
     private String colorHex;       // only for COLOR_SWATCH type: "#FF0000"
     private String imageUrl;       // only for IMAGE_SWATCH type
 
     @Builder.Default
     private Integer sortOrder = 0;
+
+
 }
