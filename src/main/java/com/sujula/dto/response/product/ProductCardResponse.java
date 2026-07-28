@@ -27,7 +27,7 @@ public class ProductCardResponse {
 
     public static ProductCardResponse from(Product product) {
         Vendor vendor = product.getVendor();
-        Integer stockQuantity = product.getStockQuantity();
+        Integer stockQuantity = product.getStock();
 
         return ProductCardResponse.builder()
                 .id(product.getId())

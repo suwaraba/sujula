@@ -79,7 +79,7 @@ public class ProductResponse {
                 .compareAtPrice(product.getCompareAtPrice())
                 .priceCurrency(product.getPriceCurrency())
                 .sku(product.getSku())
-                .stockQuantity(product.getStockQuantity())
+                .stockQuantity(product.getStock())
                 .vendorId(vendor != null ? vendor.getId() : null)
                 .vendorStoreName(vendor != null ? vendor.getStoreName() : null)
                 .vendorStoreSlug(vendor != null ? vendor.getStoreSlug() : null)

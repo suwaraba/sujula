@@ -27,6 +27,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     boolean existsBySlug(String slug);
 
     boolean existsByVendorIdAndNameIgnoreCase(Long vendorId, String productName);
+
+    boolean existsByVendorIdAndNameIgnoreCaseAndIdNot(Long vendorId, String productName, Long productId);
 //
 //    // ── Admin queries — eagerly fetch vendor/category to avoid LazyInitializationException ──
 //

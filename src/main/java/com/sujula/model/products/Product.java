@@ -53,7 +53,7 @@ public class Product {
     // Base stock for variant-less products; variants carry their own stockQuantity
     @Column(nullable = false)
     @Builder.Default
-    private Integer stockQuantity = 0;
+    private Integer stock = 0;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "vendor_id", nullable = false)

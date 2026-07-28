@@ -391,7 +391,7 @@ public class CartServiceImpl implements CartService {
 
                     int stock = (item.getVariant() != null)
                             ? item.getVariant().getStockQuantity()
-                            : item.getProduct().getStockQuantity();
+                            : item.getProduct().getStock();
 
                     String priceCurrency = item.getProduct().getPriceCurrency() != null
                             ? item.getProduct().getPriceCurrency() : "GMD";
