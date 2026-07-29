@@ -13,6 +13,8 @@ import com.sujula.repository.product.ProductImageRepository;
 import com.sujula.repository.product.ProductRepository;
 import com.sujula.repository.product.ProductVariantRepository;
 import com.sujula.repository.user.VendorRepository;
+import com.sujula.service.StorageService;
+import com.sujula.service.VendorService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
@@ -21,26 +23,27 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.text.Normalizer;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Service
 public class ProductCreateUpdateServiceImpl {
 
+    private static final int MAX_IMAGES_PER_PRODUCT = 3;
+
     private final ProductRepository productRepository;
     private final VendorRepository vendorRepository;
     private final BrandRepository brandRepository;
     private final ProductVariantRepository variantRepository;
     private final ProductImageRepository productImageRepository;
+    private final StorageService storageService;
 
 
+
+
+    @PersistenceContext
+    private EntityManager entityManager;
     // =====================================================================
     //  CREATE
     // =====================================================================
@@ -49,13 +52,7 @@ public class ProductCreateUpdateServiceImpl {
     @Transactional
     public ProductResponse create(Long vendorUserId, ProductRequest request) {
         Vendor vendor = requireActiveVendor(vendorUserId);
-        // location
-        if (!request.getLatitude().equals(vendor.getLatitude()) && !request.getLongitude().equals(vendor.getLongitude())) {
-            throw new BadRequestException(
-                    "Location '" + request.getLatitude()+", "+request.getLongitude()
-                            + "' does not match vendor's registered location '"
-                            + vendor.getLatitude() +", "+vendor.getLatitude()+ "'");
-        }
+        validateLocation(request, vendor);
         if (productRepository.existsByVendorIdAndNameIgnoreCase(
                 vendor.getId(), request.getName().trim())) {
             throw new BadRequestException(
@@ -88,18 +85,8 @@ public class ProductCreateUpdateServiceImpl {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Product not found with id " + productId));
 
-        // Ownership: a vendor can only update their own products
-        if (!product.getVendor().getId().equals(vendor.getId())) {
-            throw new BadRequestException("You do not own this product");
-        }
-
-        // location
-        if (!request.getLatitude().equals(vendor.getLatitude()) && !request.getLongitude().equals(vendor.getLongitude())) {
-            throw new BadRequestException(
-                    "Location '" + request.getLatitude()+", "+request.getLongitude()
-                            + "' does not match vendor's registered location '"
-                            + vendor.getLatitude() +", "+vendor.getLatitude()+ "'");
-        }
+        assertOwnership(product, vendor);
+        validateLocation(request, vendor);
 
         // Duplicate-name check must exclude the product itself,
         // otherwise updating without renaming always fails
@@ -128,7 +115,114 @@ public class ProductCreateUpdateServiceImpl {
         return ProductResponse.from(saved);
     }
 
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    public ProductImageResponse addImage(Long vendorUserId, Long productId, String imageUrl,
+                                         String altText, boolean makeDefault) {
+        Vendor vendor = requireActiveVendor(vendorUserId);
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Product not found with id " + productId));
+        assertOwnership(product, vendor);
 
+        if (!storageService.isManagedUrl(imageUrl, "products")) {
+            throw new BadRequestException(
+                    "imageUrl must point to an object already uploaded to the products folder");
+        }
+
+        long existingCount = productImageRepository.countByProductId(productId);
+        if (existingCount >= MAX_IMAGES_PER_PRODUCT) {
+            throw new BadRequestException(
+                    "Maximum of " + MAX_IMAGES_PER_PRODUCT + " images allowed per product");
+        }
+
+        boolean setAsDefault = makeDefault || existingCount == 0;
+        if (setAsDefault) {
+            productImageRepository.clearDefaultsByProductId(productId);
+        }
+
+        ProductImage image = ProductImage.builder()
+                .product(product)
+                .imageUrl(imageUrl)
+                .altText(altText)
+                .sortOrder((int) existingCount)
+                .isDefault(setAsDefault)
+                .build();
+
+        return ProductImageResponse.from(productImageRepository.save(image));
+    }
+
+    /** Reassigns display order: orderedImageIds must list every one of the product's images exactly once. */
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    public List<ProductImageResponse> reorderImages(Long vendorUserId, Long productId,
+                                                    List<Long> orderedImageIds) {
+        Vendor vendor = requireActiveVendor(vendorUserId);
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Product not found with id " + productId));
+        assertOwnership(product, vendor);
+
+        List<ProductImage> images = productImageRepository.findByProductIdOrderBySortOrderAsc(productId);
+        Map<Long, ProductImage> byId = images.stream()
+                .collect(Collectors.toMap(ProductImage::getId, i -> i));
+
+        if (orderedImageIds == null
+                || orderedImageIds.size() != images.size()
+                || !byId.keySet().equals(new HashSet<>(orderedImageIds))) {
+            throw new BadRequestException(
+                    "orderedImageIds must list each of the product's images exactly once");
+        }
+
+        for (int i = 0; i < orderedImageIds.size(); i++) {
+            byId.get(orderedImageIds.get(i)).setSortOrder(i);
+        }
+
+        return productImageRepository.saveAll(images).stream()
+                .sorted(Comparator.comparing(ProductImage::getSortOrder))
+                .map(ProductImageResponse::from)
+                .collect(Collectors.toList());
+    }
+
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    public ProductImageResponse setDefaultImage(Long vendorUserId, Long imageId) {
+        Vendor vendor = requireActiveVendor(vendorUserId);
+        ProductImage image = productImageRepository.findById(imageId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProductImage", imageId));
+        assertOwnership(image.getProduct(), vendor);
+
+        productImageRepository.clearDefaultsByProductId(image.getProduct().getId());
+        image.setDefault(true);
+        return ProductImageResponse.from(productImageRepository.save(image));
+    }
+
+    /** DB record is removed first; the stored object is then deleted outside the transaction boundary. */
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    public void removeImage(Long vendorUserId, Long imageId) {
+        Vendor vendor = requireActiveVendor(vendorUserId);
+        ProductImage image = productImageRepository.findById(imageId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProductImage", imageId));
+        assertOwnership(image.getProduct(), vendor);
+
+        boolean wasDefault = image.isDefault();
+        Long productId = image.getProduct().getId();
+        String url = image.getImageUrl();
+
+        productImageRepository.delete(image);
+
+        if (wasDefault) {
+            List<ProductImage> remaining =
+                    productImageRepository.findByProductIdOrderBySortOrderAsc(productId);
+            if (!remaining.isEmpty()) {
+                remaining.get(0).setDefault(true);
+                productImageRepository.save(remaining.get(0));
+            }
+        }
+
+        storageService.delete(url);
+    }
 
     // =====================================================================
     //  Shared building blocks
@@ -144,7 +238,11 @@ public class ProductCreateUpdateServiceImpl {
         return vendor;
     }
 
-
+    private void assertOwnership(Product product, Vendor vendor) {
+        if (!product.getVendor().getId().equals(vendor.getId())) {
+            throw new BadRequestException("You do not own this product");
+        }
+    }
 
     private Brand requireActiveBrand(Long brandId) {
         Brand brand = brandRepository.findById(brandId)
@@ -164,13 +262,19 @@ public class ProductCreateUpdateServiceImpl {
                 ? request.getDescription().trim() : null);
         product.setPrice(request.getPrice());
         product.setStock(request.getStock());
-        // location
-        if (!request.getLatitude().equals(vendor.getLatitude()) && !request.getLongitude().equals(vendor.getLongitude())) {
+        product.setLatitude(vendor.getLatitude());   // canonical, never the raw input
+        product.setLongitude(vendor.getLongitude());
+    }
+
+    /** Request location must match the vendor's registered location exactly. */
+    private void validateLocation(ProductRequest request, Vendor vendor) {
+        if (!Objects.equals(request.getLatitude(), vendor.getLatitude())
+                || !Objects.equals(request.getLongitude(), vendor.getLongitude())) {
             throw new BadRequestException(
-                    "Location '" + request.getLatitude()+", "+request.getLongitude()
+                    "Location '" + request.getLatitude() + ", " + request.getLongitude()
                             + "' does not match vendor's registered location '"
-                            + vendor.getLatitude() +", "+vendor.getLatitude()+ "'");
-        }; // canonical, never the raw input
+                            + vendor.getLatitude() + ", " + vendor.getLongitude() + "'");
+        }
     }
 
     /** Full-replace semantics: the request is the complete new attribute list. */
@@ -261,6 +365,13 @@ public class ProductCreateUpdateServiceImpl {
             return;
         }
 
+        Set<String> requestedSkus = request.getVariants().stream()
+                .map(v -> v.getSku().trim().toUpperCase(Locale.ROOT))
+                .collect(Collectors.toSet());
+        Set<String> existingSkus = (existingProductId == null)
+                ? variantRepository.findExistingSkus(requestedSkus)
+                : variantRepository.findExistingSkusExcludingProduct(requestedSkus, existingProductId);
+
         Set<String> seenSkus = new HashSet<>();
         Set<String> seenCombos = new HashSet<>();
 
@@ -270,10 +381,7 @@ public class ProductCreateUpdateServiceImpl {
             if (!seenSkus.add(sku)) {
                 throw new BadRequestException("Duplicate SKU in request: '" + sku + "'");
             }
-            boolean skuTaken = (existingProductId == null)
-                    ? variantRepository.existsBySku(sku)
-                    : variantRepository.existsBySkuAndProductIdNot(sku, existingProductId);
-            if (skuTaken) {
+            if (existingSkus.contains(sku)) {
                 throw new BadRequestException("SKU already exists: '" + sku + "'");
             }
 
@@ -323,9 +431,19 @@ public class ProductCreateUpdateServiceImpl {
             product.getVariants().add(variant);
         }
     }
-
     private List<ProductVariant> generateCartesian(Product product,
                                                    Map<String, ProductOption> optionsByName) {
+        // Check the combination count before materializing it, so a product with many
+        // options/values fails fast instead of building a huge list first.
+        long total = 1;
+        for (ProductOption option : optionsByName.values()) {
+            total *= option.getValues().size();
+            if (total > 200) {
+                throw new BadRequestException("Too many auto-generated variants ("
+                        + total + "+); send explicit variants instead");
+            }
+        }
+
         List<List<ProductOptionValue>> combos = new ArrayList<>();
         combos.add(new ArrayList<>());
         for (ProductOption option : optionsByName.values()) {
@@ -339,10 +457,7 @@ public class ProductCreateUpdateServiceImpl {
             }
             combos = next;
         }
-        if (combos.size() > 200) {
-            throw new BadRequestException("Too many auto-generated variants ("
-                    + combos.size() + "); send explicit variants instead");
-        }
+
         List<ProductVariant> variants = new ArrayList<>();
         for (List<ProductOptionValue> combo : combos) {
             ProductVariant v = new ProductVariant();
@@ -378,21 +493,4 @@ public class ProductCreateUpdateServiceImpl {
                 .replaceAll("\\p{M}", "");
         return n.replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
     }
-
-
-    @Override
-    @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
-    public ProductImageResponse setDefaultImage(Long imageId, Long vendorUserId) {
-        Vendor vendor = vendorService.requireApproved(vendorUserId);
-        ProductImage image = productImageRepository.findById(imageId)
-                .orElseThrow(() -> new ResourceNotFoundException("ProductImage", imageId));
-        assertOwnership(image.getProduct(), vendor);
-
-        productImageRepository.clearDefaultsByProductId(image.getProduct().getId());
-        image.setDefault(true);
-        return ProductImageResponse.from(productImageRepository.save(image));
-    }
-
-
 }

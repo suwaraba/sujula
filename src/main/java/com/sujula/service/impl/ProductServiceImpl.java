@@ -21,6 +21,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -29,7 +30,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ProductServiceImpl implements ProductService {
 
-    private static final int MAX_IMAGES_PER_PRODUCT = 10;
+    private static final int MAX_IMAGES_PER_PRODUCT = 3;
 
     private final ProductRepository productRepository;
     private final ProductImageRepository productImageRepository;
@@ -42,7 +43,14 @@ public class ProductServiceImpl implements ProductService {
 
 
 
+
     // ── Read ──────────────────────────────────────────────────────────────────
+
+
+
+
+
+
 
     @Override
     @Transactional(readOnly = true)
@@ -50,188 +58,16 @@ public class ProductServiceImpl implements ProductService {
         return ProductResponse.from(findProductEntityById(id));
     }
 
-//    @Override
-//    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
-//    @Transactional
-//    public ProductResponse create(Long vendorUserId, ProductRequest  request) {
-//
-//        // ---------- 1. Vendor must exist and be active ----------
-//        Vendor vendor = vendorRepository.findByUserId(vendorUserId)
-//                .orElseThrow(() -> new ResourceNotFoundException(
-//                        "Vendor not found for user id " + vendorUserId));
-//
-//        if (!vendor.getAcive()) {
-//            throw new BadRequestException("Vendor account is not active; cannot create products");
-//        }
-//
-//        // ---------- 2. Location must match vendor's registered location ----------
-//        if (!request.getLatitude().equals(vendor.getLatitude()) && !request.getLongitude().equals(vendor.getLongitude())) {
-//            throw new BadRequestException(
-//                    "Location '" + request.getLatitude()+", "+request.getLongitude()
-//                            + "' does not match vendor's registered location '"
-//                            + vendor.getLatitude() +", "+vendor.getLatitude()+ "'");
-//        }
-//
-//        // ---------- 3. No duplicate product name for the same vendor ----------
-//        if (productRepository.existsByVendorIdAndNameIgnoreCase(
-//                vendor.getId(), request.getName().trim())) {
-//            throw new BadRequestException(
-//                    "You already have a product named '" + request.getName().trim() + "'");
-//        }
-//
-//        // ---------- 4. Brand must exist and be active ----------
-//        Brand brand = brandRepository.findById(request.getBrandId())
-//                .orElseThrow(() -> new ResourceNotFoundException(
-//                        "Brand not found with id " + request.getBrandId()));
-//        if (!brand.isActive()) {
-//            throw new BadRequestException("Brand '" + brand.getName() + "' is disabled");
-//        }
-//
-//        // ---------- 5. Build the product ----------
-//        Product product = new Product();
-//        product.setVendor(vendor);
-//        product.setBrand(brand);
-//        product.setName(request.getName().trim());
-//        product.setDescription(request.getDescription() != null
-//                ? request.getDescription().trim() : null);
-//        product.setPrice(request.getPrice());
-//        product.setStock(request.getStock());
-//
-//        // Store the vendor's canonical location, not the raw user input
-//        product.setLongitude(vendor.getLongitude());
-//        product.setLatitude(vendor.getLatitude());
-//
-//        // ---------- 6. Attributes: set them, reject duplicates ----------
-//        if (request.getAttributes() != null && !request.getAttributes().isEmpty()) {
-//            Set<String> seenAttrNames = new HashSet<>();
-//            List<ProductAttribute> attributes = new ArrayList<>();
-//
-//            for (ProductRequest.AttributeRequest attrReq : request.getAttributes()) {
-//                String attrName = attrReq.getName().trim();
-//                if (!seenAttrNames.add(attrName.toLowerCase(Locale.ROOT))) {
-//                    throw new BadRequestException(
-//                            "Duplicate attribute name: '" + attrName + "'");
-//                }
-//                ProductAttribute attr = new ProductAttribute();
-//                attr.setName(attrName);
-//                attr.setValue(attrReq.getValue().trim());
-//                attr.setProduct(product); // back-reference: required for the FK
-//                attributes.add(attr);
-//            }
-//            product.setAttributes(attributes);
-//        }
-//
-//
-//        // ---------- 7. Options: each must have values; no duplicates anywhere ----------
-//        Map<String, ProductOption> optionsByName = new LinkedHashMap<>();
-//        if (request.getOptions() != null && !request.getOptions().isEmpty()) {
-//            List<ProductOption> options = new ArrayList<>();
-//
-//            for (ProductRequest.OptionRequest optReq : request.getOptions()) {
-//                String optName = optReq.getName().trim();
-//                if (optionsByName.containsKey(optName.toLowerCase(Locale.ROOT))) {
-//                    throw new BadRequestException(
-//                            "Duplicate option name: '" + optName + "'");
-//                }
-//
-//                // Defensive re-check (Bean Validation already enforces @NotEmpty,
-//                // but the service must never trust the caller)
-//                if (optReq.getValues() == null || optReq.getValues().isEmpty()) {
-//                    throw new BadRequestException(
-//                            "Option '" + optName + "' must have at least one value");
-//                }
-//
-//                ProductOption option = new ProductOption();
-//                option.setName(optName);
-//                option.setProduct(product);
-//
-//                Set<String> seenValues = new HashSet<>();
-//                List<ProductOptionValue> values = new ArrayList<>();
-//                for (ProductRequest.OptionValueRequest valReq : optReq.getValues()) {
-//                    String val = valReq.getValue().trim();
-//                    if (val.isEmpty()) {
-//                        throw new BadRequestException(
-//                                "Option '" + optName + "' contains an empty value");
-//                    }
-//                    if (!seenValues.add(val.toLowerCase(Locale.ROOT))) {
-//                        throw new BadRequestException(
-//                                "Option '" + optName + "' has duplicate value: '" + val + "'");
-//                    }
-//                    ProductOptionValue optionValue = new ProductOptionValue();
-//                    optionValue.setValue(val);
-//                    optionValue.setExtraPrice(valReq.getExtraPrice()); // may be null → treated as 0
-//                    optionValue.setOption(option); // back-reference
-//                    values.add(optionValue);
-//                }
-//                option.setValues(values);
-//                optionsByName.put(optName.toLowerCase(Locale.ROOT), option);
-//                options.add(option);
-//            }
-//            product.setOptions(options);
-//        }
-//
-//        // ---------- 8. Variants: exactly one value per option, unique combos, unique SKUs ----------
-//        buildVariants(product, request, optionsByName);
-//
-//        // ---------- 9. Persist (cascades save attributes, options, values, variants) ----------
-//        Product saved = productRepository.save(product);
-//        return ProductResponse.from(saved);
-//    }
+    @Override
+    public ProductResponse create(Long vendorUserId, ProductRequest request) {
+        return null;
+    }
 
-    /**
-     * Update a product. Verifies ownership and APPROVED status.
-     */
-//    @Override
-//    @Transactional
-//    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
-//    public ProductResponse update(Long vendorUserId, Long productId, ProductRequest request) {
-//        Vendor vendor = requireActiveVendor(vendorUserId);
-//
-//        Product product = productRepository.findById(productId)
-//                .orElseThrow(() -> new ResourceNotFoundException(
-//                        "Product not found with id " + productId));
-//
-//        // Ownership: a vendor can only update their own products
-//        if (!product.getVendor().getId().equals(vendor.getId())) {
-//            throw new BadRequestException("You do not own this product");
-//        }
-//// location
-//        if (!request.getLatitude().equals(vendor.getLatitude()) && !request.getLongitude().equals(vendor.getLongitude())) {
-//            throw new BadRequestException(
-//                    "Location '" + request.getLatitude()+", "+request.getLongitude()
-//                            + "' does not match vendor's registered location '"
-//                            + vendor.getLatitude() +", "+vendor.getLatitude()+ "'");
-//        }
-//
-//        // Duplicate-name check must exclude the product itself,
-//        // otherwise updating without renaming always fails
-//        if (productRepository.existsByVendorIdAndNameIgnoreCaseAndIdNot(
-//                vendor.getId(), request.getName().trim(), productId)) {
-//            throw new BadRequestException(
-//                    "You already have another product named '" + request.getName().trim() + "'");
-//        }
-//
-//        Optional<Brand> brandOpt = brandRepository.findById(request.getBrandId());
-//        if (brandOpt.isEmpty())
-//        Brand brand = brandRepository.findById(request.getBrandId()).orElse(->continue;);
-//
-//        applyBasics(product, request, vendor, brand);
-//        applyAttributes(product, request);
-//
-//        // Variants reference option values through the join table, so they must be
-//        // cleared BEFORE the options they point at, and the deletes must hit the DB
-//        // (flush) before re-inserting rows that may reuse the same SKUs
-//        product.getVariants().clear();
-//        product.getOptions().clear();
-//        entityManager.flush();
-//
-//        Map<String, ProductOption> optionsByName = applyOptions(product, request);
-//        applyVariants(product, request, optionsByName, productId);
-//
-//        Product saved = productRepository.save(product);
-//        return ProductResponse.fromEntity(saved);
-//    }
-//    }
+    @Override
+    public ProductResponse update(Long productId, Long vendorUserId, ProductRequest request) {
+        return null;
+    }
+
 
     /**
      * Soft-delete: marks the product inactive.
@@ -252,13 +88,17 @@ public class ProductServiceImpl implements ProductService {
         // this codebase yet.
     }
 
+    @Override
+    public ProductImage addImage(Long productId, Long vendorUserId, MultipartFile file, String altText, boolean makeDefault) {
+        return null;
+    }
+
     // ── Image management ────────────────────────────────────────────────────
     // The frontend uploads the file straight to object storage via a
     // presigned URL (see StorageService.presignUpload) and calls addImage
     // with the resulting public URL — this server never handles the file
     // bytes, so there's no MultipartFile here.
 
-    @Override
     @Transactional
     @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
     public ProductImageResponse addImage(Long productId, Long vendorUserId, String imageUrl,
@@ -325,93 +165,12 @@ public class ProductServiceImpl implements ProductService {
         storageService.delete(url);
     }
 
-
-
-        Set<String> seenSkus = new HashSet<>();
-        Set<String> seenCombos = new HashSet<>();
-        List<ProductVariant> variants = new ArrayList<>();
-
-        for (ProductRequest.VariantRequest varReq : request.getVariants()) {
-            String sku = varReq.getSku().trim().toUpperCase(Locale.ROOT);
-
-            if (!seenSkus.add(sku)) {
-                throw new BadRequestException("Duplicate SKU in request: '" + sku + "'");
-            }
-            if (variantRepository.existsBySku(sku)) {
-                throw new BadRequestException("SKU already exists: '" + sku + "'");
-            }
-
-            // Resolve selections against the options built above (they have no ids yet,
-            // so matching is by normalized name)
-            Map<String, ProductOptionValue> chosenPerOption = new LinkedHashMap<>();
-            for (ProductRequest.SelectionRequest sel : varReq.getSelections()) {
-                String optKey = sel.getOption().trim().toLowerCase(Locale.ROOT);
-                ProductOption option = optionsByName.get(optKey);
-                if (option == null) {
-                    throw new BadRequestException("Variant '" + sku
-                            + "' references unknown option '" + sel.getOption() + "'");
-                }
-                if (chosenPerOption.containsKey(optKey)) {
-                    throw new BadRequestException("Variant '" + sku
-                            + "' selects option '" + option.getName() + "' more than once");
-                }
-                ProductOptionValue match = option.getValues().stream()
-                        .filter(v -> v.getValue().equalsIgnoreCase(sel.getValue().trim()))
-                        .findFirst()
-                        .orElseThrow(() -> new BadRequestException("Variant '" + sku
-                                + "': value '" + sel.getValue()
-                                + "' does not exist in option '" + option.getName() + "'"));
-                chosenPerOption.put(optKey, match);
-            }
-
-            // Every declared option must be covered — a variant with Storage but
-            // no Color is not a sellable combination
-            for (Map.Entry<String, ProductOption> e : optionsByName.entrySet()) {
-                if (!chosenPerOption.containsKey(e.getKey())) {
-                    throw new BadRequestException("Variant '" + sku
-                            + "' is missing a value for option '" + e.getValue().getName() + "'");
-                }
-            }
-
-            // Combination must be unique across the product (order-independent key)
-            String comboKey = chosenPerOption.entrySet().stream()
-                    .sorted(Map.Entry.comparingByKey())
-                    .map(e -> e.getKey() + "=" + e.getValue().getValue().toLowerCase(Locale.ROOT))
-                    .collect(Collectors.joining("|"));
-            if (!seenCombos.add(comboKey)) {
-                throw new BadRequestException(
-                        "Duplicate variant combination: " + comboKey.replace("|", ", "));
-            }
-
-            ProductVariant variant = new ProductVariant();
-            variant.setSku(sku);
-            variant.setStock(varReq.getStock());
-            variant.setPriceOverride(varReq.getPriceOverride());
-            variant.setProduct(product);
-            variant.setSelectedValues(new ArrayList<>(chosenPerOption.values()));
-            variants.add(variant);
-        }
-        product.setVariants(variants);
+    @Override
+    public ProductImage setDefaultImage(Long imageId, Long vendorUserId) {
+        return null;
     }
-private Vendor requireActiveVendor(Long vendorUserId) {
-    Vendor vendor = vendorRepository.findByUserId(vendorUserId)
-            .orElseThrow(() -> new ResourceNotFoundException(
-                    "Vendor not found for user id " + vendorUserId));
-    if (!vendor.getAcive()) {
-        throw new BadRequestException("Vendor account is not active");
-    }
-    return vendor;
-}
-
-
-
-
 
     // ── Browse / search ──────────────────────────────────────────────────────
-    // Not implemented: ProductRepository's supporting queries are commented out
-    // pending review — several reference column names (e.g. countryCode) that
-    // don't match Product's actual fields. Stubbed so the class compiles; a
-    // separate task from create/update.
 
     @Override
     public Page<ProductCardResponse> findFeaturedProducts(Boolean featured, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {

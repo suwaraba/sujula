@@ -8,8 +8,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Repository
 public interface ProductVariantRepository extends JpaRepository<ProductVariant, Long> {
@@ -23,6 +25,12 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     List<ProductVariant> findByProductIdAndActiveTrue(Long productId);
 
     boolean existsBySkuAndProductIdNot(String sku, Long existingProductId);
+    @Query("SELECT v.sku FROM ProductVariant v WHERE v.sku IN :skus")
+    Set<String> findExistingSkus(@Param("skus") Collection<String> skus);
+
+    @Query("SELECT v.sku FROM ProductVariant v WHERE v.sku IN :skus AND v.product.id <> :productId")
+    Set<String> findExistingSkusExcludingProduct(@Param("skus") Collection<String> skus,
+                                                 @Param("productId") Long productId);
 
 //    List<ProductVariant> findByProductIdAndAvailableTrue(Long productId);
 //    List<ProductVariant> findByProductId(Long productId);
