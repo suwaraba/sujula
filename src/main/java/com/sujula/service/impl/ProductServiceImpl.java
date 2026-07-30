@@ -42,123 +42,7 @@ public class ProductServiceImpl implements ProductService {
     private final ProductVariantRepository variantRepository;
 
 
-    @Override
-    @Transactional(readOnly = true)
-    public ProductResponse findById(Long id) {
-        return ProductResponse.from(findProductEntityById(id));
-    }
 
-    @Override
-    public ProductResponse create(Long vendorUserId, ProductRequest request) {
-        return null;
-    }
-
-    @Override
-    public ProductResponse update(Long productId, Long vendorUserId, ProductRequest request) {
-        return null;
-    }
-
-
-    /**
-     * Soft-delete: marks the product inactive.
-     * Verifies ownership and APPROVED status.
-     */
-    @Override
-    @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
-    public void delete(Long productId, Long vendorUserId) {
-        Vendor vendor = vendorService.requireApproved(vendorUserId);
-        Product product = findProductEntityById(productId);
-        assertOwnership(product, vendor);
-
-        product.setActive(false);
-        productRepository.save(product);
-        // Removing the product's images from object storage is intentionally not
-        // handled here — there is no storage service implementation wired up in
-        // this codebase yet.
-    }
-
-    @Override
-    public ProductImage addImage(Long productId, Long vendorUserId, MultipartFile file, String altText, boolean makeDefault) {
-        return null;
-    }
-
-    // ── Image management ────────────────────────────────────────────────────
-    // The frontend uploads the file straight to object storage via a
-    // presigned URL (see StorageService.presignUpload) and calls addImage
-    // with the resulting public URL — this server never handles the file
-    // bytes, so there's no MultipartFile here.
-
-    @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
-    public ProductImageResponse addImage(Long productId, Long vendorUserId, String imageUrl,
-                                         String altText, boolean makeDefault) {
-        Vendor vendor = vendorService.requireApproved(vendorUserId);
-        Product product = findProductEntityById(productId);
-        assertOwnership(product, vendor);
-
-        if (!storageService.isManagedUrl(imageUrl, "products")) {
-            throw new BadRequestException("imageUrl must point to an object already uploaded to the products folder");
-        }
-
-        long existingCount = productImageRepository.countByProductId(productId);
-        if (existingCount >= MAX_IMAGES_PER_PRODUCT) {
-            throw new BadRequestException(
-                    "Maximum of " + MAX_IMAGES_PER_PRODUCT + " images allowed per product");
-        }
-
-        boolean isFirst = existingCount == 0;
-        boolean setAsDefault = makeDefault || isFirst;
-        if (setAsDefault) {
-            productImageRepository.clearDefaultsByProductId(productId);
-        }
-
-        ProductImage image = ProductImage.builder()
-                .product(product)
-                .imageUrl(imageUrl)
-                .altText(altText)
-                .sortOrder((int) existingCount)
-                .isDefault(setAsDefault)
-                .build();
-
-        return ProductImageResponse.from(productImageRepository.save(image));
-    }
-
-    /**
-     * Delete a product image.
-     * DB record is removed first; the R2 object is then deleted (outside the transaction boundary).
-     */
-    @Override
-    @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
-    public void deleteImage(Long imageId, Long vendorUserId) {
-        Vendor vendor = vendorService.requireApproved(vendorUserId);
-        ProductImage image = productImageRepository.findById(imageId)
-                .orElseThrow(() -> new ResourceNotFoundException("ProductImage", imageId));
-        assertOwnership(image.getProduct(), vendor);
-
-        boolean wasDefault = image.isDefault();
-        Long productId = image.getProduct().getId();
-        String url = image.getImageUrl();
-
-        productImageRepository.delete(image);
-
-        if (wasDefault) {
-            List<ProductImage> remaining =
-                    productImageRepository.findByProductIdOrderBySortOrderAsc(productId);
-            if (!remaining.isEmpty()) {
-                remaining.get(0).setDefault(true);
-                productImageRepository.save(remaining.get(0));
-            }
-        }
-
-        storageService.delete(url);
-    }
-
-    @Override
-    public ProductImage setDefaultImage(Long imageId, Long vendorUserId) {
-        return null;
-    }
 
     // ── Browse / search ──────────────────────────────────────────────────────
     // Every method below ranks results within DEFAULT_RADIUS_KM of (userLat,
@@ -273,5 +157,58 @@ public class ProductServiceImpl implements ProductService {
         if (p.getVendor() != null) Hibernate.initialize(p.getVendor());
         if (p.getCategory() != null) Hibernate.initialize(p.getCategory());
         if (p.getBrand() != null) Hibernate.initialize(p.getBrand());
+    }
+
+    @Override
+    public ProductResponse create(Long vendorUserId, ProductRequest request) {
+        return null;
+    }
+
+    @Override
+    public ProductResponse update(Long productId, Long vendorUserId, ProductRequest request) {
+        return null;
+    }
+    @Override
+    @Transactional(readOnly = true)
+    public ProductResponse findById(Long id) {
+        return ProductResponse.from(findProductEntityById(id));
+    }
+
+
+    @Override
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    public void delete(Long productId, Long vendorUserId) {
+
+    }
+
+    @Override
+    public ProductImage addImage(Long productId, Long vendorUserId, MultipartFile file, String altText, boolean makeDefault) {
+        return null;
+    }
+
+
+
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    public ProductImageResponse addImage(Long productId, Long vendorUserId, String imageUrl,
+                                         String altText, boolean makeDefault) {
+        return null;
+    }
+
+    /**
+     * Delete a product image.
+     * DB record is removed first; the R2 object is then deleted (outside the transaction boundary).
+     */
+    @Override
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    public void deleteImage(Long imageId, Long vendorUserId) {
+
+    }
+
+    @Override
+    public ProductImage setDefaultImage(Long imageId, Long vendorUserId) {
+        return null;
     }
 }
