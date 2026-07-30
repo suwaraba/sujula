@@ -12,12 +12,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 public interface ProductService {
 
-    // ── Read ──────────────────────────────────────────────────────────────────
-    //Page<Product> findByVendor(Long vendorId, Pageable pageable);
-    //Page<Product> findByCategory(Long categoryId, Pageable pageable);
-
-    //Page<Product> search(String query, Pageable pageable);
-
     Page<ProductCardResponse> findFeaturedProducts(Boolean featured, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
 
     Page<ProductCardResponse> findNewArrivalsProducts(String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
@@ -25,6 +19,8 @@ public interface ProductService {
     Page<ProductCardResponse> findBestSellersProducts(String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
 
     Page<ProductCardResponse> findByCategoryProducts(Long categoryId, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
+
+    Page<ProductCardResponse> findSimilarProducts(Long productId, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
 
     Page<ProductCardResponse> searchNearUser(String query, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
 

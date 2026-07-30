@@ -42,16 +42,6 @@ public class ProductServiceImpl implements ProductService {
     private final ProductVariantRepository variantRepository;
 
 
-
-
-    // ── Read ──────────────────────────────────────────────────────────────────
-
-
-
-
-
-
-
     @Override
     @Transactional(readOnly = true)
     public ProductResponse findById(Long id) {
@@ -171,30 +161,81 @@ public class ProductServiceImpl implements ProductService {
     }
 
     // ── Browse / search ──────────────────────────────────────────────────────
+    // Every method below ranks results within DEFAULT_RADIUS_KM of (userLat,
+    // userLng) ahead of everything else, then by promotion status and score
+    // (see ProductRepository.RANK_ORDER) — coordinates are optional; passing
+    // null lat/lng just falls back to promotion + score ordering.
+
+    private static final double DEFAULT_RADIUS_KM = 50.0;
 
     @Override
+    @Transactional(readOnly = true)
     public Page<ProductCardResponse> findFeaturedProducts(Boolean featured, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
-        throw new UnsupportedOperationException("Product browse/search is not implemented yet");
+        return productRepository
+                .findFeaturedProducts(featured, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
+                .map(product -> ProductCardResponse.from(product, distanceKm(product, userLat, userLng)));
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Page<ProductCardResponse> findNewArrivalsProducts(String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
-        throw new UnsupportedOperationException("Product browse/search is not implemented yet");
+        return productRepository
+                .findNewArrivalsProducts(deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
+                .map(product -> ProductCardResponse.from(product, distanceKm(product, userLat, userLng)));
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Page<ProductCardResponse> findBestSellersProducts(String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
-        throw new UnsupportedOperationException("Product browse/search is not implemented yet");
+        return productRepository
+                .findBestSellersProducts(deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
+                .map(product -> ProductCardResponse.from(product, distanceKm(product, userLat, userLng)));
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Page<ProductCardResponse> findByCategoryProducts(Long categoryId, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
-        throw new UnsupportedOperationException("Product browse/search is not implemented yet");
+        return productRepository
+                .findByCategoryProducts(categoryId, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
+                .map(product -> ProductCardResponse.from(product, distanceKm(product, userLat, userLng)));
+    }
+
+    /**
+     * Products similar to {@code productId} — same category, excluding the product itself.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Page<ProductCardResponse> findSimilarProducts(Long productId, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new ResourceNotFoundException("Product", productId));
+        Category category = product.getCategory();
+        if (category == null) {
+            return Page.empty(pageable);
+        }
+        return productRepository
+                .findSimilarProducts(category.getId(), productId, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
+                .map(p -> ProductCardResponse.from(p, distanceKm(p, userLat, userLng)));
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Page<ProductCardResponse> searchNearUser(String query, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
-        throw new UnsupportedOperationException("Product browse/search is not implemented yet");
+        return productRepository
+                .searchNearUser(query, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
+                .map(product -> ProductCardResponse.from(product, distanceKm(product, userLat, userLng)));
+    }
+
+    /** Great-circle distance (km) between the user and the product, or null if either location is unknown. */
+    private static Double distanceKm(Product product, Double userLat, Double userLng) {
+        if (userLat == null || userLng == null || product.getLatitude() == null || product.getLongitude() == null) {
+            return null;
+        }
+        double lat1 = Math.toRadians(userLat);
+        double lat2 = Math.toRadians(product.getLatitude());
+        double deltaLng = Math.toRadians(product.getLongitude() - userLng);
+        double cosCentralAngle = Math.sin(lat1) * Math.sin(lat2)
+                + Math.cos(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
+        return 6371 * Math.acos(Math.min(1, Math.max(-1, cosCentralAngle)));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
