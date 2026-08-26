@@ -12,8 +12,8 @@ public interface CartService {
     CartResponse addItem(Long userId, CartItemRequest request);
     CartResponse updateItem(Long userId, Long cartItemId, CartItemRequest request);
     CartResponse removeItem(Long userId, Long cartItemId);
-    CartResponse applyCoupon(Long userId, ApplyCouponRequest request);
-    CartResponse removeCoupon(Long userId);
+    //CartResponse applyCoupon(Long userId, ApplyCouponRequest request);
+    //CartResponse removeCoupon(Long userId);
     void         clearCart(Long userId);
 
     // ── Guest cart (identified by sessionId) ──────────────────────────────────
@@ -22,7 +22,7 @@ public interface CartService {
     CartResponse addItemGuest(String sessionId, CartItemRequest request);
     CartResponse updateItemGuest(String sessionId, Long cartItemId, CartItemRequest request);
     CartResponse removeItemGuest(String sessionId, Long cartItemId);
-    CartResponse applyCouponGuest(String sessionId, ApplyCouponRequest request);
+    //CartResponse applyCouponGuest(String sessionId, ApplyCouponRequest request);
     CartResponse removeCouponGuest(String sessionId);
 
 

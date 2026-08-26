@@ -5,13 +5,14 @@ import com.sujula.dto.response.order.CartResponse;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.order.Cart;
+import com.sujula.model.order.CartItem;
 import com.sujula.model.products.ProductVariant;
 import com.sujula.model.user.User;
-import com.sujula.repository.UserRepository;
 import com.sujula.repository.order.CartItemRepository;
 import com.sujula.repository.order.CartRepository;
-import com.sujula.repository.products.ProductRepository;
-import com.sujula.repository.products.ProductVariantRepository;
+import com.sujula.repository.product.ProductRepository;
+import com.sujula.repository.product.ProductVariantRepository;
+import com.sujula.repository.user.UserRepository;
 import com.sujula.service.CartService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -98,7 +99,7 @@ public class CartServiceImpl implements CartService {
 
     @Override
     @Transactional
-    public CartResponse updateItemGuest(String sessionId, Long cartItemId, UpdateCartItemRequest request) {
+    public CartResponse updateItemGuest(String sessionId, Long cartItemId, CartItemRequest request) {
         return toResponse(doUpdateItem(getOrCreateGuestCart(sessionId), cartItemId, request));
     }
 
@@ -239,7 +240,7 @@ public class CartServiceImpl implements CartService {
         return refreshTtl(cartRepository.save(cart));
     }
 
-    private Cart doUpdateItem(Cart cart, Long cartItemId, UpdateCartItemRequest request) {
+    private Cart doUpdateItem(Cart cart, Long cartItemId, CartItemRequest request) {
         CartItem item = cart.getItems().stream()
                 .filter(i -> i.getId().equals(cartItemId))
                 .findFirst()
