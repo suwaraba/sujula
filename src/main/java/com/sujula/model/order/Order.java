@@ -82,6 +82,18 @@ public class Order {
     @Builder.Default
     private List<OrderItem> items = new ArrayList<>();
 
+    /** This order split by vendor. Managed via {@code VendorOrderRepository}, not cascaded from here. */
+    @JsonIgnore
+    @OneToMany(mappedBy = "order", fetch = FetchType.LAZY)
+    @Builder.Default
+    private List<VendorOrder> vendorOrders = new ArrayList<>();
+
+    /** Audit trail of status transitions. Managed via {@code OrderStatusHistoryRepository}. */
+    @JsonIgnore
+    @OneToMany(mappedBy = "order", fetch = FetchType.LAZY)
+    @Builder.Default
+    private List<OrderStatusHistory> statusHistory = new ArrayList<>();
+
 
     // ── Status ────────────────────────────────────────────────────────────────
 
@@ -266,6 +278,22 @@ public class Order {
 
 	public void setItems(List<OrderItem> items) {
 		this.items = items;
+	}
+
+	public List<VendorOrder> getVendorOrders() {
+		return vendorOrders;
+	}
+
+	public void setVendorOrders(List<VendorOrder> vendorOrders) {
+		this.vendorOrders = vendorOrders;
+	}
+
+	public List<OrderStatusHistory> getStatusHistory() {
+		return statusHistory;
+	}
+
+	public void setStatusHistory(List<OrderStatusHistory> statusHistory) {
+		this.statusHistory = statusHistory;
 	}
 
 	public OrderStatus getStatus() {

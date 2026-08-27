@@ -1,120 +1,94 @@
 package com.sujula.service;
 
-import com.sujula.dto.request.CreateOrderRequest;
-import com.sujula.dto.request.GuestCheckoutRequest;
-import com.sujula.dto.request.OrderScheduleRequest;
-import com.sujula.dto.request.UpdateOrderStatusRequest;
-import com.sujula.dto.request.UserCheckoutRequest;
-import com.sujula.dto.response.CartResponse;
-import com.sujula.dto.response.OrderAdminDto;
-import com.sujula.model.Order;
-import com.sujula.model.OrderStatusHistory;
-import com.sujula.model.enums.OrderStatus;
+import com.sujula.dto.request.order.CreateOrderRequest;
+import com.sujula.dto.request.order.GuestCheckoutRequest;
+import com.sujula.dto.request.order.OrderScheduleRequest;
+import com.sujula.dto.request.order.UpdateOrderStatusRequest;
+import com.sujula.dto.request.order.UserCheckoutRequest;
+import com.sujula.dto.response.order.CartResponse;
+import com.sujula.dto.response.order.OrderAdminDto;
+import com.sujula.model.constant.OrderStatus;
+import com.sujula.model.order.Order;
+import com.sujula.model.order.OrderStatusHistory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 
+/**
+ * Order placement and lifecycle for a multivendor, multicurrency storefront.
+ *
+ * <p>An order is a frozen snapshot of a checkout: unlike the cart (which is a
+ * live quote, re-priced on every read), placing an order pins prices, deducts
+ * stock, and splits the purchase into one {@code VendorOrder} per vendor so
+ * fulfilment, cancellation and payout can each proceed independently per
+ * vendor. Every vendor slice keeps its own native settlement-currency amounts
+ * alongside the buyer's display-currency amounts, mirroring how the cart
+ * prices a still-open basket.
+ */
 public interface OrderService {
 
-    // ── Authenticated checkout ────────────────────────────────────────────────
+    // ── Placement ────────────────────────────────────────────────────────────
 
-    /**
-     * Create an order from an explicit item list (API / admin use).
-     * Handles variant-level stock, coupon application, and stock deduction.
-     */
+    /** Places an order from an explicit item list against a stored address (admin/API use). */
     Order create(Long customerId, CreateOrderRequest request);
 
-    /**
-     * Create an order for an authenticated customer using the checkout payload
-     * sent directly from the frontend (inline shipping address, item list,
-     * optional coupon, delivery method, and display currency).
-     *
-     * This is the primary endpoint for POST /api/user/orders.
-     */
+    /** Checkout payload sent directly from the frontend for an authenticated buyer (inline address). */
     Order createUserOrder(Long userId, UserCheckoutRequest request);
 
     /**
-     * Checkout the authenticated user's active cart.
-     * Transfers all cart items (with variants + coupon) into a new Order,
-     * records coupon usage, and clears the cart on success.
+     * Checks out the authenticated user's live cart: prices, stock and coupons
+     * are taken from the cart's own (already-validated) quote, split per
+     * vendor, and the cart is cleared on success.
      *
-     * @param userId            the authenticated buyer
-     * @param shippingAddressId the chosen shipping address
-     * @param notes             optional customer note
+     * @param displayCurrency currency to charge in; null keeps the cart's own display currency
      */
-    Order createFromCart(Long userId, Long shippingAddressId, String notes);
+    Order createFromCart(Long userId, Long shippingAddressId, String notes, String displayCurrency);
 
-    // ── Guest checkout ────────────────────────────────────────────────────────
-
-    /**
-     * Place an order without an account.
-     *
-     * Items may come from:
-     *   a) The guest's active cart (when {@code request.sessionId} is provided), or
-     *   b) The explicit {@code request.items} list.
-     *
-     * A confirmation email is sent to {@code request.guestEmail}.
-     * The guest can later look up the order via
-     * {@link #findGuestOrder(String, String)}.
-     */
+    /** Places an order without an account, from the guest's cart or an explicit item list. */
     Order createGuestOrder(GuestCheckoutRequest request);
 
     /**
-     * Retrieve a guest order by its public order number + the email used at
-     * checkout.  Requiring both prevents order-number enumeration attacks.
-     *
-     * @throws com.sujula.exception.ResourceNotFoundException if not found
+     * Retrieves a guest order by its public order number + the email used at
+     * checkout. Requiring both prevents order-number enumeration.
      */
     Order findGuestOrder(String orderNumber, String guestEmail);
 
-    // ── Queries ───────────────────────────────────────────────────────────────
+    // ── Queries ──────────────────────────────────────────────────────────────
 
-    OrderAdminDto       findById(Long id);
-    Order       findByOrderNumber(String orderNumber);
+    OrderAdminDto findById(Long id);
+    Order findByOrderNumber(String orderNumber);
     Page<Order> findByCustomer(Long customerId, Pageable pageable);
     Page<Order> findByVendor(Long vendorId, Pageable pageable);
     Page<Order> findByStatus(OrderStatus status, Pageable pageable);
     Page<Order> findAll(Pageable pageable);
 
-    // ── Status transitions ────────────────────────────────────────────────────
+    // ── Status transitions ───────────────────────────────────────────────────
 
-    /**
-     * Transition an order to a new status.
-     * On CANCELLED: restores stock and cancels all vendor sub-orders.
-     */
+    /** System-driven transition (e.g. a payment webhook) — no admin attribution. */
     Order updateStatus(Long orderId, UpdateOrderStatusRequest request);
+
     Order updateStatus(Long orderId, Long adminUserId, UpdateOrderStatusRequest request);
 
-    /**
-     * Cancel an order on behalf of the authenticated customer.
-     * Enforces that the order is still in a cancellable state (PENDING or CONFIRMED).
-     */
+    /** Cancels an order on behalf of its owner. Only PENDING or CONFIRMED orders may be cancelled this way. */
     Order cancelByCustomer(Long orderId, Long customerId);
 
-    /**
-     * Cancel a guest order.
-     * Identifies the order by {@code orderNumber} + {@code guestEmail} so
-     * no account is needed.  Enforces the same PENDING/CONFIRMED guard as
-     * {@link #cancelByCustomer}.
-     */
+    /** Cancels a guest order, identified by orderNumber + guestEmail — no account needed. */
     Order cancelGuestOrder(String orderNumber, String guestEmail);
 
     List<OrderStatusHistory> getStatusHistory(Long orderId);
 
-    // ── Order Scheduling ──────────────────────────────────────────────────────
+    // ── Scheduling ───────────────────────────────────────────────────────────
 
-    /**
-     * Update the scheduled delivery date, time slot, and delivery instructions.
-     * Only allowed when order is in PENDING or CONFIRMED state.
-     */
+    /** Updates delivery scheduling. Only allowed while the order is PENDING or CONFIRMED. */
     Order updateSchedule(String orderNumber, Long userId, OrderScheduleRequest request);
 
-    // ── Reorder ───────────────────────────────────────────────────────────────
+    // ── Reorder ──────────────────────────────────────────────────────────────
 
     /**
-     * Copy all items from a previous order into the user's active cart.
-     * Items that are no longer available are skipped with a warning (non-fatal).
+     * Copies every item from a previous order into the user's cart. Items that
+     * are no longer available are skipped and reported as issues on the
+     * returned cart rather than failing the whole reorder.
      */
     CartResponse reorder(String orderNumber, Long userId);
 }
