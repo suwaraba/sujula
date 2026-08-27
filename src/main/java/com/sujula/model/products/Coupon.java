@@ -5,13 +5,19 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import com.sujula.model.constant.CouponScope;
 import com.sujula.model.constant.CouponType;
+import com.sujula.model.user.Vendor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "coupons")
+@Table(name = "coupons",
+       indexes = {
+           @Index(name = "idx_coupon_code",   columnList = "code", unique = true),
+           @Index(name = "idx_coupon_vendor", columnList = "vendor_id")
+       })
 @Getter @Setter
 @NoArgsConstructor
 @AllArgsConstructor
@@ -32,8 +38,30 @@ public class Coupon {
     @Column(nullable = false)
     private CouponType type;
 
+    /**
+     * Who funds the discount. Platform coupons are prorated across every vendor
+     * group in the cart; vendor coupons only touch the issuing vendor's items.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10)
+    @Builder.Default
+    private CouponScope scope = CouponScope.PLATFORM;
+
+    /** The issuing vendor. Required when {@link #scope} is {@code VENDOR}, null otherwise. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "vendor_id")
+    private Vendor vendor;
+
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal value;
+
+    /**
+     * Currency that {@link #value}, {@link #minimumOrderAmount} and
+     * {@link #maximumDiscountAmount} are denominated in. Required for
+     * {@code FIXED_AMOUNT} coupons; ignored for percentage coupons.
+     */
+    @Column(length = 3)
+    private String currency;
 
     @Column(precision = 10, scale = 2)
     private BigDecimal minimumOrderAmount;

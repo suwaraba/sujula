@@ -1,6 +1,6 @@
 package com.sujula.dto.request.order;
 
-import com.sujula.model.order.CartItem;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import lombok.*;
@@ -11,26 +11,21 @@ import lombok.*;
 @AllArgsConstructor
 public class CartItemRequest {
 
+    public static final int MAX_QUANTITY_PER_LINE = 99;
+
     @NotNull
     private Long productId;
 
-    private Long variantId;   // null for non-variant products
-
-    @NotNull
-    @Min(1)
-    private Integer quantity;
+    /** Null for products that have no variants. */
+    private Long variantId;
 
     /**
-     * Entity -> DTO
+     * Upper bound is a hard abuse guard, not a business rule — the service
+     * additionally clamps to the live stock level. Without a ceiling a single
+     * request can drive the subtotal arithmetic into absurd territory.
      */
-    public static CartItemRequest from(CartItem cartItem) {
-        return CartItemRequest.builder()
-                .productId(cartItem.getProduct().getId())
-                .variantId(cartItem.getVariant() != null
-                        ? cartItem.getVariant().getId()
-                        : null)
-                .quantity(cartItem.getQuantity())
-                .build();
-    }
-
+    @NotNull
+    @Min(1)
+    @Max(MAX_QUANTITY_PER_LINE)
+    private Integer quantity;
 }

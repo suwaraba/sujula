@@ -97,6 +97,18 @@ public class Vendor {
     @Builder.Default
     private PartnerStatus status = PartnerStatus.PENDING;
 
+    /**
+     * The single currency this vendor trades and settles in — ISO 4217.
+     *
+     * <p>Source of truth for everything vendor-facing: their listings must be
+     * priced in it, their order figures are reported in it, and payouts are made
+     * in it. Buyers may view the storefront in any currency, but that conversion
+     * never propagates back into the vendor's own view of their business.
+     */
+    @Column(nullable = false, length = 3)
+    @Builder.Default
+    private String settlementCurrency = "GMD";
+
     @Setter(lombok.AccessLevel.NONE)
     @Column(precision = 10, scale = 2)
     @Builder.Default
