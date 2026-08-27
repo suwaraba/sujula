@@ -1,7 +1,10 @@
 package com.sujula.dto.response.order;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.OrderStatus;
+import com.sujula.model.constant.PaymentMethod;
+import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.constant.VendorOrderStatus;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.OrderItem;
@@ -52,8 +55,13 @@ public class OrderAdminDto {
     private String shippingPostalCode;
     private String shippingCountry;
 
-    private String paymentStatus;
-    private String paymentMethod;
+    private PaymentStatus paymentStatus;
+    private PaymentMethod paymentMethod;
+    private String paymentReference;
+    private LocalDateTime paidAt;
+
+    private DeliveryMode deliveryMode;
+    private Long pickupPointId;
 
     private String notes;
 
@@ -89,6 +97,10 @@ public class OrderAdminDto {
                 .shippingCountry(order.getShippingCountry())
                 .paymentStatus(order.getPaymentStatus())
                 .paymentMethod(order.getPaymentMethod())
+                .paymentReference(order.getPayment() != null ? order.getPayment().getReference() : null)
+                .paidAt(order.getPaidAt())
+                .deliveryMode(order.getDeliveryMode())
+                .pickupPointId(order.getPickupPointId())
                 .notes(order.getNotes())
                 .items(order.getItems().stream().map(OrderItemDto::from).toList())
                 .vendorOrders(order.getVendorOrders().stream().map(VendorOrderDto::from).toList())
@@ -116,6 +128,8 @@ public class OrderAdminDto {
         private BigDecimal totalPrice;
         private BigDecimal unitPriceConverted;
         private BigDecimal totalPriceConverted;
+        /** This product's own delivery leg, in the order's display currency. */
+        private BigDecimal deliveryCost;
 
         static OrderItemDto from(OrderItem item) {
             return OrderItemDto.builder()
@@ -134,6 +148,7 @@ public class OrderAdminDto {
                     .totalPrice(item.getTotalPrice())
                     .unitPriceConverted(item.getUnitPriceConverted())
                     .totalPriceConverted(item.getTotalPriceConverted())
+                    .deliveryCost(item.getDeliveryCost())
                     .build();
         }
     }

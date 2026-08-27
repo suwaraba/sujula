@@ -1,7 +1,7 @@
 package com.sujula.repository.delivery;
 
-import com.sujula.model.HandoverCode;
-import com.sujula.model.enums.HandoverCodeType;
+import com.sujula.model.constant.HandoverCodeType;
+import com.sujula.model.delivery.HandoverCode;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;

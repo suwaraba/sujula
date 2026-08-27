@@ -1,7 +1,7 @@
 package com.sujula.repository;
 
-import com.sujula.model.PickupPoint;
-import com.sujula.model.enums.PickupPointStatus;
+import com.sujula.model.constant.PartnerStatus;
+import com.sujula.model.delivery.PickupPoint;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,7 +18,7 @@ public interface PickupPointRepository extends JpaRepository<PickupPoint, Long> 
     Page<PickupPoint> findByCityAndActiveTrue(String city, Pageable pageable);
 
     // Approval flow
-    Page<PickupPoint> findByStatus(PickupPointStatus status, Pageable pageable);
+    Page<PickupPoint> findByStatus(PartnerStatus status, Pageable pageable);
 
     // Operator self-service
     Optional<PickupPoint> findByOperatorUserId(Long operatorUserId);
@@ -55,8 +55,8 @@ public interface PickupPointRepository extends JpaRepository<PickupPoint, Long> 
             String name, String city, String countryCode, Long excludeId);
 
     // Public discovery: only active + approved
-    Page<PickupPoint> findByStatusAndActiveTrue(PickupPointStatus status, Pageable pageable);
-    Page<PickupPoint> findByCityAndStatusAndActiveTrue(String city, PickupPointStatus status, Pageable pageable);
+    Page<PickupPoint> findByStatusAndActiveTrue(PartnerStatus status, Pageable pageable);
+    Page<PickupPoint> findByCityAndStatusAndActiveTrue(String city, PartnerStatus status, Pageable pageable);
 
-    List<PickupPoint> findByCountryCodeAndStatusAndActiveTrue(String countryCode, PickupPointStatus status);
+    List<PickupPoint> findByCountryCodeAndStatusAndActiveTrue(String countryCode, PartnerStatus status);
 }

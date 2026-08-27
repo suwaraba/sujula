@@ -11,7 +11,10 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.OrderStatus;
+import com.sujula.model.constant.PaymentMethod;
+import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.delivery.Delivery;
 import com.sujula.model.products.Coupon;
 import com.sujula.model.user.User;
@@ -41,7 +44,8 @@ import lombok.NoArgsConstructor;
            @Index(name = "idx_order_number",      columnList = "orderNumber",       unique = true),
            @Index(name = "idx_order_customer",    columnList = "customer_id"),
            @Index(name = "idx_order_guest_email", columnList = "guestEmail"),
-           @Index(name = "idx_order_status",      columnList = "status")
+           @Index(name = "idx_order_status",      columnList = "status"),
+           @Index(name = "idx_order_payment",     columnList = "paymentStatus")
        })
 @NoArgsConstructor
 @AllArgsConstructor
@@ -161,6 +165,40 @@ public class Order {
     // EAGER: payment status/method are needed in every order view.
     @OneToOne(mappedBy = "order", cascade = CascadeType.ALL, fetch = FetchType.EAGER)
     private Payment payment;
+
+    /**
+     * The order's own payment flag, kept in step with {@code payment.status} by
+     * {@code PaymentService}. Denormalised on purpose: order lists, guest
+     * lookups and fulfilment checks all need to know whether an order is paid,
+     * and none of them should have to join to the payments table to find out.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    @Builder.Default
+    private PaymentStatus paymentStatus = PaymentStatus.PENDING;
+
+    /** Method the buyer chose, mirrored from the payment for the same reason as {@link #paymentStatus}. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private PaymentMethod paymentMethod;
+
+    /** When the money was received in full; null while the order is unpaid. */
+    private LocalDateTime paidAt;
+
+    // ── Fulfilment arrangement ────────────────────────────────────────────────
+
+    /**
+     * How the buyer receives the goods. Drives the delivery price (a leg to the
+     * door, a leg to a hub, or no leg at all) and which in-person payment
+     * methods may be offered.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private DeliveryMode deliveryMode = DeliveryMode.HOME_DELIVERY;
+
+    /** Set when {@link #deliveryMode} is {@code PICKUP_POINT}. */
+    private Long pickupPointId;
 
     @JsonIgnore   // avoid circular serialisation and lazy-init issues
     @OneToOne(mappedBy = "order", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
@@ -600,6 +638,46 @@ public class Order {
 		this.updatedAt = updatedAt;
 	}
 
+	public PaymentStatus getPaymentStatus() {
+		return paymentStatus;
+	}
+
+	public void setPaymentStatus(PaymentStatus paymentStatus) {
+		this.paymentStatus = paymentStatus;
+	}
+
+	public PaymentMethod getPaymentMethod() {
+		return paymentMethod;
+	}
+
+	public void setPaymentMethod(PaymentMethod paymentMethod) {
+		this.paymentMethod = paymentMethod;
+	}
+
+	public LocalDateTime getPaidAt() {
+		return paidAt;
+	}
+
+	public void setPaidAt(LocalDateTime paidAt) {
+		this.paidAt = paidAt;
+	}
+
+	public DeliveryMode getDeliveryMode() {
+		return deliveryMode;
+	}
+
+	public void setDeliveryMode(DeliveryMode deliveryMode) {
+		this.deliveryMode = deliveryMode;
+	}
+
+	public Long getPickupPointId() {
+		return pickupPointId;
+	}
+
+	public void setPickupPointId(Long pickupPointId) {
+		this.pickupPointId = pickupPointId;
+	}
+
 	/** True when this order was placed without a user account. */
     public boolean isGuestOrder() {
         return customer == null;
@@ -616,13 +694,13 @@ public class Order {
     }
 
 
-    /** Payment method used for this order, e.g. "STRIPE", "COD". Null if no payment yet. */
-    public String getPaymentMethod() {
-        return payment != null ? payment.getPaymentMethod() : null;
+    /** True once the full amount has been received, whatever the method. */
+    public boolean isPaid() {
+        return paymentStatus == PaymentStatus.PAID;
     }
 
-    /** Payment status for this order, e.g. "PENDING", "PAID". Null if no payment yet. */
-    public String getPaymentStatus() {
-        return payment != null ? payment.getStatus().name() : null;
+    /** True while the order is still waiting for money. */
+    public boolean isAwaitingPayment() {
+        return paymentStatus != null && paymentStatus.isOutstanding();
     }
 }

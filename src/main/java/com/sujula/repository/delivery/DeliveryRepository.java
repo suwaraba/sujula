@@ -1,8 +1,8 @@
 package com.sujula.repository.delivery;
 
-import com.sujula.model.Delivery;
-import com.sujula.model.Driver;
-import com.sujula.model.enums.DeliveryStatus;
+import com.sujula.model.constant.DeliveryStatus;
+import com.sujula.model.delivery.Delivery;
+import com.sujula.model.delivery.Driver;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -20,7 +20,10 @@ import java.util.Optional;
 @Repository
 public interface DeliveryRepository extends JpaRepository<Delivery, Long> {
 
-    Optional<Delivery> findByOrderId(Long orderId);
+    Optional<Delivery> findByOrderItemId(Long orderItemId);
+
+    /** Every leg of an order — one per order item, since each product is delivered separately. */
+    java.util.List<Delivery> findByOrderItemOrderId(Long orderId);
     Optional<Delivery> findByTrackingNumber(String trackingNumber);
 
     // Driver-scoped
@@ -51,7 +54,7 @@ public interface DeliveryRepository extends JpaRepository<Delivery, Long> {
      */
     @Query("SELECT SUM(d.distanceKm) FROM Delivery d " +
            "WHERE d.driver.id = :driverId " +
-           "AND d.status = com.sujula.model.enums.DeliveryStatus.DELIVERED")
+           "AND d.status = com.sujula.model.constant.DeliveryStatus.DELIVERED")
     java.math.BigDecimal totalDistanceByDriver(@Param("driverId") Long driverId);
 
     // Available tasks — PENDING deliveries with no driver assigned
@@ -63,7 +66,7 @@ public interface DeliveryRepository extends JpaRepository<Delivery, Long> {
      */
     @Query("SELECT d FROM Delivery d " +
            "WHERE d.status = 'PENDING' AND d.driver IS NULL " +
-           "  AND d.order.shippingCountry = :countryCode")
+           "  AND d.orderItem.order.shippingCountry = :countryCode")
     Page<Delivery> findPendingUnassignedByCountry(
             @Param("countryCode") String countryCode, Pageable pageable);
 
@@ -152,20 +155,20 @@ public interface DeliveryRepository extends JpaRepository<Delivery, Long> {
      */
     @Query(value      = "SELECT d.driver.id, d.driver.user.firstName, d.driver.user.lastName, COUNT(d), d.driver.totalEarnings " +
                         "FROM Delivery d " +
-                        "WHERE d.status = com.sujula.model.enums.DeliveryStatus.DELIVERED AND d.driver IS NOT NULL " +
+                        "WHERE d.status = com.sujula.model.constant.DeliveryStatus.DELIVERED AND d.driver IS NOT NULL " +
                         "GROUP BY d.driver.id, d.driver.user.firstName, d.driver.user.lastName, d.driver.totalEarnings " +
                         "ORDER BY COUNT(d) DESC",
-           countQuery = "SELECT COUNT(DISTINCT d.driver.id) FROM Delivery d WHERE d.status = com.sujula.model.enums.DeliveryStatus.DELIVERED AND d.driver IS NOT NULL")
+           countQuery = "SELECT COUNT(DISTINCT d.driver.id) FROM Delivery d WHERE d.status = com.sujula.model.constant.DeliveryStatus.DELIVERED AND d.driver IS NOT NULL")
     Page<Object[]> findDriverDeliveryStats(Pageable pageable);
 
     /** Count all deliveries delivered on time (deliveredAt <= estimatedDeliveryAt). */
-    @Query("SELECT COUNT(d) FROM Delivery d WHERE d.status = com.sujula.model.enums.DeliveryStatus.DELIVERED AND d.deliveredAt IS NOT NULL AND d.estimatedDeliveryAt IS NOT NULL AND d.deliveredAt <= d.estimatedDeliveryAt")
+    @Query("SELECT COUNT(d) FROM Delivery d WHERE d.status = com.sujula.model.constant.DeliveryStatus.DELIVERED AND d.deliveredAt IS NOT NULL AND d.estimatedDeliveryAt IS NOT NULL AND d.deliveredAt <= d.estimatedDeliveryAt")
     long countOnTimeDeliveries();
 
     /**
      * Load assignedAt and deliveredAt for all DELIVERED deliveries where both timestamps exist.
      * Used to compute average delivery hours in Java (DB-agnostic — avoids TIMESTAMPDIFF/EXTRACT dialect issues).
      */
-    @Query("SELECT d.assignedAt, d.deliveredAt FROM Delivery d WHERE d.status = com.sujula.model.enums.DeliveryStatus.DELIVERED AND d.assignedAt IS NOT NULL AND d.deliveredAt IS NOT NULL")
+    @Query("SELECT d.assignedAt, d.deliveredAt FROM Delivery d WHERE d.status = com.sujula.model.constant.DeliveryStatus.DELIVERED AND d.assignedAt IS NOT NULL AND d.deliveredAt IS NOT NULL")
     java.util.List<Object[]> findDeliveredTimestamps();
 }

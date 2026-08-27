@@ -12,6 +12,8 @@ import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.Address;
 import com.sujula.model.constant.CouponScope;
+import com.sujula.model.constant.CouponType;
+import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.constant.VendorOrderStatus;
@@ -25,9 +27,11 @@ import com.sujula.model.products.Product;
 import com.sujula.model.products.ProductImage;
 import com.sujula.model.products.ProductOptionValue;
 import com.sujula.model.products.ProductVariant;
+import com.sujula.model.delivery.PickupPoint;
 import com.sujula.model.user.User;
 import com.sujula.model.user.Vendor;
 import com.sujula.repository.AddressRepository;
+import com.sujula.repository.PickupPointRepository;
 import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.OrderStatusHistoryRepository;
 import com.sujula.repository.order.VendorOrderRepository;
@@ -38,12 +42,15 @@ import com.sujula.repository.product.ProductVariantRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.CartService;
+import com.sujula.service.DeliveryPricingService;
 import com.sujula.service.EmailService;
 import com.sujula.service.ExchangeRateService;
 import com.sujula.service.NotificationService;
 import com.sujula.service.OrderService;
 import com.sujula.service.cart.CartOwner;
 import com.sujula.service.cart.RateTable;
+import com.sujula.service.delivery.DeliveryDestination;
+import com.sujula.service.delivery.DeliveryQuote;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -109,10 +116,12 @@ public class OrderServiceImpl implements OrderService {
     private final UserRepository userRepository;
     private final VendorRepository vendorRepository;
     private final AddressRepository addressRepository;
+    private final PickupPointRepository pickupPointRepository;
     private final CouponRepository couponRepository;
     private final CouponUsageRepository couponUsageRepository;
     private final ExchangeRateService exchangeRateService;
     private final CartService cartService;
+    private final DeliveryPricingService deliveryPricingService;
     private final EmailService emailService;
     private final NotificationService notificationService;
 
@@ -132,13 +141,15 @@ public class OrderServiceImpl implements OrderService {
 
         List<ItemSpec> specs = toSpecs(request.getItems());
         CheckoutResult result = priceExplicitItems(specs, defaultCurrency, request.getCouponCode(), customerId);
+        applyDeliveryPricing(result, DeliveryDestination.of(address), DeliveryMode.HOME_DELIVERY);
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
+                .deliveryMode(DeliveryMode.HOME_DELIVERY)
                 .subtotal(result.subtotal)
-                .shippingCost(BigDecimal.ZERO)
+                .shippingCost(result.shipping)
                 .taxAmount(BigDecimal.ZERO)
                 .discount(result.discount)
                 .total(result.total)
@@ -180,12 +191,25 @@ public class OrderServiceImpl implements OrderService {
                 ? request.getDeliveryAddress().getAddress()
                 : (request.getPickupPointId() != null ? "Pickup Point #" + request.getPickupPointId() : "");
 
+        // Collecting from a pickup point is a shorter, cheaper leg than delivery
+        // to the door, and it is the hub — not the buyer's address — the parcel
+        // actually travels to, so it is the hub that prices the delivery.
+        DeliveryMode mode = request.getPickupPointId() != null
+                ? DeliveryMode.PICKUP_POINT : DeliveryMode.HOME_DELIVERY;
+        DeliveryDestination destination = (mode == DeliveryMode.PICKUP_POINT)
+                ? DeliveryDestination.of(requirePickupPoint(request.getPickupPointId()))
+                : new DeliveryDestination(null, null, shippingStreet,
+                        recipient.getCity(), recipient.getRegion(), null, recipient.getCountry());
+        applyDeliveryPricing(result, destination, mode);
+
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
+                .deliveryMode(mode)
+                .pickupPointId(request.getPickupPointId())
                 .subtotal(result.subtotal)
-                .shippingCost(BigDecimal.ZERO)
+                .shippingCost(result.shipping)
                 .taxAmount(BigDecimal.ZERO)
                 .discount(result.discount)
                 .total(result.total)
@@ -222,13 +246,15 @@ public class OrderServiceImpl implements OrderService {
         requireCheckoutable(quote);
 
         CheckoutResult result = buildFromQuote(quote);
+        applyDeliveryPricing(result, DeliveryDestination.of(address), DeliveryMode.HOME_DELIVERY);
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
+                .deliveryMode(DeliveryMode.HOME_DELIVERY)
                 .subtotal(result.subtotal)
-                .shippingCost(BigDecimal.ZERO)
+                .shippingCost(result.shipping)
                 .taxAmount(BigDecimal.ZERO)
                 .discount(result.discount)
                 .total(result.total)
@@ -278,6 +304,12 @@ public class OrderServiceImpl implements OrderService {
             result = priceExplicitItems(specs, requestedCurrency, request.getCouponCode(), null);
         }
 
+        applyDeliveryPricing(result,
+                new DeliveryDestination(null, null,
+                        request.getShippingStreet(), request.getShippingCity(), request.getShippingState(),
+                        request.getShippingPostalCode(), request.getShippingCountry()),
+                DeliveryMode.HOME_DELIVERY);
+
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
                 .guestName(request.getGuestName())
@@ -285,8 +317,9 @@ public class OrderServiceImpl implements OrderService {
                 .guestPhone(request.getGuestPhone())
                 .guestSessionId(request.getSessionId())
                 .status(OrderStatus.PENDING)
+                .deliveryMode(DeliveryMode.HOME_DELIVERY)
                 .subtotal(result.subtotal)
-                .shippingCost(BigDecimal.ZERO)
+                .shippingCost(result.shipping)
                 .taxAmount(BigDecimal.ZERO)
                 .discount(result.discount)
                 .total(result.total)
@@ -851,6 +884,76 @@ public class OrderServiceImpl implements OrderService {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Delivery pricing — one leg per product, never one figure per order
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Prices every product's delivery separately and folds the result into the
+     * checkout.
+     *
+     * <p>A multivendor basket has no single origin: two lines can leave from two
+     * towns, weigh different amounts and ship under different scopes, so each
+     * line is quoted on its own distance and weight and keeps its own share on
+     * {@code OrderItem.deliveryCost}. The order's {@code shippingCost} is only
+     * the sum of those legs, which is what makes per-vendor payout and per-item
+     * cancellation able to account for delivery later on.
+     *
+     * <p>A {@code FREE_SHIPPING} coupon is honoured here rather than as a
+     * discount: it waives the legs it covers — every leg for a platform coupon,
+     * that vendor's legs for a vendor-scoped one — so the buyer sees delivery
+     * priced at zero instead of a discount line that happens to cancel it out.
+     */
+    private void applyDeliveryPricing(CheckoutResult result, DeliveryDestination destination, DeliveryMode mode) {
+        List<OrderItem> items = new ArrayList<>();
+        Set<Long> freeShippingVendors = new HashSet<>();
+        for (VendorOrder vo : result.vendorOrders) {
+            if (vo.getCoupon() != null && vo.getCoupon().getType() == CouponType.FREE_SHIPPING) {
+                freeShippingVendors.add(vo.getVendor().getId());
+            }
+            items.addAll(vo.getItems());
+        }
+        if (items.isEmpty()) {
+            result.shipping = BigDecimal.ZERO;
+            return;
+        }
+
+        boolean freeShippingEverywhere = result.platformCoupon != null
+                && result.platformCoupon.getType() == CouponType.FREE_SHIPPING;
+
+        DeliveryQuote quote = deliveryPricingService.quoteOrderItems(items, destination, mode, result.currency);
+        if (!quote.complete()) {
+            throw new BadRequestException(
+                    "Delivery cannot be priced in " + result.currency + " right now — please try again shortly");
+        }
+
+        BigDecimal shipping = BigDecimal.ZERO;
+        for (int i = 0; i < items.size(); i++) {
+            OrderItem item = items.get(i);
+            DeliveryQuote.DeliveryLeg leg = quote.legs().get(i);
+            Long vendorId = item.getVendor() != null ? item.getVendor().getId() : null;
+
+            BigDecimal cost = (freeShippingEverywhere || freeShippingVendors.contains(vendorId))
+                    ? BigDecimal.ZERO
+                    : leg.cost();
+            item.setDeliveryCost(cost);
+            shipping = shipping.add(cost);
+        }
+
+        result.shipping = shipping;
+        result.total = result.total.add(shipping);
+    }
+
+    private PickupPoint requirePickupPoint(Long pickupPointId) {
+        PickupPoint point = pickupPointRepository.findById(pickupPointId)
+                .orElseThrow(() -> new ResourceNotFoundException("PickupPoint", pickupPointId));
+        PartnerStatus status = point.getStatus();
+        if (!point.isActive() || (status != PartnerStatus.APPROVED && status != PartnerStatus.ACTIVE)) {
+            throw new BadRequestException(point.getName() + " is not accepting parcels right now");
+        }
+        return point;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Persistence helpers
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -858,6 +961,8 @@ public class OrderServiceImpl implements OrderService {
     private static final class CheckoutResult {
         BigDecimal subtotal;
         BigDecimal discount;
+        /** Sum of the per-product delivery legs, in {@link #currency}. */
+        BigDecimal shipping = BigDecimal.ZERO;
         BigDecimal total;
         String currency;
         Coupon platformCoupon;

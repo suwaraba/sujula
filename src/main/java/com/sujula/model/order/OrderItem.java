@@ -76,6 +76,14 @@ public class OrderItem {
     @Column(precision = 12, scale = 2)
     private BigDecimal totalPriceConverted;
 
+    /**
+     * This product's own delivery leg, in the order's display currency.
+     *
+     * <p>Priced per line rather than per order because each product ships from
+     * its own vendor's location: two lines in the same basket can travel
+     * different distances, weigh different amounts and cost different amounts to
+     * deliver. The order's {@code shippingCost} is the sum of these.
+     */
     @Column(nullable = false, precision = 10, scale = 2)
     @Builder.Default
     private BigDecimal deliveryCost = BigDecimal.ZERO;
