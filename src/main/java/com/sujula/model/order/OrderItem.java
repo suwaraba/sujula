@@ -47,18 +47,38 @@ public class OrderItem {
     @JoinColumn(name = "vendor_id", nullable = false)
     private Vendor vendor;
 
+    /** This vendor's slice of the order. Assigned once items are grouped at checkout. */
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "vendor_order_id")
+    private VendorOrder vendorOrder;
+
     @Column(nullable = false)
     private Integer quantity;
 
     // --- Snapshots at time of purchase (survives later product edits) ---
-    @Column(nullable = false, precision = 10, scale = 2)
+
+    /** Unit price in {@link #currency} — the vendor's own listing currency. Never converted in place. */
+    @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal unitPrice;
 
-    @Column(nullable = false, precision = 10, scale = 2)
+    @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal totalPrice;
 
+    /** The vendor's listing currency for {@link #unitPrice} / {@link #totalPrice}. */
+    @Column(nullable = false, length = 3)
+    private String currency;
+
+    /** Same amounts converted into the order's display currency, frozen at checkout. */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal unitPriceConverted;
+
+    @Column(precision = 12, scale = 2)
+    private BigDecimal totalPriceConverted;
+
     @Column(nullable = false, precision = 10, scale = 2)
-    private BigDecimal deliveryCost;
+    @Builder.Default
+    private BigDecimal deliveryCost = BigDecimal.ZERO;
 
 
 

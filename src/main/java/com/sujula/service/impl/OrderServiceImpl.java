@@ -1,26 +1,53 @@
 package com.sujula.service.impl;
 
-import com.sujula.dto.request.CreateOrderRequest;
-import com.sujula.dto.request.GuestCheckoutRequest;
-import com.sujula.dto.request.OrderScheduleRequest;
-import com.sujula.dto.request.UpdateOrderStatusRequest;
-import com.sujula.dto.request.UserCheckoutRequest;
-import com.sujula.dto.response.CartResponse;
-import com.sujula.dto.response.OrderAdminDto;
-import com.sujula.exception.BadRequestException;
-import com.sujula.exception.ResourceNotFoundException;
-import com.sujula.model.*;
-import com.sujula.model.enums.OrderStatus;
-import com.sujula.model.enums.VendorOrderStatus;
-import com.sujula.repository.*;
-import com.sujula.service.CurrencyConversionService;
+import com.sujula.dto.request.order.CartItemRequest;
+import com.sujula.dto.request.order.CreateOrderRequest;
+import com.sujula.dto.request.order.GuestCheckoutRequest;
+import com.sujula.dto.request.order.OrderScheduleRequest;
+import com.sujula.dto.request.order.UpdateOrderStatusRequest;
+import com.sujula.dto.request.order.UserCheckoutRequest;
+import com.sujula.dto.response.order.CartResponse;
+import com.sujula.dto.response.order.OrderAdminDto;
+import com.sujula.exceptions.BadRequestException;
+import com.sujula.exceptions.ResourceNotFoundException;
+import com.sujula.model.Address;
+import com.sujula.model.constant.CouponScope;
+import com.sujula.model.constant.OrderStatus;
+import com.sujula.model.constant.PartnerStatus;
+import com.sujula.model.constant.VendorOrderStatus;
+import com.sujula.model.order.Order;
+import com.sujula.model.order.OrderItem;
+import com.sujula.model.order.OrderStatusHistory;
+import com.sujula.model.order.VendorOrder;
+import com.sujula.model.products.Coupon;
+import com.sujula.model.products.CouponUsage;
+import com.sujula.model.products.Product;
+import com.sujula.model.products.ProductImage;
+import com.sujula.model.products.ProductOptionValue;
+import com.sujula.model.products.ProductVariant;
+import com.sujula.model.user.User;
+import com.sujula.model.user.Vendor;
+import com.sujula.repository.AddressRepository;
+import com.sujula.repository.order.OrderRepository;
+import com.sujula.repository.order.OrderStatusHistoryRepository;
+import com.sujula.repository.order.VendorOrderRepository;
+import com.sujula.repository.product.CouponRepository;
+import com.sujula.repository.product.CouponUsageRepository;
+import com.sujula.repository.product.ProductRepository;
+import com.sujula.repository.product.ProductVariantRepository;
+import com.sujula.repository.user.UserRepository;
+import com.sujula.repository.user.VendorRepository;
+import com.sujula.service.CartService;
 import com.sujula.service.EmailService;
+import com.sujula.service.ExchangeRateService;
 import com.sujula.service.NotificationService;
 import com.sujula.service.OrderService;
-import com.sujula.service.PushNotificationService;
-
-import jakarta.persistence.EntityNotFoundException;
+import com.sujula.service.cart.CartOwner;
+import com.sujula.service.cart.RateTable;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -32,168 +59,92 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * Order placement and lifecycle for a multivendor, multicurrency storefront.
+ *
+ * <p>Two placement styles are supported:
+ *
+ * <ul>
+ *   <li><b>From the cart</b> ({@link #createFromCart} and the cart branch of
+ *       {@link #createGuestOrder}) — the cart has already priced, discounted
+ *       and validated everything, so checkout trusts that quote verbatim
+ *       rather than re-deriving prices, and only takes the pessimistic locks
+ *       needed to deduct stock safely.</li>
+ *   <li><b>From an explicit item list</b> ({@link #create}, {@link #createUserOrder},
+ *       and the non-cart branch of {@link #createGuestOrder}) — there is no
+ *       cart to trust, so prices, vendor grouping and any single coupon are
+ *       resolved here using the same native-currency-per-vendor +
+ *       batch-rate-lookup approach the cart uses.</li>
+ * </ul>
+ *
+ * <p>Either way the result is split into one {@link VendorOrder} per vendor —
+ * fulfilment, cancellation and payout all happen per vendor — each carrying
+ * its own native settlement-currency amounts alongside the buyer's
+ * display-currency amounts.
+ */
 @Service
 @RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
 
-    // ── Statuses from which an order can no longer be cancelled ───────────────
+    private static final Logger log = LoggerFactory.getLogger(OrderServiceImpl.class);
+
     private static final Set<OrderStatus> TERMINAL_STATUSES = Set.of(
-            OrderStatus.SHIPPED, OrderStatus.DELIVERED,
-            OrderStatus.CANCELLED, OrderStatus.REFUNDED);
+            OrderStatus.SHIPPED, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED);
 
     private static final Set<OrderStatus> CUSTOMER_CANCELLABLE = Set.of(
             OrderStatus.PENDING, OrderStatus.CONFIRMED);
 
-    // ── Dependencies ──────────────────────────────────────────────────────────
-    private final OrderRepository              orderRepository;
-    private final ProductRepository            productRepository;
-    private final ProductVariantRepository     variantRepository;
-    private final UserRepository               userRepository;
-    private final AddressRepository            addressRepository;
+    private static final Set<VendorOrderStatus> VENDOR_TERMINAL = Set.of(
+            VendorOrderStatus.DELIVERED, VendorOrderStatus.CANCELLED, VendorOrderStatus.REFUNDED);
+
+    private static final Set<PartnerStatus> SELLABLE = EnumSet.of(PartnerStatus.APPROVED, PartnerStatus.ACTIVE);
+
+    private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
+
+    private final OrderRepository orderRepository;
+    private final VendorOrderRepository vendorOrderRepository;
     private final OrderStatusHistoryRepository statusHistoryRepository;
-    private final VendorOrderRepository        vendorOrderRepository;
-    private final CartRepository               cartRepository;
-    private final CouponRepository             couponRepository;
-    private final CouponUsageRepository        couponUsageRepository;
-    private final CurrencyConversionService    currencyConversionService;
-    private final EmailService                 emailService;
-    private final NotificationService          notificationService;
-    private final PushNotificationService      pushNotificationService;
+    private final ProductRepository productRepository;
+    private final ProductVariantRepository variantRepository;
+    private final UserRepository userRepository;
+    private final VendorRepository vendorRepository;
+    private final AddressRepository addressRepository;
+    private final CouponRepository couponRepository;
+    private final CouponUsageRepository couponUsageRepository;
+    private final ExchangeRateService exchangeRateService;
+    private final CartService cartService;
+    private final EmailService emailService;
+    private final NotificationService notificationService;
+
+    /** Fallback when a vendor or coupon has no currency recorded. */
+    @Value("${sujula.cart.default-currency:GMD}")
+    private String defaultCurrency;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Create from explicit request
+    // Placement — explicit item list (admin/API + direct frontend checkout)
     // ─────────────────────────────────────────────────────────────────────────
 
     @Override
     @Transactional
     public Order create(Long customerId, CreateOrderRequest request) {
-        User customer = userRepository.findById(customerId)
-                .orElseThrow(() -> new ResourceNotFoundException("User", customerId));
+        User customer = requireUser(customerId);
+        Address address = requireOwnedAddress(request.getShippingAddressId(), customerId);
 
-        Address address = addressRepository.findById(request.getShippingAddressId())
-                .orElseThrow(() -> new ResourceNotFoundException("Address", request.getShippingAddressId()));
+        List<ItemSpec> specs = toSpecs(request.getItems());
+        CheckoutResult result = priceExplicitItems(specs, defaultCurrency, request.getCouponCode(), customerId);
 
-        if (!address.getUser().getId().equals(customerId)) {
-            throw new BadRequestException("Address does not belong to this user");
-        }
-
-        // ── 1. Resolve items, validate stock, deduct inventory ────────────────
-        List<OrderItem> allItems = new ArrayList<>();
-        BigDecimal subtotal = BigDecimal.ZERO;
-
-        for (CreateOrderRequest.OrderItemRequest itemReq : request.getItems()) {
-            // Acquire a row-level exclusive lock before reading stock.
-            // This prevents two concurrent orders from both seeing the same available
-            // stock and both deducting it — the second thread blocks on the DB lock
-            // until the first commits, then reads the already-reduced quantity.
-            Product product = productRepository.findByIdForUpdate(itemReq.getProductId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Product", itemReq.getProductId()));
-
-            if (!product.isActive()) {
-                throw new BadRequestException("Product is no longer available: " + product.getName());
-            }
-
-            // ── Variant handling ──────────────────────────────────────────────
-            ProductVariant variant = null;
-            BigDecimal unitPrice   = product.getPrice();
-            String variantSku      = null;
-            String selectedOptions = null;
-
-            if (itemReq.getVariantId() != null) {
-                // Lock the variant row too — concurrent orders on the same variant
-                // must serialize to prevent variant-level oversell.
-                variant = variantRepository.findByIdForUpdate(itemReq.getVariantId())
-                        .orElseThrow(() -> new ResourceNotFoundException("ProductVariant", itemReq.getVariantId()));
-
-                if (!variant.getProduct().getId().equals(product.getId())) {
-                    throw new BadRequestException("Variant does not belong to product: " + product.getName());
-                }
-                if (!variant.isAvailable()) {
-                    throw new BadRequestException("Selected variant is no longer available for: " + product.getName());
-                }
-                if (variant.getStockQuantity() < itemReq.getQuantity()) {
-                    throw new BadRequestException("Insufficient variant stock for: " + product.getName()
-                            + " (available: " + variant.getStockQuantity() + ")");
-                }
-                if (variant.getPrice() != null) {
-                    unitPrice = variant.getPrice();
-                }
-                variantSku = variant.getSku();
-
-                // Build human-readable option string e.g. "Size: Large, Color: Red"
-                if (variant.getValues() != null && !variant.getValues().isEmpty()) {
-                    selectedOptions = variant.getValues().stream()
-                            .map(v -> v.getOptionValue().getOption().getName()
-                                      + ": " + v.getOptionValue().getDisplayValue())
-                            .collect(Collectors.joining(", "));
-                }
-
-                // Deduct variant stock
-                variant.setStockQuantity(variant.getStockQuantity() - itemReq.getQuantity());
-                variantRepository.save(variant);
-            } else {
-                // Product-level stock
-                if (product.getStockQuantity() < itemReq.getQuantity()) {
-                    throw new BadRequestException("Insufficient stock for: " + product.getName()
-                            + " (available: " + product.getStockQuantity() + ")");
-                }
-                product.setStockQuantity(product.getStockQuantity() - itemReq.getQuantity());
-                productRepository.save(product);
-            }
-
-            BigDecimal itemTotal = unitPrice.multiply(BigDecimal.valueOf(itemReq.getQuantity()));
-            subtotal = subtotal.add(itemTotal);
-
-            String thumbnail = product.getImages().stream()
-                    .filter(ProductImage::isDefault)
-                    .findFirst()
-                    .or(() -> product.getImages().stream().findFirst())
-                    .map(ProductImage::getImageUrl)
-                    .orElse(null);
-
-            allItems.add(OrderItem.builder()
-                    .product(product)
-                    .variant(variant)
-                    .vendor(product.getVendor())
-                    .quantity(itemReq.getQuantity())
-                    .unitPrice(unitPrice)
-                    .totalPrice(itemTotal)
-                    .productName(product.getName())
-                    .productSku(product.getSku())
-                    .variantSku(variantSku)
-                    .selectedOptions(selectedOptions)
-                    .productImageUrl(thumbnail)
-                    .build());
-        }
-
-        // ── 2. Resolve coupon discount ────────────────────────────────────────
-        Coupon appliedCoupon  = null;
-        BigDecimal discount   = BigDecimal.ZERO;
-
-        if (request.getCouponCode() != null && !request.getCouponCode().isBlank()) {
-            appliedCoupon = couponRepository
-                    .findByCode(request.getCouponCode().toUpperCase().trim())
-                    .orElseThrow(() -> new BadRequestException("Invalid coupon code"));
-
-            validateCoupon(appliedCoupon, customerId, subtotal);
-            discount = computeDiscount(appliedCoupon, subtotal);
-        }
-
-        BigDecimal total = subtotal.subtract(discount);
-
-        // ── 3. Build parent Order ─────────────────────────────────────────────
         Order order = Order.builder()
-                .orderNumber("SJL-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
+                .orderNumber(newOrderNumber())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
-                .subtotal(subtotal)
+                .subtotal(result.subtotal)
                 .shippingCost(BigDecimal.ZERO)
                 .taxAmount(BigDecimal.ZERO)
-                .discount(discount)
-                .total(total)
-                .currency("GMD")
-                .coupon(appliedCoupon)
-                .couponCode(appliedCoupon != null ? appliedCoupon.getCode() : null)
+                .discount(result.discount)
+                .total(result.total)
+                .currency(result.currency)
+                .coupon(result.platformCoupon)
+                .couponCode(orderLevelCouponCode(result))
                 .shippingFullName(address.getFullName())
                 .shippingPhone(address.getPhone())
                 .shippingStreet(address.getStreet())
@@ -205,319 +156,101 @@ public class OrderServiceImpl implements OrderService {
                 .notes(request.getNotes())
                 .build();
 
-        Order savedOrder = orderRepository.save(order);
-
-        // ── 4. Assign items to parent order ───────────────────────────────────
-        allItems.forEach(item -> item.setOrder(savedOrder));
-
-        // ── 5. Group by vendor → one VendorOrder per vendor ───────────────────
-        Map<Long, List<OrderItem>> byVendor = allItems.stream()
-                .collect(Collectors.groupingBy(i -> i.getVendor().getId()));
-
-        List<VendorOrder> vendorOrders = new ArrayList<>();
-        for (List<OrderItem> vendorItems : byVendor.values()) {
-            BigDecimal vendorSubtotal = vendorItems.stream()
-                    .map(OrderItem::getTotalPrice)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            VendorOrder vendorOrder = VendorOrder.builder()
-                    .order(savedOrder)
-                    .vendor(vendorItems.get(0).getVendor())
-                    .subtotal(vendorSubtotal)
-                    .status(VendorOrderStatus.PENDING)
-                    .build();
-
-            VendorOrder savedVendorOrder = vendorOrderRepository.save(vendorOrder);
-            vendorItems.forEach(item -> item.setVendorOrder(savedVendorOrder));
-            vendorOrders.add(savedVendorOrder);
-        }
-
-        savedOrder.setItems(allItems);
-        Order finalOrder = orderRepository.save(savedOrder);
-
-        // ── 6. Record coupon usage + increment counter ────────────────────────
-        if (appliedCoupon != null) {
-            couponUsageRepository.save(CouponUsage.builder()
-                    .coupon(appliedCoupon)
-                    .user(customer)
-                    .order(finalOrder)
-                    .build());
-            appliedCoupon.setUsageCount(appliedCoupon.getUsageCount() + 1);
-            couponRepository.save(appliedCoupon);
-        }
-
-        // ── 7. Post-creation side-effects (fire-and-forget) ───────────────────
-        dispatchOrderCreationEvents(customer, finalOrder, vendorOrders);
-
+        Order finalOrder = persistOrder(order, result);
+        recordCouponUsage(result, customer, finalOrder.getId());
+        dispatchOrderCreationEvents(customer, finalOrder, result.vendorOrders);
         return finalOrder;
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Authenticated checkout from frontend payload (inline address)
-    // ─────────────────────────────────────────────────────────────────────────
 
     @Override
     @Transactional
     public Order createUserOrder(Long userId, UserCheckoutRequest request) {
-        User customer = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+        User customer = requireUser(userId);
 
-        // ── 1. Resolve items, validate stock, deduct inventory ────────────────
-        List<OrderItem> allItems = new ArrayList<>();
-        BigDecimal subtotal = BigDecimal.ZERO;
+        List<ItemSpec> specs = request.getItems().stream()
+                .map(i -> new ItemSpec(i.getProductId(), i.getVariantId(), i.getQuantity()))
+                .toList();
 
-        // Resolve checkout currency FIRST — needed inside the item loop for price conversion
-        String effectiveCurrency = (request.getCurrency() != null && !request.getCurrency().isBlank())
-                ? request.getCurrency().toUpperCase() : "GMD";
+        String requestedCurrency = (request.getCurrency() != null && !request.getCurrency().isBlank())
+                ? request.getCurrency() : defaultCurrency;
+        CheckoutResult result = priceExplicitItems(specs, requestedCurrency, request.getCouponCode(), userId);
 
-        for (UserCheckoutRequest.ItemRequest itemReq : request.getItems()) {
-            Product product = productRepository.findByIdForUpdate(itemReq.getProductId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Product", itemReq.getProductId()));
-
-            if (!product.isActive()) {
-                throw new BadRequestException("Product is no longer available: " + product.getName());
-            }
-
-            ProductVariant variant        = null;
-            BigDecimal     unitPrice      = product.getPrice();
-            String         variantSku     = null;
-            String         selectedOpts   = null;
-
-            if (itemReq.getVariantId() != null) {
-                variant = variantRepository.findByIdForUpdate(itemReq.getVariantId())
-                        .orElseThrow(() -> new ResourceNotFoundException("ProductVariant", itemReq.getVariantId()));
-                if (!variant.getProduct().getId().equals(product.getId())) {
-                    throw new BadRequestException("Variant does not belong to product: " + product.getName());
-                }
-                if (!variant.isAvailable()) {
-                    throw new BadRequestException("Selected variant is no longer available for: " + product.getName());
-                }
-                if (variant.getStockQuantity() < itemReq.getQuantity()) {
-                    throw new BadRequestException("Insufficient variant stock for: " + product.getName()
-                            + " (available: " + variant.getStockQuantity() + ")");
-                }
-                if (variant.getPrice() != null) unitPrice = variant.getPrice();
-                variantSku = variant.getSku();
-                if (variant.getValues() != null && !variant.getValues().isEmpty()) {
-                    selectedOpts = variant.getValues().stream()
-                            .map(v -> v.getOptionValue().getOption().getName()
-                                    + ": " + v.getOptionValue().getDisplayValue())
-                            .collect(Collectors.joining(", "));
-                }
-                variant.setStockQuantity(variant.getStockQuantity() - itemReq.getQuantity());
-                variantRepository.save(variant);
-            } else {
-                if (product.getStockQuantity() < itemReq.getQuantity()) {
-                    throw new BadRequestException("Insufficient stock for: " + product.getName()
-                            + " (available: " + product.getStockQuantity() + ")");
-                }
-                product.setStockQuantity(product.getStockQuantity() - itemReq.getQuantity());
-                productRepository.save(product);
-            }
-
-            // Convert unit price to checkout currency (all product prices are stored in GMD)
-            if (!"GMD".equals(effectiveCurrency)) {
-                unitPrice = currencyConversionService.convert(unitPrice, "GMD", effectiveCurrency)
-                        .setScale(2, RoundingMode.HALF_UP);
-            }
-
-            BigDecimal itemTotal = unitPrice.multiply(BigDecimal.valueOf(itemReq.getQuantity()));
-            subtotal = subtotal.add(itemTotal);
-
-            String thumbnail = product.getImages().stream()
-                    .filter(ProductImage::isDefault)
-                    .findFirst()
-                    .or(() -> product.getImages().stream().findFirst())
-                    .map(ProductImage::getImageUrl)
-                    .orElse(null);
-
-            allItems.add(OrderItem.builder()
-                    .product(product)
-                    .variant(variant)
-                    .vendor(product.getVendor())
-                    .quantity(itemReq.getQuantity())
-                    .unitPrice(unitPrice)
-                    .totalPrice(itemTotal)
-                    .productName(product.getName())
-                    .productSku(product.getSku())
-                    .variantSku(variantSku)
-                    .selectedOptions(selectedOpts)
-                    .productImageUrl(thumbnail)
-                    .build());
-        }
-
-        // ── 2. Resolve coupon ─────────────────────────────────────────────────
-        Coupon     appliedCoupon = null;
-        BigDecimal discount      = BigDecimal.ZERO;
-
-        if (request.getCouponCode() != null && !request.getCouponCode().isBlank()) {
-            appliedCoupon = couponRepository
-                    .findByCode(request.getCouponCode().toUpperCase().trim())
-                    .orElseThrow(() -> new BadRequestException("Invalid coupon code"));
-            validateCoupon(appliedCoupon, userId, subtotal);
-            discount = computeDiscount(appliedCoupon, subtotal);
-        }
-
-        BigDecimal total = subtotal.subtract(discount);
-
-        // ── 3. Resolve address fields ─────────────────────────────────────────
-        UserCheckoutRequest.RecipientInfo r = request.getRecipient();
+        UserCheckoutRequest.RecipientInfo recipient = request.getRecipient();
         String shippingStreet = request.getDeliveryAddress() != null
                 ? request.getDeliveryAddress().getAddress()
-                : (request.getPickupPointId() != null
-                        ? "Pickup Point #" + request.getPickupPointId()
-                        : "");
+                : (request.getPickupPointId() != null ? "Pickup Point #" + request.getPickupPointId() : "");
 
-        // ── 4. Build Order ────────────────────────────────────────────────────
         Order order = Order.builder()
-                .orderNumber("SJL-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
+                .orderNumber(newOrderNumber())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
-                .subtotal(subtotal)
+                .subtotal(result.subtotal)
                 .shippingCost(BigDecimal.ZERO)
                 .taxAmount(BigDecimal.ZERO)
-                .discount(discount)
-                .total(total)
-                .currency(effectiveCurrency)
-                .coupon(appliedCoupon)
-                .couponCode(appliedCoupon != null ? appliedCoupon.getCode() : null)
-                .shippingFullName(r.getName())
-                .shippingPhone(r.getPhone())
+                .discount(result.discount)
+                .total(result.total)
+                .currency(result.currency)
+                .coupon(result.platformCoupon)
+                .couponCode(orderLevelCouponCode(result))
+                .shippingFullName(recipient.getName())
+                .shippingPhone(recipient.getPhone())
                 .shippingStreet(shippingStreet)
-                .shippingCity(r.getCity())
-                .shippingState(r.getRegion())
-                .shippingCountry(r.getCountry())
+                .shippingCity(recipient.getCity())
+                .shippingState(recipient.getRegion())
+                .shippingCountry(recipient.getCountry())
                 .notes(request.getNotes())
                 .build();
 
-        Order savedOrder = orderRepository.save(order);
-
-        // ── 5. Assign items + group by vendor ─────────────────────────────────
-        allItems.forEach(item -> item.setOrder(savedOrder));
-
-        Map<Long, List<OrderItem>> byVendor = allItems.stream()
-                .collect(Collectors.groupingBy(i -> i.getVendor().getId()));
-
-        List<VendorOrder> vendorOrders = new ArrayList<>();
-        for (List<OrderItem> vendorItems : byVendor.values()) {
-            BigDecimal vendorSubtotal = vendorItems.stream()
-                    .map(OrderItem::getTotalPrice)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            VendorOrder vo = VendorOrder.builder()
-                    .order(savedOrder)
-                    .vendor(vendorItems.get(0).getVendor())
-                    .subtotal(vendorSubtotal)
-                    .status(VendorOrderStatus.PENDING)
-                    .build();
-
-            VendorOrder savedVo = vendorOrderRepository.save(vo);
-            vendorItems.forEach(item -> item.setVendorOrder(savedVo));
-            vendorOrders.add(savedVo);
-        }
-
-        savedOrder.setItems(allItems);
-        Order finalOrder = orderRepository.save(savedOrder);
-
-        // ── 6. Record coupon usage ────────────────────────────────────────────
-        if (appliedCoupon != null) {
-            couponUsageRepository.save(CouponUsage.builder()
-                    .coupon(appliedCoupon)
-                    .user(customer)
-                    .order(finalOrder)
-                    .build());
-            appliedCoupon.setUsageCount(appliedCoupon.getUsageCount() + 1);
-            couponRepository.save(appliedCoupon);
-        }
-
-        // ── 7. Post-creation side-effects ─────────────────────────────────────
-        dispatchOrderCreationEvents(customer, finalOrder, vendorOrders);
-
+        Order finalOrder = persistOrder(order, result);
+        recordCouponUsage(result, customer, finalOrder.getId());
+        dispatchOrderCreationEvents(customer, finalOrder, result.vendorOrders);
         return finalOrder;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Checkout from cart
+    // Placement — from the shopper's cart
     // ─────────────────────────────────────────────────────────────────────────
 
     @Override
     @Transactional
-    public Order createFromCart(Long userId, Long shippingAddressId, String notes) {
-        Cart cart = cartRepository.findByUserId(userId)
-                .orElseThrow(() -> new BadRequestException("No active cart found"));
+    public Order createFromCart(Long userId, Long shippingAddressId, String notes, String displayCurrency) {
+        User customer = requireUser(userId);
+        Address address = requireOwnedAddress(shippingAddressId, userId);
 
-        if (cart.getItems().isEmpty()) {
-            throw new BadRequestException("Cart is empty");
-        }
+        CartOwner owner = CartOwner.user(userId);
+        CartResponse quote = cartService.getCart(owner, displayCurrency);
+        requireCheckoutable(quote);
 
-        // Build CreateOrderRequest from cart contents
-        List<CreateOrderRequest.OrderItemRequest> itemRequests = cart.getItems().stream()
-                .map(cartItem -> {
-                    CreateOrderRequest.OrderItemRequest r = new CreateOrderRequest.OrderItemRequest();
-                    r.setProductId(cartItem.getProduct().getId());
-                    r.setVariantId(cartItem.getVariant() != null ? cartItem.getVariant().getId() : null);
-                    r.setQuantity(cartItem.getQuantity());
-                    return r;
-                })
-                .toList();
+        CheckoutResult result = buildFromQuote(quote);
 
-        CreateOrderRequest req = new CreateOrderRequest();
-        req.setItems(itemRequests);
-        req.setShippingAddressId(shippingAddressId);
-        req.setCouponCode(cart.getCoupon() != null ? cart.getCoupon().getCode() : null);
-        req.setNotes(notes);
+        Order order = Order.builder()
+                .orderNumber(newOrderNumber())
+                .customer(customer)
+                .status(OrderStatus.PENDING)
+                .subtotal(result.subtotal)
+                .shippingCost(BigDecimal.ZERO)
+                .taxAmount(BigDecimal.ZERO)
+                .discount(result.discount)
+                .total(result.total)
+                .currency(result.currency)
+                .coupon(result.platformCoupon)
+                .couponCode(orderLevelCouponCode(result))
+                .shippingFullName(address.getFullName())
+                .shippingPhone(address.getPhone())
+                .shippingStreet(address.getStreet())
+                .shippingApartment(address.getApartmentSuite())
+                .shippingCity(address.getCity())
+                .shippingState(address.getState())
+                .shippingPostalCode(address.getPostalCode())
+                .shippingCountry(address.getCountryCode())
+                .notes(notes)
+                .build();
 
-        // Delegate to create() — all validation, stock deduction, coupon logic handled there
-        Order order = create(userId, req);
-
-        // Clear cart after successful checkout
-        cart.getItems().clear();
-        cart.setCoupon(null);
-        cartRepository.save(cart);
-
-        return order;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Queries
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @Override
-    @Transactional(readOnly = true)
-    public OrderAdminDto findById(Long id) {
-        // JOIN FETCH customer + items + product/vendor/vendorOrder per item
-        // so DTO mapping runs inside the transaction with all proxies initialised.
-        Order order = orderRepository.findByIdFetchAll(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Order", id));
-        return OrderAdminDto.toAdminDto(order);
-    }
-
-    @Override
-    public Order findByOrderNumber(String orderNumber) {
-        return orderRepository.findByOrderNumber(orderNumber)
-                .orElseThrow(() -> new ResourceNotFoundException("Order not found: " + orderNumber));
-    }
-
-    @Override
-    public Page<Order> findByCustomer(Long customerId, Pageable pageable) {
-        return orderRepository.findByCustomerId(customerId, pageable);
-    }
-
-    @Override
-    public Page<Order> findByVendor(Long vendorId, Pageable pageable) {
-        return orderRepository.findByItems_VendorId(vendorId, pageable);
-    }
-
-    @Override
-    public Page<Order> findByStatus(OrderStatus status, Pageable pageable) {
-        // JOIN FETCH customer so admin page can display customer name/email
-        return orderRepository.findByStatusFetchCustomer(status, pageable);
-    }
-
-    @Override
-    public Page<Order> findAll(Pageable pageable) {
-        // JOIN FETCH customer so admin page can display customer name/email
-        return orderRepository.findAllFetchCustomer(pageable);
+        Order finalOrder = persistOrder(order, result);
+        recordCouponUsage(result, customer, finalOrder.getId());
+        cartService.clearCart(owner);
+        dispatchOrderCreationEvents(customer, finalOrder, result.vendorOrders);
+        return finalOrder;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -527,161 +260,39 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public Order createGuestOrder(GuestCheckoutRequest request) {
-
-        // ── 1. Resolve items from guest cart OR explicit list ─────────────────
-        List<CreateOrderRequest.OrderItemRequest> itemRequests;
-        Cart guestCart = null;
+        CartOwner guestOwner = null;
+        CheckoutResult result;
 
         if (request.getSessionId() != null && !request.getSessionId().isBlank()) {
-            guestCart = cartRepository.findBySessionId(request.getSessionId())
-                    .orElseThrow(() -> new BadRequestException(
-                        "No active guest cart found. Please add items to your cart first."));
-            if (guestCart.getItems().isEmpty()) {
-                throw new BadRequestException("Your cart is empty");
-            }
-            // Build item requests from cart
-            final Cart fc = guestCart;
-            itemRequests = fc.getItems().stream()
-                    .map(ci -> {
-                        CreateOrderRequest.OrderItemRequest r = new CreateOrderRequest.OrderItemRequest();
-                        r.setProductId(ci.getProduct().getId());
-                        r.setVariantId(ci.getVariant() != null ? ci.getVariant().getId() : null);
-                        r.setQuantity(ci.getQuantity());
-                        return r;
-                    })
-                    .toList();
-            // Use cart coupon if request doesn't specify one
-            if ((request.getCouponCode() == null || request.getCouponCode().isBlank())
-                    && guestCart.getCoupon() != null) {
-                request.setCouponCode(guestCart.getCoupon().getCode());
-            }
+            guestOwner = CartOwner.guest(request.getSessionId());
+            CartResponse quote = cartService.getCart(guestOwner, request.getCurrency());
+            requireCheckoutable(quote);
+            result = buildFromQuote(quote);
         } else {
             if (request.getItems() == null || request.getItems().isEmpty()) {
-                throw new BadRequestException(
-                    "Provide either a sessionId (guest cart) or an explicit items list");
+                throw new BadRequestException("Provide either a sessionId (guest cart) or an explicit items list");
             }
-            itemRequests = request.getItems();
+            List<ItemSpec> specs = toSpecs(request.getItems());
+            String requestedCurrency = (request.getCurrency() != null && !request.getCurrency().isBlank())
+                    ? request.getCurrency() : defaultCurrency;
+            result = priceExplicitItems(specs, requestedCurrency, request.getCouponCode(), null);
         }
 
-        // ── 2. Resolve products, validate stock, deduct inventory ─────────────
-        List<OrderItem> allItems = new ArrayList<>();
-        BigDecimal subtotal = BigDecimal.ZERO;
-
-        // Resolve checkout currency FIRST — needed inside the item loop for price conversion
-        String effectiveCurrency = (request.getCurrency() != null && !request.getCurrency().isBlank())
-                ? request.getCurrency().toUpperCase() : "GMD";
-
-        for (CreateOrderRequest.OrderItemRequest itemReq : itemRequests) {
-            // Pessimistic lock — same race-condition fix as the authenticated order path
-            Product product = productRepository.findByIdForUpdate(itemReq.getProductId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Product", itemReq.getProductId()));
-            if (!product.isActive()) {
-                throw new BadRequestException("Product is no longer available: " + product.getName());
-            }
-
-            ProductVariant variant        = null;
-            BigDecimal     unitPrice      = product.getPrice();
-            String         variantSku     = null;
-            String         selectedOptions = null;
-
-            if (itemReq.getVariantId() != null) {
-                variant = variantRepository.findByIdForUpdate(itemReq.getVariantId())
-                        .orElseThrow(() -> new ResourceNotFoundException(
-                            "ProductVariant", itemReq.getVariantId()));
-                if (!variant.getProduct().getId().equals(product.getId())) {
-                    throw new BadRequestException(
-                        "Variant does not belong to product: " + product.getName());
-                }
-                if (!variant.isAvailable()) {
-                    throw new BadRequestException(
-                        "Selected variant is no longer available for: " + product.getName());
-                }
-                if (variant.getStockQuantity() < itemReq.getQuantity()) {
-                    throw new BadRequestException("Insufficient variant stock for: "
-                        + product.getName() + " (available: " + variant.getStockQuantity() + ")");
-                }
-                if (variant.getPrice() != null) unitPrice = variant.getPrice();
-                variantSku = variant.getSku();
-                if (variant.getValues() != null && !variant.getValues().isEmpty()) {
-                    selectedOptions = variant.getValues().stream()
-                            .map(v -> v.getOptionValue().getOption().getName()
-                                    + ": " + v.getOptionValue().getDisplayValue())
-                            .collect(Collectors.joining(", "));
-                }
-                variant.setStockQuantity(variant.getStockQuantity() - itemReq.getQuantity());
-                variantRepository.save(variant);
-            } else {
-                if (product.getStockQuantity() < itemReq.getQuantity()) {
-                    throw new BadRequestException("Insufficient stock for: " + product.getName()
-                        + " (available: " + product.getStockQuantity() + ")");
-                }
-                product.setStockQuantity(product.getStockQuantity() - itemReq.getQuantity());
-                productRepository.save(product);
-            }
-
-            // Convert unit price to checkout currency (all product prices are stored in GMD)
-            if (!"GMD".equals(effectiveCurrency)) {
-                unitPrice = currencyConversionService.convert(unitPrice, "GMD", effectiveCurrency)
-                        .setScale(2, RoundingMode.HALF_UP);
-            }
-
-            BigDecimal itemTotal = unitPrice.multiply(BigDecimal.valueOf(itemReq.getQuantity()));
-            subtotal = subtotal.add(itemTotal);
-
-            String thumbnail = product.getImages().stream()
-                    .filter(ProductImage::isDefault)
-                    .findFirst()
-                    .or(() -> product.getImages().stream().findFirst())
-                    .map(ProductImage::getImageUrl)
-                    .orElse(null);
-
-            allItems.add(OrderItem.builder()
-                    .product(product)
-                    .variant(variant)
-                    .vendor(product.getVendor())
-                    .quantity(itemReq.getQuantity())
-                    .unitPrice(unitPrice)
-                    .totalPrice(itemTotal)
-                    .productName(product.getName())
-                    .productSku(product.getSku())
-                    .variantSku(variantSku)
-                    .selectedOptions(selectedOptions)
-                    .productImageUrl(thumbnail)
-                    .build());
-        }
-
-        // ── 3. Resolve coupon discount (no per-user limit for guests) ─────────
-        Coupon     appliedCoupon = null;
-        BigDecimal discount      = BigDecimal.ZERO;
-
-        if (request.getCouponCode() != null && !request.getCouponCode().isBlank()) {
-            appliedCoupon = couponRepository
-                    .findByCode(request.getCouponCode().toUpperCase().trim())
-                    .orElseThrow(() -> new BadRequestException("Invalid coupon code"));
-            // Validate without per-user limit (null userId)
-            validateCoupon(appliedCoupon, null, subtotal);
-            discount = computeDiscount(appliedCoupon, subtotal);
-        }
-
-        BigDecimal total = subtotal.subtract(discount);
-
-        // ── 4. Build Order (customer = null → guest order) ────────────────────
         Order order = Order.builder()
-                .orderNumber("SJL-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
-                .customer(null)                              // guest order
+                .orderNumber(newOrderNumber())
                 .guestName(request.getGuestName())
                 .guestEmail(request.getGuestEmail().toLowerCase().trim())
                 .guestPhone(request.getGuestPhone())
                 .guestSessionId(request.getSessionId())
                 .status(OrderStatus.PENDING)
-                .subtotal(subtotal)
+                .subtotal(result.subtotal)
                 .shippingCost(BigDecimal.ZERO)
                 .taxAmount(BigDecimal.ZERO)
-                .discount(discount)
-                .total(total)
-                .currency(effectiveCurrency)
-                .coupon(appliedCoupon)
-                .couponCode(appliedCoupon != null ? appliedCoupon.getCode() : null)
+                .discount(result.discount)
+                .total(result.total)
+                .currency(result.currency)
+                .coupon(result.platformCoupon)
+                .couponCode(orderLevelCouponCode(result))
                 .shippingFullName(request.getShippingFullName())
                 .shippingPhone(request.getShippingPhone())
                 .shippingStreet(request.getShippingStreet())
@@ -693,58 +304,14 @@ public class OrderServiceImpl implements OrderService {
                 .notes(request.getNotes())
                 .build();
 
-        Order savedOrder = orderRepository.save(order);
+        Order finalOrder = persistOrder(order, result);
+        recordCouponUsage(result, null, finalOrder.getId());
 
-        // ── 5. Assign items and group into VendorOrders ───────────────────────
-        allItems.forEach(item -> item.setOrder(savedOrder));
-
-        Map<Long, List<OrderItem>> byVendor = allItems.stream()
-                .collect(Collectors.groupingBy(i -> i.getVendor().getId()));
-
-        List<VendorOrder> vendorOrders = new ArrayList<>();
-        for (List<OrderItem> vendorItems : byVendor.values()) {
-            BigDecimal vendorSubtotal = vendorItems.stream()
-                    .map(OrderItem::getTotalPrice)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            VendorOrder vo = VendorOrder.builder()
-                    .order(savedOrder)
-                    .vendor(vendorItems.get(0).getVendor())
-                    .subtotal(vendorSubtotal)
-                    .status(VendorOrderStatus.PENDING)
-                    .build();
-
-            VendorOrder savedVo = vendorOrderRepository.save(vo);
-            vendorItems.forEach(item -> item.setVendorOrder(savedVo));
-            vendorOrders.add(savedVo);
+        if (guestOwner != null) {
+            cartService.clearCart(guestOwner);
         }
 
-        savedOrder.setItems(allItems);
-        Order finalOrder = orderRepository.save(savedOrder);
-
-        // ── 6. Record coupon usage (no user link for guest) ───────────────────
-        if (appliedCoupon != null) {
-            // CouponUsage.user is nullable for guest orders
-            couponUsageRepository.save(CouponUsage.builder()
-                    .coupon(appliedCoupon)
-                    .user(null)
-                    .order(finalOrder)
-                    .build());
-            appliedCoupon.setUsageCount(appliedCoupon.getUsageCount() + 1);
-            couponRepository.save(appliedCoupon);
-        }
-
-        // ── 7. Clear guest cart ───────────────────────────────────────────────
-        if (guestCart != null) {
-            guestCart.getItems().clear();
-            guestCart.setCoupon(null);
-            cartRepository.save(guestCart);
-        }
-
-        // ── 8. Send confirmation to guest email ───────────────────────────────
-        dispatchGuestOrderCreationEvents(request.getGuestEmail(),
-                request.getGuestName(), finalOrder, vendorOrders);
-
+        dispatchGuestOrderCreationEvents(finalOrder, result.vendorOrders);
         return finalOrder;
     }
 
@@ -752,13 +319,50 @@ public class OrderServiceImpl implements OrderService {
     @Transactional(readOnly = true)
     public Order findGuestOrder(String orderNumber, String guestEmail) {
         return orderRepository.findByOrderNumberAndGuestEmailIgnoreCase(orderNumber, guestEmail)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                    "Order not found. Please check your order number and email."));
+                .orElseThrow(() -> new ResourceNotFoundException("Order", "no matching guest order"));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Queries
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public OrderAdminDto findById(Long id) {
+        Order order = orderRepository.findByIdFetchAll(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", id));
+        return OrderAdminDto.toAdminDto(order);
+    }
+
+    @Override
+    public Order findByOrderNumber(String orderNumber) {
+        return orderRepository.findByOrderNumber(orderNumber)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", "no order with number " + orderNumber));
+    }
+
+    @Override
+    public Page<Order> findByCustomer(Long customerId, Pageable pageable) {
+        return orderRepository.findByCustomerIdFetchCustomer(customerId, pageable);
+    }
+
+    @Override
+    public Page<Order> findByVendor(Long vendorId, Pageable pageable) {
+        return orderRepository.findByItems_VendorId(vendorId, pageable);
+    }
+
+    @Override
+    public Page<Order> findByStatus(OrderStatus status, Pageable pageable) {
+        return orderRepository.findByStatusFetchCustomer(status, pageable);
+    }
+
+    @Override
+    public Page<Order> findAll(Pageable pageable) {
+        return orderRepository.findAllFetchCustomer(pageable);
     }
 
     @Override
     public List<OrderStatusHistory> getStatusHistory(Long orderId) {
-        findById(orderId);
+        orderRepository.findById(orderId).orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
         return statusHistoryRepository.findByOrderIdOrderByChangedAtAsc(orderId);
     }
 
@@ -775,31 +379,27 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public Order updateStatus(Long orderId, Long adminUserId, UpdateOrderStatusRequest request) {
-        Order order      = orderRepository.findById(orderId).orElseThrow(() -> new EntityNotFoundException("Order not found: " + orderId));
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
         OrderStatus from = order.getStatus();
-        OrderStatus to   = request.getStatus();
+        OrderStatus to = request.getStatus();
 
-        // Guard: terminal statuses can't transition (except CANCELLED → REFUNDED)
-        if (TERMINAL_STATUSES.contains(from)) {
-            if (!(from == OrderStatus.CANCELLED && to == OrderStatus.REFUNDED)) {
-                throw new BadRequestException(
-                        "Cannot change order status from " + from + " to " + to);
-            }
+        if (TERMINAL_STATUSES.contains(from) && !(from == OrderStatus.CANCELLED && to == OrderStatus.REFUNDED)) {
+            throw new BadRequestException("Cannot change order status from " + from + " to " + to);
         }
 
-        // Restore stock + cancel all vendor sub-orders on cancellation
         if (to == OrderStatus.CANCELLED && from != OrderStatus.CANCELLED) {
             restoreStock(order);
             cancelVendorOrders(order);
         }
 
         order.setStatus(to);
-        if (request.getNotes() != null) order.setNotes(request.getNotes());
+        if (request.getNotes() != null) {
+            order.setNotes(request.getNotes());
+        }
         Order saved = orderRepository.save(order);
 
-        User changedBy = Optional.ofNullable(adminUserId)
-                .flatMap(userRepository::findById)
-                .orElse(null);
+        User changedBy = adminUserId != null ? userRepository.findById(adminUserId).orElse(null) : null;
 
         statusHistoryRepository.save(OrderStatusHistory.builder()
                 .order(saved)
@@ -809,38 +409,692 @@ public class OrderServiceImpl implements OrderService {
                 .changedBy(changedBy)
                 .build());
 
-        // ── Push notification to customer on status change ────────────────────
         if (saved.getCustomer() != null) {
             try {
-                String pushTitle = orderStatusPushTitle(to);
-                String pushBody  = "Order " + saved.getOrderNumber() + " — " + orderStatusPushBody(to);
-                pushNotificationService.sendToUser(
-                        saved.getCustomer().getId(),
-                        pushTitle,
-                        pushBody,
-                        Map.of("type",        "ORDER_STATUS_CHANGED",
-                               "orderId",     String.valueOf(saved.getId()),
-                               "orderNumber", saved.getOrderNumber(),
-                               "status",      to.name()));
-            } catch (Exception ignored) { /* never block the transaction */ }
+                notificationService.send(saved.getCustomer().getId(), orderStatusTitle(to),
+                        "Order " + saved.getOrderNumber() + " " + orderStatusBody(to),
+                        "ORDER", saved.getOrderNumber());
+            } catch (Exception ignored) {
+                // Never let a notification failure roll back the status change
+            }
         }
 
         return saved;
     }
 
-    private static String orderStatusPushTitle(OrderStatus status) {
+    @Override
+    @Transactional
+    public Order cancelByCustomer(Long orderId, Long customerId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+
+        if (order.isGuestOrder()) {
+            throw new BadRequestException("Guest orders cannot be cancelled through this endpoint");
+        }
+        if (!order.getCustomer().getId().equals(customerId)) {
+            throw new BadRequestException("Order does not belong to this user");
+        }
+        if (!CUSTOMER_CANCELLABLE.contains(order.getStatus())) {
+            throw new BadRequestException("Order cannot be cancelled at this stage. Current status: "
+                    + order.getStatus() + ". Only PENDING or CONFIRMED orders may be cancelled by the customer.");
+        }
+
+        return updateStatus(orderId, UpdateOrderStatusRequest.builder()
+                .status(OrderStatus.CANCELLED).notes("Cancelled by customer").build());
+    }
+
+    @Override
+    @Transactional
+    public Order cancelGuestOrder(String orderNumber, String guestEmail) {
+        Order order = findGuestOrder(orderNumber, guestEmail);
+
+        if (!CUSTOMER_CANCELLABLE.contains(order.getStatus())) {
+            throw new BadRequestException("Order cannot be cancelled at this stage. Current status: "
+                    + order.getStatus() + ". Only PENDING or CONFIRMED orders may be cancelled.");
+        }
+
+        return updateStatus(order.getId(), UpdateOrderStatusRequest.builder()
+                .status(OrderStatus.CANCELLED).notes("Cancelled by guest").build());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Scheduling
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public Order updateSchedule(String orderNumber, Long userId, OrderScheduleRequest request) {
+        Order order = findByOrderNumber(orderNumber);
+        if (order.isGuestOrder() || !order.getCustomer().getId().equals(userId)) {
+            throw new BadRequestException("Order does not belong to this user");
+        }
+        if (!CUSTOMER_CANCELLABLE.contains(order.getStatus())) {
+            throw new BadRequestException("Delivery schedule can only be changed while the order is pending or confirmed");
+        }
+
+        order.setScheduledDate(request.getScheduledDate());
+        order.setScheduledTimeSlot(request.getScheduledTimeSlot());
+        order.setDeliveryInstructions(request.getDeliveryInstructions());
+        order.setContactlessDelivery(request.isContactlessDelivery());
+        return orderRepository.save(order);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Reorder
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public CartResponse reorder(String orderNumber, Long userId) {
+        Order order = findByOrderNumber(orderNumber);
+        if (order.isGuestOrder() || !order.getCustomer().getId().equals(userId)) {
+            throw new BadRequestException("Order does not belong to this user");
+        }
+
+        CartOwner owner = CartOwner.user(userId);
+        for (OrderItem item : order.getItems()) {
+            try {
+                cartService.addItem(owner, CartItemRequest.builder()
+                        .productId(item.getProduct().getId())
+                        .variantId(item.getVariant() != null ? item.getVariant().getId() : null)
+                        .quantity(item.getQuantity())
+                        .build(), null);
+            } catch (RuntimeException ex) {
+                log.info("Reorder skipped '{}' from order {}: {}", item.getProductName(), orderNumber, ex.getMessage());
+            }
+        }
+        return cartService.getCart(owner, null);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pricing — from an already-priced cart quote
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private void requireCheckoutable(CartResponse quote) {
+        if (quote.getVendors() == null || quote.getVendors().isEmpty()) {
+            throw new BadRequestException("Cart is empty");
+        }
+        if (!quote.isTotalsComplete()) {
+            throw new BadRequestException("Cart totals are incomplete — a currency conversion rate is missing");
+        }
+        List<String> blocked = quote.getVendors().stream()
+                .filter(g -> !g.isCheckoutable())
+                .map(CartResponse.VendorGroup::getStoreName)
+                .toList();
+        if (!blocked.isEmpty()) {
+            throw new BadRequestException("Some items can't be checked out right now: " + String.join(", ", blocked));
+        }
+    }
+
+    private CheckoutResult buildFromQuote(CartResponse quote) {
+        Coupon platformCoupon = findCouponByCode(quote.getPlatformCouponCode());
+        List<VendorOrder> vendorOrders = new ArrayList<>();
+
+        for (CartResponse.VendorGroup group : quote.getVendors()) {
+            Vendor vendor = vendorRepository.findById(group.getVendorId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Vendor", group.getVendorId()));
+
+            List<OrderItem> items = new ArrayList<>();
+            for (CartResponse.CartItemResponse itemResp : group.getItems()) {
+                items.add(lockAndBuildItem(itemResp));
+            }
+
+            Coupon vendorCoupon = findCouponByCode(group.getVendorCouponCode());
+
+            BigDecimal subtotalNative = group.getSubtotalNative();
+            BigDecimal exchangeRate = group.getExchangeRate();
+            BigDecimal discountNative = null;
+            BigDecimal totalNative = null;
+            if (subtotalNative != null && exchangeRate != null && exchangeRate.signum() > 0) {
+                discountNative = group.getDiscount().divide(exchangeRate, RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+                totalNative = subtotalNative.subtract(discountNative);
+            }
+
+            vendorOrders.add(VendorOrder.builder()
+                    .vendor(vendor)
+                    .status(VendorOrderStatus.PENDING)
+                    .nativeCurrency(group.getNativeCurrency())
+                    .subtotalNative(subtotalNative)
+                    .discountNative(discountNative)
+                    .totalNative(totalNative)
+                    .subtotal(group.getSubtotal())
+                    .discount(group.getDiscount())
+                    .total(group.getTotal())
+                    .coupon(vendorCoupon)
+                    .couponCode(group.getVendorCouponCode())
+                    .items(items)
+                    .build());
+        }
+
+        CheckoutResult result = new CheckoutResult();
+        result.subtotal = quote.getSubtotal();
+        result.discount = quote.getDiscount();
+        result.total = quote.getTotal();
+        result.currency = quote.getDisplayCurrency();
+        result.platformCoupon = platformCoupon;
+        result.vendorOrders = vendorOrders;
+        return result;
+    }
+
+    private OrderItem lockAndBuildItem(CartResponse.CartItemResponse itemResp) {
+        Product product = productRepository.findByIdForUpdate(itemResp.getProductId())
+                .orElseThrow(() -> new ResourceNotFoundException("Product", itemResp.getProductId()));
+        if (!product.isActive()) {
+            throw new BadRequestException("Product is no longer available: " + product.getName());
+        }
+
+        ProductVariant variant = null;
+        if (itemResp.getVariantId() != null) {
+            variant = variantRepository.findByIdForUpdate(itemResp.getVariantId())
+                    .orElseThrow(() -> new ResourceNotFoundException("ProductVariant", itemResp.getVariantId()));
+            if (!variant.isActive()) {
+                throw new BadRequestException("Selected option for " + product.getName() + " is no longer available");
+            }
+        }
+
+        int quantity = itemResp.getQuantity();
+        int available = availableStock(product, variant);
+        if (quantity > available) {
+            throw new BadRequestException("Only " + available + " left of " + product.getName());
+        }
+        deductStock(product, variant, quantity);
+
+        return OrderItem.builder()
+                .product(product)
+                .variant(variant)
+                .vendor(product.getVendor())
+                .quantity(quantity)
+                .unitPrice(itemResp.getUnitPriceNative())
+                .totalPrice(itemResp.getLineTotalNative())
+                .currency(itemResp.getNativeCurrency())
+                .unitPriceConverted(itemResp.getUnitPrice())
+                .totalPriceConverted(itemResp.getLineTotal())
+                .productName(itemResp.getProductName())
+                .productSku(product.getSku())
+                .variantSku(itemResp.getVariantSku())
+                .selectedOptions(itemResp.getVariantLabel())
+                .productImageUrl(itemResp.getImageUrl())
+                .build();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pricing — explicit item list (no cart involved)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private record ItemSpec(Long productId, Long variantId, int quantity) {}
+
+    private static List<ItemSpec> toSpecs(List<CreateOrderRequest.OrderItemRequest> items) {
+        return items.stream()
+                .map(i -> new ItemSpec(i.getProductId(), i.getVariantId(), i.getQuantity()))
+                .toList();
+    }
+
+    private CheckoutResult priceExplicitItems(List<ItemSpec> specs, String displayCurrency,
+                                              String couponCode, Long userId) {
+        if (specs.isEmpty()) {
+            throw new BadRequestException("No items to order");
+        }
+        String target = requireCurrencyCode(displayCurrency);
+
+        record Resolved(Product product, ProductVariant variant, Vendor vendor,
+                         String nativeCurrency, BigDecimal unitPriceNative, int quantity) {}
+
+        List<Resolved> resolved = new ArrayList<>();
+        for (ItemSpec spec : specs) {
+            Product product = productRepository.findByIdForUpdate(spec.productId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Product", spec.productId()));
+            requireSellable(product);
+
+            ProductVariant variant = null;
+            if (spec.variantId() != null) {
+                variant = variantRepository.findByIdForUpdate(spec.variantId())
+                        .orElseThrow(() -> new ResourceNotFoundException("ProductVariant", spec.variantId()));
+                if (!variant.getProduct().getId().equals(product.getId())) {
+                    throw new BadRequestException("Variant does not belong to product: " + product.getName());
+                }
+                if (!variant.isActive()) {
+                    throw new BadRequestException("Selected variant is no longer available for: " + product.getName());
+                }
+            }
+
+            int available = availableStock(product, variant);
+            if (spec.quantity() > available) {
+                throw new BadRequestException(
+                        "Insufficient stock for: " + product.getName() + " (available: " + available + ")");
+            }
+            deductStock(product, variant, spec.quantity());
+
+            BigDecimal unitPriceNative = (variant != null ? variant.getEffectivePrice() : product.getPrice())
+                    .setScale(RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+
+            resolved.add(new Resolved(product, variant, product.getVendor(),
+                    settlementCurrency(product.getVendor()), unitPriceNative, spec.quantity()));
+        }
+
+        Coupon coupon = findCouponByCode(couponCode);
+
+        Set<String> currencies = resolved.stream()
+                .map(Resolved::nativeCurrency)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (coupon != null) {
+            currencies.add(couponCurrency(coupon));
+        }
+        currencies.remove(target);
+        Map<String, BigDecimal> rates = currencies.isEmpty()
+                ? Map.of() : exchangeRateService.getLatestRates(target, currencies);
+        RateTable rateTable = new RateTable(target, rates);
+
+        Map<Long, List<Resolved>> byVendor = resolved.stream()
+                .collect(Collectors.groupingBy(r -> r.vendor().getId(), LinkedHashMap::new, Collectors.toList()));
+
+        Long couponVendorId = null;
+        if (coupon != null && coupon.getScope() == CouponScope.VENDOR) {
+            if (coupon.getVendor() == null) {
+                throw new BadRequestException("This coupon is misconfigured and cannot be applied");
+            }
+            if (!byVendor.containsKey(coupon.getVendor().getId())) {
+                throw new BadRequestException("This coupon only applies to items from " + coupon.getVendor().getStoreName());
+            }
+            couponVendorId = coupon.getVendor().getId();
+        }
+
+        List<VendorOrder> vendorOrders = new ArrayList<>();
+        BigDecimal grandSubtotal = BigDecimal.ZERO;
+
+        for (List<Resolved> items : byVendor.values()) {
+            Vendor vendor = items.get(0).vendor();
+            String nativeCurrency = items.get(0).nativeCurrency();
+
+            BigDecimal subtotalNative = BigDecimal.ZERO;
+            BigDecimal subtotalConverted = BigDecimal.ZERO;
+            List<OrderItem> orderItems = new ArrayList<>();
+
+            for (Resolved r : items) {
+                BigDecimal lineNative = r.unitPriceNative().multiply(BigDecimal.valueOf(r.quantity()));
+                BigDecimal unitConverted = rateTable.convert(r.unitPriceNative(), nativeCurrency);
+                BigDecimal lineConverted = rateTable.convert(lineNative, nativeCurrency);
+                if (lineConverted == null) {
+                    throw new BadRequestException("No exchange rate available for " + nativeCurrency + " to " + target);
+                }
+                subtotalNative = subtotalNative.add(lineNative);
+                subtotalConverted = subtotalConverted.add(lineConverted);
+
+                orderItems.add(OrderItem.builder()
+                        .product(r.product())
+                        .variant(r.variant())
+                        .vendor(vendor)
+                        .quantity(r.quantity())
+                        .unitPrice(r.unitPriceNative())
+                        .totalPrice(lineNative)
+                        .currency(nativeCurrency)
+                        .unitPriceConverted(unitConverted)
+                        .totalPriceConverted(lineConverted)
+                        .productName(r.product().getName())
+                        .productSku(r.product().getSku())
+                        .variantSku(r.variant() != null ? r.variant().getSku() : null)
+                        .selectedOptions(variantLabel(r.variant()))
+                        .productImageUrl(primaryImageUrl(r.product()))
+                        .build());
+            }
+
+            vendorOrders.add(VendorOrder.builder()
+                    .vendor(vendor)
+                    .status(VendorOrderStatus.PENDING)
+                    .nativeCurrency(nativeCurrency)
+                    .subtotalNative(subtotalNative)
+                    .discountNative(BigDecimal.ZERO)
+                    .totalNative(subtotalNative)
+                    .subtotal(subtotalConverted)
+                    .discount(BigDecimal.ZERO)
+                    .total(subtotalConverted)
+                    .items(orderItems)
+                    .build());
+            grandSubtotal = grandSubtotal.add(subtotalConverted);
+        }
+
+        BigDecimal grandDiscount = BigDecimal.ZERO;
+        Coupon platformCoupon = null;
+
+        if (coupon != null) {
+            if (coupon.getScope() == CouponScope.VENDOR) {
+                Long finalCouponVendorId = couponVendorId;
+                VendorOrder target1 = vendorOrders.stream()
+                        .filter(vo -> vo.getVendor().getId().equals(finalCouponVendorId))
+                        .findFirst().orElseThrow();
+                validateCoupon(coupon, userId, target1.getSubtotal(), rateTable);
+
+                BigDecimal discount = couponDiscount(coupon, target1.getSubtotal(), rateTable);
+                target1.setDiscount(discount);
+                target1.setTotal(target1.getSubtotal().subtract(discount));
+                target1.setCoupon(coupon);
+                target1.setCouponCode(coupon.getCode());
+                if (target1.getSubtotalNative() != null) {
+                    BigDecimal exchangeRate = rateTable.rateFor(target1.getNativeCurrency());
+                    if (exchangeRate != null && exchangeRate.signum() > 0) {
+                        BigDecimal discountNative = discount.divide(exchangeRate, RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+                        target1.setDiscountNative(discountNative);
+                        target1.setTotalNative(target1.getSubtotalNative().subtract(discountNative));
+                    }
+                }
+                grandDiscount = discount;
+            } else {
+                validateCoupon(coupon, userId, grandSubtotal, rateTable);
+                BigDecimal discount = couponDiscount(coupon, grandSubtotal, rateTable);
+                grandDiscount = discount;
+                platformCoupon = coupon;
+
+                if (discount.signum() > 0 && grandSubtotal.signum() > 0) {
+                    BigDecimal allocated = BigDecimal.ZERO;
+                    for (int i = 0; i < vendorOrders.size(); i++) {
+                        VendorOrder vo = vendorOrders.get(i);
+                        BigDecimal share;
+                        if (i == vendorOrders.size() - 1) {
+                            share = discount.subtract(allocated);
+                        } else {
+                            share = discount.multiply(vo.getSubtotal())
+                                    .divide(grandSubtotal, RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+                            allocated = allocated.add(share);
+                        }
+                        vo.setDiscount(share);
+                        vo.setTotal(vo.getSubtotal().subtract(share));
+                    }
+                }
+            }
+        }
+
+        CheckoutResult result = new CheckoutResult();
+        result.subtotal = grandSubtotal;
+        result.discount = grandDiscount;
+        result.total = grandSubtotal.subtract(grandDiscount);
+        result.currency = target;
+        result.platformCoupon = platformCoupon;
+        result.vendorOrders = vendorOrders;
+        return result;
+    }
+
+    private int availableStock(Product product, ProductVariant variant) {
+        if (product.isAllowBackorder()) {
+            return Integer.MAX_VALUE;
+        }
+        Integer stock = variant != null ? variant.getStock() : product.getStock();
+        return stock != null ? Math.max(stock, 0) : 0;
+    }
+
+    private void deductStock(Product product, ProductVariant variant, int quantity) {
+        if (variant != null) {
+            variant.setStock(variant.getStock() - quantity);
+            variantRepository.save(variant);
+        } else {
+            product.setStock(product.getStock() - quantity);
+            productRepository.save(product);
+        }
+    }
+
+    private void requireSellable(Product product) {
+        if (!product.isActive()) {
+            throw new BadRequestException("Product is not available: " + product.getName());
+        }
+        Vendor vendor = product.getVendor();
+        if (vendor == null) {
+            throw new BadRequestException("Product has no vendor and cannot be purchased");
+        }
+        if (!SELLABLE.contains(vendor.getStatus())) {
+            throw new BadRequestException(vendor.getStoreName() + " is not currently accepting orders");
+        }
+        String listing = product.getPriceCurrency();
+        String settlement = settlementCurrency(vendor);
+        if (listing != null && !listing.isBlank() && !listing.equalsIgnoreCase(settlement)) {
+            log.error("Product {} is priced in {} but vendor {} settles in {}",
+                    product.getId(), listing, vendor.getId(), settlement);
+            throw new BadRequestException("This listing is misconfigured and cannot be purchased right now");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Persistence helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Accumulator for a priced-but-not-yet-persisted checkout, from either pricing path. */
+    private static final class CheckoutResult {
+        BigDecimal subtotal;
+        BigDecimal discount;
+        BigDecimal total;
+        String currency;
+        Coupon platformCoupon;
+        List<VendorOrder> vendorOrders;
+    }
+
+    private Order persistOrder(Order order, CheckoutResult result) {
+        Order savedOrder = orderRepository.save(order);
+
+        List<OrderItem> allItems = new ArrayList<>();
+        for (VendorOrder vo : result.vendorOrders) {
+            vo.setOrder(savedOrder);
+            VendorOrder savedVo = vendorOrderRepository.save(vo);
+            for (OrderItem item : savedVo.getItems()) {
+                item.setOrder(savedOrder);
+                item.setVendorOrder(savedVo);
+                allItems.add(item);
+            }
+        }
+        savedOrder.setItems(allItems);
+        Order finalOrder = orderRepository.save(savedOrder);
+
+        statusHistoryRepository.save(OrderStatusHistory.builder()
+                .order(finalOrder)
+                .toStatus(OrderStatus.PENDING)
+                .notes("Order placed")
+                .build());
+
+        return finalOrder;
+    }
+
+    private void recordCouponUsage(CheckoutResult result, User customer, Long orderId) {
+        if (result.platformCoupon != null) {
+            saveCouponUsage(result.platformCoupon, customer, orderId);
+        }
+        for (VendorOrder vo : result.vendorOrders) {
+            if (vo.getCoupon() != null) {
+                saveCouponUsage(vo.getCoupon(), customer, orderId);
+            }
+        }
+    }
+
+    private void saveCouponUsage(Coupon coupon, User user, Long orderId) {
+        couponUsageRepository.save(CouponUsage.builder()
+                .coupon(coupon)
+                .user(user)
+                .orderId(orderId)
+                .build());
+        coupon.setUsageCount((coupon.getUsageCount() == null ? 0 : coupon.getUsageCount()) + 1);
+        couponRepository.save(coupon);
+    }
+
+    private void restoreStock(Order order) {
+        for (OrderItem item : order.getItems()) {
+            if (item.getVariant() != null) {
+                ProductVariant v = item.getVariant();
+                v.setStock(v.getStock() + item.getQuantity());
+                variantRepository.save(v);
+            } else {
+                Product p = item.getProduct();
+                p.setStock(p.getStock() + item.getQuantity());
+                productRepository.save(p);
+            }
+        }
+    }
+
+    private void cancelVendorOrders(Order order) {
+        for (VendorOrder vo : vendorOrderRepository.findByOrderId(order.getId())) {
+            if (!VENDOR_TERMINAL.contains(vo.getStatus())) {
+                vo.setStatus(VendorOrderStatus.CANCELLED);
+                vo.setCancelledAt(LocalDateTime.now());
+                vendorOrderRepository.save(vo);
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Coupon math (mirrors CartServiceImpl's — orders have no cart to delegate to)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private Coupon findCouponByCode(String code) {
+        if (code == null || code.isBlank()) {
+            return null;
+        }
+        return couponRepository.findByCode(code.trim().toUpperCase()).orElse(null);
+    }
+
+    private void validateCoupon(Coupon coupon, Long userId, BigDecimal baseInDisplay, RateTable rates) {
+        String reason = couponInvalidReason(coupon, userId);
+        if (reason != null) {
+            throw new BadRequestException("Coupon cannot be used: " + reason);
+        }
+        if (coupon.getMinimumOrderAmount() != null) {
+            BigDecimal minimum = rates.convert(coupon.getMinimumOrderAmount(), couponCurrency(coupon));
+            if (minimum == null) {
+                throw new BadRequestException("Cannot check this coupon's minimum in " + rates.target() + " right now");
+            }
+            if (baseInDisplay.compareTo(minimum) < 0) {
+                throw new BadRequestException("Minimum spend for this coupon is " + minimum + " " + rates.target());
+            }
+        }
+    }
+
+    private String couponInvalidReason(Coupon coupon, Long userId) {
+        if (coupon == null) {
+            return "it no longer exists";
+        }
+        if (!coupon.isActive()) {
+            return "it is no longer active";
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (coupon.getStartsAt() != null && now.isBefore(coupon.getStartsAt())) {
+            return "it is not valid yet";
+        }
+        if (coupon.getExpiresAt() != null && now.isAfter(coupon.getExpiresAt())) {
+            return "it has expired";
+        }
+        if (coupon.getUsageLimit() != null && coupon.getUsageCount() != null
+                && coupon.getUsageCount() >= coupon.getUsageLimit()) {
+            return "it has reached its usage limit";
+        }
+        if (userId != null && coupon.getPerUserLimit() != null
+                && couponUsageRepository.countByCouponIdAndUserId(coupon.getId(), userId) >= coupon.getPerUserLimit()) {
+            return "you have already used it the maximum number of times";
+        }
+        return null;
+    }
+
+    private BigDecimal couponDiscount(Coupon coupon, BigDecimal base, RateTable rates) {
+        if (coupon == null || base.signum() <= 0) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal discount;
+        switch (coupon.getType()) {
+            case PERCENTAGE -> {
+                discount = base.multiply(coupon.getValue()).divide(HUNDRED, RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+                BigDecimal cap = rates.convert(coupon.getMaximumDiscountAmount(), couponCurrency(coupon));
+                if (cap != null) {
+                    discount = discount.min(cap);
+                }
+            }
+            case FIXED_AMOUNT -> {
+                BigDecimal value = rates.convert(coupon.getValue(), couponCurrency(coupon));
+                discount = value != null ? value : BigDecimal.ZERO;
+            }
+            case FREE_SHIPPING -> discount = BigDecimal.ZERO;
+            default -> discount = BigDecimal.ZERO;
+        }
+        return discount.max(BigDecimal.ZERO).min(base);
+    }
+
+    private String couponCurrency(Coupon coupon) {
+        String currency = coupon.getCurrency();
+        return (currency == null || currency.isBlank()) ? defaultCurrency : currency.toUpperCase();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Currency / misc helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private String settlementCurrency(Vendor vendor) {
+        String currency = vendor != null ? vendor.getSettlementCurrency() : null;
+        return (currency == null || currency.isBlank()) ? defaultCurrency : currency.toUpperCase();
+    }
+
+    private String requireCurrencyCode(String code) {
+        if (code == null || code.trim().length() != 3 || !code.trim().chars().allMatch(Character::isLetter)) {
+            throw new BadRequestException("Currency must be a 3-letter ISO 4217 code");
+        }
+        return code.trim().toUpperCase();
+    }
+
+    private User requireUser(Long userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+    }
+
+    private Address requireOwnedAddress(Long addressId, Long userId) {
+        Address address = addressRepository.findById(addressId)
+                .orElseThrow(() -> new ResourceNotFoundException("Address", addressId));
+        if (!address.getUser().getId().equals(userId)) {
+            throw new BadRequestException("Address does not belong to this user");
+        }
+        return address;
+    }
+
+    private static String newOrderNumber() {
+        return "SJL-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    }
+
+    private static String orderLevelCouponCode(CheckoutResult result) {
+        if (result.platformCoupon != null) {
+            return result.platformCoupon.getCode();
+        }
+        return result.vendorOrders.stream()
+                .map(VendorOrder::getCouponCode)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static String variantLabel(ProductVariant variant) {
+        if (variant == null || variant.getSelectedValues() == null || variant.getSelectedValues().isEmpty()) {
+            return null;
+        }
+        return variant.getSelectedValues().stream()
+                .sorted(Comparator.comparing(ProductOptionValue::getSortOrder, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(ProductOptionValue::getDisplayValue)
+                .filter(Objects::nonNull)
+                .collect(Collectors.joining(", "));
+    }
+
+    private static String primaryImageUrl(Product product) {
+        if (product == null || product.getImages() == null) {
+            return null;
+        }
+        return product.getImages().stream()
+                .filter(ProductImage::isDefault)
+                .findFirst()
+                .or(() -> product.getImages().stream().findFirst())
+                .map(ProductImage::getImageUrl)
+                .orElse(null);
+    }
+
+    private static String orderStatusTitle(OrderStatus status) {
         return switch (status) {
-            case CONFIRMED  -> "Order Confirmed ✅";
-            case PROCESSING -> "Order Being Prepared 🏭";
-            case SHIPPED    -> "Order Shipped 🚚";
-            case DELIVERED  -> "Order Delivered 🎉";
+            case CONFIRMED  -> "Order Confirmed";
+            case PROCESSING -> "Order Being Prepared";
+            case SHIPPED    -> "Order Shipped";
+            case DELIVERED  -> "Order Delivered";
             case CANCELLED  -> "Order Cancelled";
-            case REFUNDED   -> "Refund Processed 💸";
+            case REFUNDED   -> "Refund Processed";
             default         -> "Order Update";
         };
     }
 
-    private static String orderStatusPushBody(OrderStatus status) {
+    private static String orderStatusBody(OrderStatus status) {
         return switch (status) {
             case CONFIRMED  -> "has been confirmed and will be prepared shortly.";
             case PROCESSING -> "is currently being prepared.";
@@ -852,232 +1106,36 @@ public class OrderServiceImpl implements OrderService {
         };
     }
 
-    @Override
-    @Transactional
-    public Order cancelByCustomer(Long orderId, Long customerId) {
-        Order order = orderRepository.findById(orderId).orElseThrow(() -> new EntityNotFoundException("Order not found: " + orderId));
-
-        // Guest orders cannot be cancelled through the authenticated endpoint
-        if (order.isGuestOrder()) {
-            throw new BadRequestException("Guest orders cannot be cancelled through this endpoint");
-        }
-        if (!order.getCustomer().getId().equals(customerId)) {
-            throw new BadRequestException("Order does not belong to this user");
-        }
-        if (!CUSTOMER_CANCELLABLE.contains(order.getStatus())) {
-            throw new BadRequestException(
-                    "Order cannot be cancelled at this stage. "
-                    + "Current status: " + order.getStatus()
-                    + ". Only PENDING or CONFIRMED orders may be cancelled by the customer.");
-        }
-
-        UpdateOrderStatusRequest req = new UpdateOrderStatusRequest();
-        req.setStatus(OrderStatus.CANCELLED);
-        req.setNotes("Cancelled by customer");
-        return updateStatus(orderId, req);
-    }
-
-    @Override
-    @Transactional
-    public Order cancelGuestOrder(String orderNumber, String guestEmail) {
-        Order order = findGuestOrder(orderNumber, guestEmail);
-
-        if (!CUSTOMER_CANCELLABLE.contains(order.getStatus())) {
-            throw new BadRequestException(
-                    "Order cannot be cancelled at this stage. "
-                    + "Current status: " + order.getStatus()
-                    + ". Only PENDING or CONFIRMED orders may be cancelled.");
-        }
-
-        UpdateOrderStatusRequest req = new UpdateOrderStatusRequest();
-        req.setStatus(OrderStatus.CANCELLED);
-        req.setNotes("Cancelled by guest");
-        return updateStatus(order.getId(), req);
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
-    // Private helpers
+    // Notifications (fire-and-forget; never roll back the order)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** Validate a coupon before applying it to an order. */
-    private void validateCoupon(Coupon coupon, Long userId, BigDecimal subtotal) {
-        if (!coupon.isActive()) {
-            throw new BadRequestException("Coupon is no longer active");
-        }
-        LocalDateTime now = LocalDateTime.now();
-        if (coupon.getStartsAt() != null && now.isBefore(coupon.getStartsAt())) {
-            throw new BadRequestException("Coupon is not yet valid");
-        }
-        if (coupon.getExpiresAt() != null && now.isAfter(coupon.getExpiresAt())) {
-            throw new BadRequestException("Coupon has expired");
-        }
-        if (coupon.getMinimumOrderAmount() != null
-                && subtotal.compareTo(coupon.getMinimumOrderAmount()) < 0) {
-            throw new BadRequestException(
-                    "Minimum order amount for this coupon is " + coupon.getMinimumOrderAmount());
-        }
-        if (coupon.getUsageLimit() != null && coupon.getUsageCount() >= coupon.getUsageLimit()) {
-            throw new BadRequestException("Coupon usage limit has been reached");
-        }
-        // Skip per-user limit for guest orders (userId == null) — no account to track against
-        if (coupon.getPerUserLimit() != null && userId != null) {
-            long used = couponUsageRepository.countByCouponIdAndUserId(coupon.getId(), userId);
-            if (used >= coupon.getPerUserLimit()) {
-                throw new BadRequestException(
-                        "You have already used this coupon the maximum number of times");
-            }
-        }
-    }
-
-    /** Compute the discount amount for a coupon against a given subtotal. */
-    private BigDecimal computeDiscount(Coupon coupon, BigDecimal subtotal) {
-        return switch (coupon.getType()) {
-            case PERCENTAGE -> {
-                BigDecimal d = subtotal
-                        .multiply(coupon.getValue())
-                        .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
-                if (coupon.getMaximumDiscountAmount() != null) {
-                    d = d.min(coupon.getMaximumDiscountAmount());
-                }
-                yield d;
-            }
-            case FIXED_AMOUNT -> coupon.getValue().min(subtotal);
-            // FREE_SHIPPING discount is applied to shipping cost, not subtotal
-            case FREE_SHIPPING -> BigDecimal.ZERO;
-        };
-    }
-
-    /** Restore stock for every item in a cancelled order. */
-    private void restoreStock(Order order) {
-        for (OrderItem item : order.getItems()) {
-            if (item.getVariant() != null) {
-                ProductVariant v = item.getVariant();
-                v.setStockQuantity(v.getStockQuantity() + item.getQuantity());
-                variantRepository.save(v);
-            } else {
-                Product p = item.getProduct();
-                p.setStockQuantity(p.getStockQuantity() + item.getQuantity());
-                productRepository.save(p);
-            }
-        }
-    }
-
-    /** Cancel every vendor sub-order that is not already terminal. */
-    private void cancelVendorOrders(Order order) {
-        Set<VendorOrderStatus> vendorTerminal = Set.of(
-                VendorOrderStatus.DELIVERED, VendorOrderStatus.CANCELLED,
-                VendorOrderStatus.REFUNDED);
-
-        for (VendorOrder vo : vendorOrderRepository.findByOrderId(order.getId())) {
-            if (!vendorTerminal.contains(vo.getStatus())) {
-                vo.setStatus(VendorOrderStatus.CANCELLED);
-                vo.setCancelledAt(LocalDateTime.now());
-                vendorOrderRepository.save(vo);
-            }
-        }
-    }
-
-    /**
-     * Fire-and-forget vendor push after a guest order is placed.
-     * Customer confirmation email is intentionally NOT sent here — it is deferred
-     * to {@code PaymentServiceImpl.advanceOrderOnPayment} so the guest only
-     * receives "Order Confirmed" after payment is actually verified.
-     */
-    private void dispatchGuestOrderCreationEvents(String guestEmail, String guestName,
-                                                   Order order, List<VendorOrder> vendorOrders) {
+    private void dispatchOrderCreationEvents(User customer, Order order, List<VendorOrder> vendorOrders) {
         try {
-            for (VendorOrder vo : vendorOrders) {
-                Vendor vendor = vo.getVendor();
-                if (vendor.getUser() != null) {
-                    emailService.sendVendorOrderNotification(
-                            vendor.getUser().getEmail(),
-                            vendor.getStoreName(),
-                            order.getOrderNumber());
-
-                    notificationService.send(
-                            vendor.getUser().getId(),
-                            "New Guest Order Received",
-                            "A new guest order (" + order.getOrderNumber() + ") requires fulfilment.",
-                            "ORDER", order.getOrderNumber());
-
-                    pushNotificationService.sendToUser(
-                            vendor.getUser().getId(),
-                            "🛒 New Guest Order!",
-                            "Guest order " + order.getOrderNumber() + " — "
-                                    + vo.getItems().size() + " item(s) ready to fulfil.",
-                            Map.of("type", "NEW_ORDER",
-                                   "orderId",     String.valueOf(order.getId()),
-                                   "orderNumber", order.getOrderNumber()));
-                }
-            }
-        } catch (Exception ignored) {
-            // Never let notifications roll back the order transaction
-        }
-    }
-
-    /**
-     * Fire-and-forget in-app notifications + vendor push after order creation.
-     * Customer confirmation email is intentionally NOT sent here — it is deferred
-     * to {@code PaymentServiceImpl.advanceOrderOnPayment} so the customer only
-     * receives "Order Confirmed" after payment is actually verified.
-     */
-    private void dispatchOrderCreationEvents(User customer, Order order,
-                                              List<VendorOrder> vendorOrders) {
-        try {
-            // ── Customer: order placed push ───────────────────────────────────
-            notificationService.send(
-                    customer.getId(),
-                    "Order Placed Successfully",
+            notificationService.send(customer.getId(), "Order Placed Successfully",
                     "Your order " + order.getOrderNumber() + " has been placed and is being processed.",
                     "ORDER", order.getOrderNumber());
-
-            pushNotificationService.sendToUser(
-                    customer.getId(),
-                    "Order Placed ✅",
-                    "Your order " + order.getOrderNumber() + " is confirmed and being processed.",
-                    Map.of("type", "ORDER_PLACED", "orderId", String.valueOf(order.getId()),
-                           "orderNumber", order.getOrderNumber()));
-
-            // ── Vendor: new order push ────────────────────────────────────────
-            for (VendorOrder vo : vendorOrders) {
-                Vendor vendor = vo.getVendor();
-                if (vendor.getUser() != null) {
-                    emailService.sendVendorOrderNotification(
-                            vendor.getUser().getEmail(),
-                            vendor.getStoreName(),
-                            order.getOrderNumber());
-
-                    notificationService.send(
-                            vendor.getUser().getId(),
-                            "New Order Received",
-                            "You have a new order (" + order.getOrderNumber() + ") with "
-                                    + vo.getItems().size() + " item(s) to fulfil.",
-                            "ORDER", order.getOrderNumber());
-
-                    pushNotificationService.sendToUser(
-                            vendor.getUser().getId(),
-                            "🛒 New Order!",
-                            "Order " + order.getOrderNumber() + " — "
-                                    + vo.getItems().size() + " item(s) ready to fulfil.",
-                            Map.of("type", "NEW_ORDER",
-                                   "orderId",     String.valueOf(order.getId()),
-                                   "orderNumber", order.getOrderNumber()));
-                }
-            }
+            notifyVendors(order, vendorOrders, "New Order Received",
+                    "You have a new order (" + order.getOrderNumber() + ") to fulfil.");
         } catch (Exception ignored) {
-            // Never let notifications roll back the order transaction
         }
     }
 
-    @Override
-    public Order updateSchedule(String orderNumber, Long userId, OrderScheduleRequest request) {
-        // TODO Auto-generated method stub
-        throw new UnsupportedOperationException("Unimplemented method 'updateSchedule'");
+    private void dispatchGuestOrderCreationEvents(Order order, List<VendorOrder> vendorOrders) {
+        try {
+            notifyVendors(order, vendorOrders, "New Guest Order Received",
+                    "A new guest order (" + order.getOrderNumber() + ") requires fulfilment.");
+        } catch (Exception ignored) {
+        }
     }
 
-    @Override
-    public CartResponse reorder(String orderNumber, Long userId) {
-        // TODO Auto-generated method stub
-        throw new UnsupportedOperationException("Unimplemented method 'reorder'");
+    private void notifyVendors(Order order, List<VendorOrder> vendorOrders, String title, String message) {
+        for (VendorOrder vo : vendorOrders) {
+            Vendor vendor = vo.getVendor();
+            if (vendor.getUser() != null) {
+                emailService.sendVendorOrderNotification(vendor.getUser().getEmail(), vendor.getStoreName(), order.getOrderNumber());
+                notificationService.send(vendor.getUser().getId(), title, message, "ORDER", order.getOrderNumber());
+            }
+        }
     }
 }

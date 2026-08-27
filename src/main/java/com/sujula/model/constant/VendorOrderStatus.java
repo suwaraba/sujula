@@ -1,7 +1,7 @@
 package com.sujula.model.constant;
 
-/** Fulfilment lifecycle of a customer order (the parent {@code Order}, not a single vendor's slice of it). */
-public enum OrderStatus {
+/** Fulfilment status of one vendor's slice of a multivendor order. */
+public enum VendorOrderStatus {
     PENDING,
     CONFIRMED,
     PROCESSING,

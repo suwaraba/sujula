@@ -2,17 +2,32 @@ package com.sujula.repository.product;
 
 
 import com.sujula.model.products.Product;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
 
 @Repository
 public interface ProductRepository extends JpaRepository<Product, Long> {
 
     boolean existsBySlug(String slug);
+
+    /**
+     * Row-level exclusive lock on the product, taken before reading stock at
+     * checkout. Prevents two concurrent orders from both seeing the same
+     * available stock and both deducting it — the second blocks on the DB lock
+     * until the first commits, then reads the already-reduced quantity. Must be
+     * called inside an active transaction.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Product p WHERE p.id = :id")
+    Optional<Product> findByIdForUpdate(@Param("id") Long id);
 
     boolean existsByVendorIdAndNameIgnoreCase(Long vendorId, String productName);
 
