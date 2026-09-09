@@ -79,7 +79,9 @@ public class ProductVariant {
         if (priceOverride != null) return priceOverride;
         BigDecimal total = product.getPrice();
         for (ProductOptionValue v : selectedValues) {
-            total = total.add(BigDecimal.valueOf(v.getExtraPrice()));
+            if (v.getExtraPrice() != null) {
+                total = total.add(v.getExtraPrice());
+            }
         }
         return total;
     }

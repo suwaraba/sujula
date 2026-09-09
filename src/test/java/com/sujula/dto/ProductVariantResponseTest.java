@@ -22,7 +22,7 @@ class ProductVariantResponseTest {
     @Test
     void derivesThePriceFromTheBaseProductPlusOptionSurcharges() {
         ProductVariant variant = variant(new BigDecimal("500.00"), null, 4, true,
-                value("L", "Large", 0, 50.0), value("RED", "Red", 1, 25.0));
+                value("L", "Large", 0, "50.00"), value("RED", "Red", 1, "25.00"));
 
         ProductVariantResponse response = ProductVariantResponse.from(variant);
 
@@ -33,7 +33,7 @@ class ProductVariantResponseTest {
     @Test
     void anOverrideWinsOverTheDerivedPrice() {
         ProductVariant variant = variant(new BigDecimal("500.00"), new BigDecimal("420.00"), 4, true,
-                value("L", "Large", 0, 50.0));
+                value("L", "Large", 0, "50.00"));
 
         ProductVariantResponse response = ProductVariantResponse.from(variant);
 
@@ -44,9 +44,9 @@ class ProductVariantResponseTest {
     @Test
     void reportsStockAndTheVendorsOwnSwitchSeparately() {
         ProductVariantResponse soldOut = ProductVariantResponse.from(
-                variant(new BigDecimal("500.00"), null, 0, true, value("L", "Large", 0, 0)));
+                variant(new BigDecimal("500.00"), null, 0, true, value("L", "Large", 0, "0.00")));
         ProductVariantResponse discontinued = ProductVariantResponse.from(
-                variant(new BigDecimal("500.00"), null, 7, false, value("L", "Large", 0, 0)));
+                variant(new BigDecimal("500.00"), null, 7, false, value("L", "Large", 0, "0.00")));
 
         assertFalse(soldOut.isInStock());
         assertTrue(soldOut.isActive(), "out of stock is not the same as withdrawn");
@@ -58,7 +58,7 @@ class ProductVariantResponseTest {
     void labelsAndOrdersValuesByTheirOptionOrder() {
         // Colour is added first but sorts second.
         ProductVariant variant = variant(new BigDecimal("500.00"), null, 3, true,
-                value("RED", "Red", 2, 0), value("L", "Large", 1, 0));
+                value("RED", "Red", 2, "0.00"), value("L", "Large", 1, "0.00"));
 
         ProductVariantResponse response = ProductVariantResponse.from(variant);
 
@@ -69,7 +69,7 @@ class ProductVariantResponseTest {
 
     @Test
     void carriesTheOptionEachValueBelongsTo() {
-        ProductOptionValue large = value("L", "Large", 0, 0);
+        ProductOptionValue large = value("L", "Large", 0, "0.00");
         large.setOption(option(9L, "Size", "size"));
 
         ProductVariantValueResponse response = ProductVariantValueResponse.from(large);
@@ -110,12 +110,12 @@ class ProductVariantResponseTest {
         return variant;
     }
 
-    private static ProductOptionValue value(String value, String displayValue, int sortOrder, double extraPrice) {
+    private static ProductOptionValue value(String value, String displayValue, int sortOrder, String extraPrice) {
         ProductOptionValue optionValue = new ProductOptionValue();
         optionValue.setValue(value);
         optionValue.setDisplayValue(displayValue);
         optionValue.setSortOrder(sortOrder);
-        optionValue.setExtraPrice(extraPrice);
+        optionValue.setExtraPrice(new BigDecimal(extraPrice));
         return optionValue;
     }
 

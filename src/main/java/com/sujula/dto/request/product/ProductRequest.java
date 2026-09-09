@@ -96,7 +96,7 @@ public class ProductRequest {
 
         public String getValue() { return value; }
         public void setValue(String value) { this.value = value; }
-        public double getExtraPrice() { return extraPrice; }
+        public BigDecimal getExtraPrice() { return extraPrice; }
         public void setExtraPrice(BigDecimal extraPrice) { this.extraPrice = extraPrice; }
     }
 

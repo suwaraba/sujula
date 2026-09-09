@@ -1,0 +1,2 @@
+# The DGS codegen plugin in pom.xml scans this directory and fails the build if
+# it does not exist. Drop .graphqls schemas here, or remove the plugin.

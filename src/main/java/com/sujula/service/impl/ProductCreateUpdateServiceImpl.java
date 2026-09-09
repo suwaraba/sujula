@@ -7,6 +7,7 @@ import com.sujula.dto.response.product.ProductResponse;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.products.*;
+import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.user.Vendor;
 import com.sujula.repository.product.BrandRepository;
 import com.sujula.repository.product.ProductImageRepository;
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.text.Normalizer;
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -31,6 +33,10 @@ import java.util.stream.Collectors;
 public class ProductCreateUpdateServiceImpl {
 
     private static final int MAX_IMAGES_PER_PRODUCT = 3;
+
+    /** Vendors allowed to trade — the same rule order placement applies. */
+    private static final Set<PartnerStatus> SELLABLE =
+            EnumSet.of(PartnerStatus.APPROVED, PartnerStatus.ACTIVE);
 
     private final ProductRepository productRepository;
     private final VendorRepository vendorRepository;
@@ -232,8 +238,9 @@ public class ProductCreateUpdateServiceImpl {
         Vendor vendor = vendorRepository.findByUserId(vendorUserId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Vendor not found for user id " + vendorUserId));
-        if (!vendor.getAcive()) {
-            throw new BadRequestException("Vendor account is not active");
+        if (!SELLABLE.contains(vendor.getStatus())) {
+            throw new BadRequestException(
+                    "Vendor account is not active. Current status: " + vendor.getStatus());
         }
         return vendor;
     }
@@ -333,7 +340,8 @@ public class ProductCreateUpdateServiceImpl {
                 }
                 ProductOptionValue optionValue = new ProductOptionValue();
                 optionValue.setValue(val);
-                optionValue.setExtraPrice(valReq.getExtraPrice());
+                optionValue.setExtraPrice(
+                        valReq.getExtraPrice() != null ? valReq.getExtraPrice() : BigDecimal.ZERO);
                 optionValue.setOption(option);
                 option.getValues().add(optionValue);
             }
