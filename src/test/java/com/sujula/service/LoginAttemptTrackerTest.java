@@ -18,70 +18,129 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-/** How much rope each role gets, and when the lock actually falls. */
+/** The escalation ladder: when the owner is warned, when they are sent a way back in, when the door shuts. */
 class LoginAttemptTrackerTest {
 
     private LoginAttemptProperties properties;
+    private EmailService emailService;
     private LoginAttemptTracker tracker;
     private User user;
 
     @BeforeEach
     void setUp() {
         UserRepository userRepository = mock(UserRepository.class);
+        emailService = mock(EmailService.class);
         properties = new LoginAttemptProperties();
 
         user = new User();
         user.setId(1L);
+        user.setEmail("awa@sujula.gm");
+        user.setFirstName("Awa");
+        user.setLastName("Ceesay");
         user.setRole(UserRole.CUSTOMER);
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(userRepository.save(any(User.class))).thenAnswer(i -> i.getArgument(0));
 
-        tracker = new LoginAttemptTracker(userRepository, properties);
+        tracker = new LoginAttemptTracker(userRepository, emailService, properties);
     }
 
+    // ── Admin: 3 → reset link, 4 → locked ────────────────────────────────────
+
     @Test
-    void anAdminGetsFiveAttempts() {
+    void anAdminIsSentAResetLinkOnTheThirdFailureAndLockedOnTheFourth() {
         user.setRole(UserRole.ADMIN);
 
-        for (int attempt = 1; attempt < 5; attempt++) {
-            assertNull(tracker.recordFailure(1L), "attempt " + attempt + " must not lock the account");
-        }
-        assertNotNull(tracker.recordFailure(1L), "the fifth failure locks it");
+        assertNull(tracker.recordFailure(1L));
+        assertNull(tracker.recordFailure(1L));
+        verify(emailService, never()).sendPasswordResetEmail(any(), any(), any());
+
+        assertNull(tracker.recordFailure(1L), "the third failure warns, it does not lock");
+        verify(emailService).sendPasswordResetEmail(eq("awa@sujula.gm"), eq("Awa Ceesay"), any());
+        assertNotNull(user.getPasswordResetToken(), "the link has to be backed by a real token");
+        assertTrue(user.getPasswordResetTokenExpiry().isAfter(LocalDateTime.now()));
+
+        assertNotNull(tracker.recordFailure(1L), "the fourth locks the account");
         assertTrue(user.isLockedOut());
-        assertEquals(5, user.getFailedLoginAttempts());
+        assertEquals(4, user.getFailedLoginAttempts());
     }
 
     @Test
-    void theOtherStaffRolesGetFifteen() {
-        for (UserRole role : new UserRole[]{UserRole.VENDOR, UserRole.DELIVERY, UserRole.PICKUP_OPERATOR}) {
+    void anAdminGetsNoWarningStep() {
+        user.setRole(UserRole.ADMIN);
+
+        for (int attempt = 0; attempt < 4; attempt++) {
+            tracker.recordFailure(1L);
+        }
+        verify(emailService, never()).sendFailedSignInWarningEmail(any(), any(), anyInt(), anyInt());
+    }
+
+    // ── Everyone else: 3 → notice, 5 → reset link, 7 → locked ────────────────
+
+    @Test
+    void everyoneElseIsWarnedAtThreeSentALinkAtFiveAndLockedAtSeven() {
+        tracker.recordFailure(1L);
+        tracker.recordFailure(1L);
+        verify(emailService, never()).sendFailedSignInWarningEmail(any(), any(), anyInt(), anyInt());
+
+        assertNull(tracker.recordFailure(1L));
+        // Warned, and told how much room is left: 7 - 3.
+        verify(emailService).sendFailedSignInWarningEmail("awa@sujula.gm", "Awa Ceesay", 3, 4);
+        assertNull(user.getPasswordResetToken(), "a warning must not hand out a reset token");
+
+        assertNull(tracker.recordFailure(1L));
+        assertNull(tracker.recordFailure(1L));
+        verify(emailService).sendPasswordResetEmail(eq("awa@sujula.gm"), eq("Awa Ceesay"), any());
+        assertNotNull(user.getPasswordResetToken());
+
+        assertNull(tracker.recordFailure(1L));
+        assertNotNull(tracker.recordFailure(1L), "the seventh failure locks the account");
+        assertTrue(user.isLockedOut());
+        assertEquals(7, user.getFailedLoginAttempts());
+    }
+
+    @Test
+    void theLadderIsTheSameForEveryNonAdminRole() {
+        for (UserRole role : new UserRole[]{UserRole.CUSTOMER, UserRole.VENDOR,
+                UserRole.DELIVERY, UserRole.PICKUP_OPERATOR}) {
             user.setRole(role);
             user.setFailedLoginAttempts(0);
             user.setLockedUntil(null);
 
-            for (int attempt = 1; attempt < 15; attempt++) {
+            for (int attempt = 1; attempt < 7; attempt++) {
                 assertNull(tracker.recordFailure(1L), role + " locked early, on attempt " + attempt);
             }
-            assertNotNull(tracker.recordFailure(1L), role + " should lock on the fifteenth failure");
+            assertNotNull(tracker.recordFailure(1L), role + " should lock on the seventh failure");
         }
     }
 
+    // ── The mail cannon problem ──────────────────────────────────────────────
+
     @Test
-    void aShopperIsNeverLockedOut() {
-        for (int attempt = 0; attempt < 50; attempt++) {
-            assertNull(tracker.recordFailure(1L));
+    void eachStepMailsOnceNoMatterHowLongTheAttackRunsFor() {
+        user.setRole(UserRole.ADMIN);
+        for (int attempt = 0; attempt < 30; attempt++) {
+            tracker.recordFailure(1L);
         }
-        assertFalse(user.isLockedOut(), "locking a customer out would itself be an attack on them");
-        assertEquals(50, user.getFailedLoginAttempts(), "the failures are still counted for ops");
+
+        // Otherwise a login form becomes a way to bombard someone's inbox.
+        verify(emailService, times(1)).sendPasswordResetEmail(any(), any(), any());
+        verifyNoMoreInteractions(emailService);
     }
 
     @Test
     void aLockedAccountIsNotPushedFurtherOutByMoreGuessing() {
         user.setRole(UserRole.ADMIN);
-        for (int attempt = 0; attempt < 5; attempt++) {
+        for (int attempt = 0; attempt < 4; attempt++) {
             tracker.recordFailure(1L);
         }
         LocalDateTime lockedUntil = user.getLockedUntil();
@@ -91,13 +150,15 @@ class LoginAttemptTrackerTest {
         }
         assertEquals(lockedUntil, user.getLockedUntil(),
                 "otherwise anyone knowing the address could keep the owner out for good");
-        assertEquals(5, user.getFailedLoginAttempts());
+        assertEquals(4, user.getFailedLoginAttempts());
     }
+
+    // ── Resets ───────────────────────────────────────────────────────────────
 
     @Test
     void theCountStartsOverOnceALockHasExpired() {
         user.setRole(UserRole.ADMIN);
-        user.setFailedLoginAttempts(5);
+        user.setFailedLoginAttempts(4);
         user.setLockedUntil(LocalDateTime.now().minusMinutes(1));
 
         assertNull(tracker.recordFailure(1L), "an expired lock gives a fresh budget");
@@ -107,8 +168,7 @@ class LoginAttemptTrackerTest {
 
     @Test
     void aSuccessfulSignInClearsEverything() {
-        user.setRole(UserRole.ADMIN);
-        user.setFailedLoginAttempts(3);
+        user.setFailedLoginAttempts(6);
         user.setLockedUntil(LocalDateTime.now().plusMinutes(5));
 
         tracker.recordSuccess(1L);
@@ -118,26 +178,28 @@ class LoginAttemptTrackerTest {
     }
 
     @Test
-    void theBudgetAndTheDurationAreConfigurable() {
-        properties.getMaxAttempts().put(UserRole.CUSTOMER, 3);
-        properties.setLockoutDuration(Duration.ofHours(2));
-
-        tracker.recordFailure(1L);
-        tracker.recordFailure(1L);
-        LocalDateTime lockedUntil = tracker.recordFailure(1L);
-
-        assertNotNull(lockedUntil);
-        assertTrue(lockedUntil.isAfter(LocalDateTime.now().plusMinutes(110)));
-    }
-
-    @Test
     void anAdminUnlockLiftsItImmediately() {
-        user.setFailedLoginAttempts(9);
+        user.setFailedLoginAttempts(7);
         user.setLockedUntil(LocalDateTime.now().plusMinutes(15));
 
         tracker.clear(user);
 
         assertFalse(user.isLockedOut());
         assertEquals(0, user.getFailedLoginAttempts());
+    }
+
+    @Test
+    void everyStepAndTheDurationAreConfigurable() {
+        properties.getRoles().put(UserRole.CUSTOMER,
+                LoginAttemptProperties.LoginPolicy.of(0, 0, 2));
+        properties.setLockoutDuration(Duration.ofHours(2));
+
+        assertNull(tracker.recordFailure(1L));
+        LocalDateTime lockedUntil = tracker.recordFailure(1L);
+
+        assertNotNull(lockedUntil);
+        assertTrue(lockedUntil.isAfter(LocalDateTime.now().plusMinutes(110)));
+        // Steps switched off send nothing.
+        verifyNoMoreInteractions(emailService);
     }
 }

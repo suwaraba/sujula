@@ -35,9 +35,7 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import java.util.Base64;
 import java.util.Currency;
 import java.util.List;
 import java.util.Locale;
@@ -70,7 +68,7 @@ public class UserServiceImpl implements UserService {
         this.geoService = geoService;
         this.loginAttempts = loginAttempts;
         this.loginAttemptProperties = loginAttemptProperties;
-        this.absentUserHash = passwordEncoder.encode(generateSecureToken());
+        this.absentUserHash = passwordEncoder.encode(Utils.generateSecureToken());
     }
 
     @Override
@@ -137,10 +135,6 @@ public class UserServiceImpl implements UserService {
 
     private static final String INVALID_CREDENTIALS = "Invalid email or password";
 
-    // Characters used for random password generation — no ambiguous chars (0/O, 1/l/I)
-    private static final String CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#$!";
-    private static final int PWD_LENGTH = 12;
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     @Override
     public UserResponse getCurrentUser(Long userId) {
@@ -371,7 +365,7 @@ public class UserServiceImpl implements UserService {
                 return;
             }
 
-            user.setPasswordResetToken(generateSecureToken());
+            user.setPasswordResetToken(Utils.generateSecureToken());
             user.setPasswordResetTokenExpiry(LocalDateTime.now().plusHours(24));
             User saved = userRepository.save(user);
             emailService.sendPasswordResetEmail(saved.getEmail(), saved.getFullName(), saved.getPasswordResetToken());
@@ -522,12 +516,6 @@ public class UserServiceImpl implements UserService {
         if (authenticatedUserId == null || userId == null || !authenticatedUserId.equals(userId)) {
             throw new AccessDeniedException("Access is denied");
         }
-    }
-
-    private String generateSecureToken() {
-        byte[] bytes = new byte[32];
-        RANDOM.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     private void validatePasswordStrength(String password) {

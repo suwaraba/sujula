@@ -11,19 +11,16 @@ import java.util.EnumMap;
 import java.util.Map;
 
 /**
- * How many failed sign-ins an account tolerates, per role.
+ * What happens as failed sign-ins pile up on one account.
  *
- * <p>The budget is set by what an account can do, not by who owns it. An admin
- * can move money, approve vendors and read every customer's details, so five
- * wrong passwords is already generous; a vendor, driver or pickup operator can
- * reach one shop's data, so fifteen. Shoppers are deliberately absent: locking
- * a customer out is itself an attack — anyone who knows an email address could
- * shut them out of their own basket — and for an account that holds no
- * privileges the cure is worse than the disease.
+ * <p>Three steps, counted in consecutive failures: warn the owner, offer them a
+ * way back in, then stop accepting attempts. Everyone gets the same ladder;
+ * admins climb it faster, because an admin account moves money, approves
+ * vendors and reads every customer's details, and is worth far more to an
+ * attacker than the seven guesses a shopper's account is allowed.
  *
- * <p>A role with no entry here, or an entry of zero or less, is never locked
- * out. Note that this leaves customer accounts with no brute-force protection
- * at all until request throttling is added in front of the endpoint.
+ * <p>A step set to zero or left unset never fires, so a role can be given a
+ * lockout with no emails, emails with no lockout, or nothing at all.
  */
 @Getter
 @Setter
@@ -31,35 +28,81 @@ import java.util.Map;
 @ConfigurationProperties(prefix = "sujula.security.login")
 public class LoginAttemptProperties {
 
-    /** Consecutive failures a role may accumulate before the account locks. */
-    private Map<UserRole, Integer> maxAttempts = defaultMaxAttempts();
+    /** Applies to every role without an entry in {@link #roles}. */
+    private LoginPolicy defaultPolicy = LoginPolicy.of(3, 5, 7);
+
+    /** Per-role overrides. */
+    private Map<UserRole, LoginPolicy> roles = defaultRoles();
 
     /**
-     * How long a lockout lasts. It expires on its own so that support is not in
-     * the loop for every mistyped password — and so that an attacker who learns
-     * an admin's address cannot keep them out indefinitely.
+     * How long a lockout lasts. It expires on its own so support is not in the
+     * loop for a mistyped password — and so an attacker who learns an admin's
+     * address cannot keep them out indefinitely.
      */
     private Duration lockoutDuration = Duration.ofMinutes(15);
 
-    /**
-     * Failures this role may accumulate, or empty when the role is never
-     * locked out.
-     */
-    public java.util.Optional<Integer> maxAttemptsFor(UserRole role) {
+    public LoginPolicy policyFor(UserRole role) {
         if (role == null) {
-            return java.util.Optional.empty();
+            return defaultPolicy;
         }
-        Integer limit = maxAttempts.get(role);
-        return (limit != null && limit > 0) ? java.util.Optional.of(limit) : java.util.Optional.empty();
+        return roles.getOrDefault(role, defaultPolicy);
     }
 
-    private static Map<UserRole, Integer> defaultMaxAttempts() {
-        Map<UserRole, Integer> limits = new EnumMap<>(UserRole.class);
-        limits.put(UserRole.ADMIN, 5);
-        limits.put(UserRole.VENDOR, 15);
-        limits.put(UserRole.DELIVERY, 15);
-        limits.put(UserRole.PICKUP_OPERATOR, 15);
-        // UserRole.CUSTOMER intentionally absent — shoppers are not locked out.
-        return limits;
+    private static Map<UserRole, LoginPolicy> defaultRoles() {
+        Map<UserRole, LoginPolicy> policies = new EnumMap<>(UserRole.class);
+        // No warning step: an admin who has failed three times is already at the
+        // point where the others only get told to expect trouble.
+        policies.put(UserRole.ADMIN, LoginPolicy.of(0, 3, 4));
+        return policies;
+    }
+
+    /**
+     * The ladder for one kind of account, in consecutive failed attempts.
+     *
+     * @param warnAt       failure that triggers the "someone is trying to sign
+     *                     in" notice, which points at password recovery but
+     *                     carries no token — at this point there is no reason to
+     *                     believe the person failing is the owner
+     * @param resetEmailAt failure that issues a real password-reset link, for an
+     *                     owner who has evidently forgotten theirs
+     * @param lockAt       failure that stops the account accepting sign-ins
+     */
+    @Getter
+    @Setter
+    public static class LoginPolicy {
+
+        private int warnAt;
+        private int resetEmailAt;
+        private int lockAt;
+
+        public static LoginPolicy of(int warnAt, int resetEmailAt, int lockAt) {
+            LoginPolicy policy = new LoginPolicy();
+            policy.warnAt = warnAt;
+            policy.resetEmailAt = resetEmailAt;
+            policy.lockAt = lockAt;
+            return policy;
+        }
+
+        /**
+         * Steps fire on the exact attempt that reaches them, never after, so one
+         * counting cycle can never send the same mail twice — an attacker must
+         * not be able to turn a login form into a mail cannon aimed at a user.
+         */
+        public boolean warnsAt(int attempts) {
+            return warnAt > 0 && attempts == warnAt;
+        }
+
+        public boolean sendsResetAt(int attempts) {
+            return resetEmailAt > 0 && attempts == resetEmailAt;
+        }
+
+        public boolean locksAt(int attempts) {
+            return lockAt > 0 && attempts >= lockAt;
+        }
+
+        /** Attempts left before the lock falls; zero when this role never locks. */
+        public int remainingBefore(int attempts) {
+            return lockAt > 0 ? Math.max(0, lockAt - attempts) : 0;
+        }
     }
 }

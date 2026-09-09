@@ -68,6 +68,23 @@ public class EmailServiceImpl implements EmailService {
 
     @Async
     @Override
+    public void sendFailedSignInWarningEmail(String toEmail, String fullName, int attempts, int remainingAttempts) {
+        send(toEmail,
+                "Failed sign-in attempts on your Sujula account",
+                "Hi " + fullName + ",\n\n"
+                + "There have been " + attempts + " failed attempts to sign in to your Sujula account.\n\n"
+                + "If this was you, you can reset your password here:\n\n"
+                + frontendUrl + "/auth/forgot-password\n\n"
+                + "If it was not you, your password has not been changed and there is nothing you need to do — "
+                + "though a stronger password is worth considering.\n\n"
+                + "After " + remainingAttempts + " more failed "
+                + (remainingAttempts == 1 ? "attempt" : "attempts")
+                + ", the account will be locked for a short while.\n\n"
+                + "The Sujula Team");
+    }
+
+    @Async
+    @Override
     public void sendOrderConfirmationEmail(String toEmail, String fullName, String orderNumber) {
         send(toEmail,
                 "Order confirmed — " + orderNumber,

@@ -10,6 +10,15 @@ public interface EmailService {
 
     void sendPasswordResetEmail(String toEmail, String fullName, String token);
 
+    /**
+     * Warns the owner that sign-in is being attempted and failing, and points
+     * them at password recovery. Carries no token: at this point we do not know
+     * whether the person failing to sign in is the owner at all.
+     *
+     * @param remainingAttempts attempts left before the account locks
+     */
+    void sendFailedSignInWarningEmail(String toEmail, String fullName, int attempts, int remainingAttempts);
+
     void sendOrderConfirmationEmail(String toEmail, String fullName, String orderNumber);
 
     void sendVendorOrderNotification(String toEmail, String vendorName, String orderNumber);

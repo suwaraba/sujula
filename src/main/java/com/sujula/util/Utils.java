@@ -30,6 +30,13 @@ public class Utils {
         return slug.toLowerCase(Locale.ENGLISH).replaceAll("^-|-$", "");
     }
 
+    /** 256 bits of URL-safe randomness — for password reset and anything else a guesser must not reach. */
+    public static String generateSecureToken() {
+        byte[] bytes = new byte[32];
+        secureRandom.nextBytes(bytes);
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
     public static String generateVerificationCode() {
         int code = secureRandom.nextInt(1_000_000); // 0 to 999999
         return String.format("%06d", code);         // keeps leading zeros
