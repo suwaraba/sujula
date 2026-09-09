@@ -159,6 +159,12 @@ public class UserController {
         return ResponseEntity.ok(userService.unblockUser(id));
     }
 
+    @PatchMapping("/{id}/unlock")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UserResponse> unlock(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.unlockUser(id));
+    }
+
     @PatchMapping("/{id}/fraud")
     @PostAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UserResponse> markFraud(@PathVariable Long id, @RequestParam boolean fraud) {

@@ -22,6 +22,9 @@ public class UserResponse {
     private boolean       emailVerified;
     private String        preferredCurrency;
     private String        preferredLanguage;
+    /** Set only while a brute-force lockout is in force. */
+    private LocalDateTime lockedUntil;
+
     private LocalDateTime createdAt;
 
     public static UserResponse toResponse(User user) {
@@ -37,6 +40,7 @@ public class UserResponse {
                 .emailVerified(user.isEmailVerified())
                 .preferredCurrency(user.getPreferredCurrency())
                 .preferredLanguage(user.getPreferredLanguage())
+                .lockedUntil(user.isLockedOut() ? user.getLockedUntil() : null)
                 .createdAt(user.getCreatedAt())
                 .build();
     }

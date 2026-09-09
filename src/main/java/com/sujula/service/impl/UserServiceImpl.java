@@ -13,6 +13,8 @@ import com.sujula.repository.user.UserRepository;
 import com.sujula.service.EmailService;
 import com.sujula.service.GeoService;
 import com.sujula.service.UserService;
+import com.sujula.service.security.LoginAttemptProperties;
+import com.sujula.service.security.LoginAttemptTracker;
 import com.sujula.util.Utils;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -47,6 +49,8 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
     private final GeoService geoService;
+    private final LoginAttemptTracker loginAttempts;
+    private final LoginAttemptProperties loginAttemptProperties;
 
     /**
      * Hash of a value nobody knows, verified against when the email is unknown.
@@ -57,11 +61,15 @@ public class UserServiceImpl implements UserService {
      */
     private final String absentUserHash;
 
-    public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder, EmailService emailService, GeoService geoService) {
+    public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder, EmailService emailService,
+                           GeoService geoService, LoginAttemptTracker loginAttempts,
+                           LoginAttemptProperties loginAttemptProperties) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.emailService = emailService;
         this.geoService = geoService;
+        this.loginAttempts = loginAttempts;
+        this.loginAttemptProperties = loginAttemptProperties;
         this.absentUserHash = passwordEncoder.encode(generateSecureToken());
     }
 
@@ -78,13 +86,18 @@ public class UserServiceImpl implements UserService {
             throw new BadCredentialsException(INVALID_CREDENTIALS);
         }
         if (!passwordEncoder.matches(password, user.getPassword())) {
+            // Counted in its own transaction — see LoginAttemptTracker.
+            loginAttempts.recordFailure(user.getId());
             throw new BadCredentialsException(INVALID_CREDENTIALS);
         }
 
-        // Only after the password checks out: telling someone their account is
-        // blocked before they prove it is theirs would confirm it exists.
+        // Everything below is reported only once the password checks out:
+        // telling someone an account is blocked, or locked, before they prove it
+        // is theirs would confirm the address is registered.
+        requireNotLockedOut(user);
         requireUsableAccount(user);
 
+        loginAttempts.recordSuccess(user.getId());
         authenticate(user, getCurrentRequest());
         return UserResponse.toResponse(user);
     }
@@ -96,6 +109,23 @@ public class UserServiceImpl implements UserService {
      * {@code enabled} an administrative one; all three mean the same thing at
      * the door, and this is the one place that enforces them.
      */
+    /**
+     * Refuses an account that has spent its failed-attempt budget.
+     *
+     * <p>The right password is refused too — that is the entire point — but the
+     * owner is told how long they have to wait rather than being left to guess
+     * why a password they know is being rejected.
+     */
+    private void requireNotLockedOut(User user) {
+        if (!user.isLockedOut()) {
+            return;
+        }
+        long minutes = Math.max(1, java.time.Duration.between(
+                LocalDateTime.now(), user.getLockedUntil()).toMinutes() + 1);
+        throw new LockedException("Too many failed sign-in attempts. Try again in "
+                + minutes + (minutes == 1 ? " minute." : " minutes."));
+    }
+
     private void requireUsableAccount(User user) {
         if (!user.isEnabled()) {
             throw new DisabledException("This account has been disabled. Please contact support.");
@@ -244,6 +274,15 @@ public class UserServiceImpl implements UserService {
         requireAdmin();
         User user = findUserEntityById(id);
         user.setBlocked(false);
+        return UserResponse.toResponse(userRepository.save(user));
+    }
+
+    @Override
+    @Transactional
+    public UserResponse unlockUser(Long id) {
+        requireAdmin();
+        User user = findUserEntityById(id);
+        loginAttempts.clear(user);
         return UserResponse.toResponse(userRepository.save(user));
     }
 

@@ -5,6 +5,8 @@ import com.sujula.model.constant.UserRole;
 import com.sujula.model.user.User;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.service.impl.UserServiceImpl;
+import com.sujula.service.security.LoginAttemptProperties;
+import com.sujula.service.security.LoginAttemptTracker;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,7 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -30,6 +33,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Signing in: who gets through, who does not, and what the session looks like afterwards. */
@@ -38,6 +43,7 @@ class UserServiceImplLoginTest {
     private static final String PASSWORD = "Str0ng!Passw0rd";
 
     private UserRepository userRepository;
+    private LoginAttemptTracker loginAttempts;
     private UserServiceImpl service;
     private MockHttpServletRequest request;
     private User user;
@@ -47,8 +53,10 @@ class UserServiceImplLoginTest {
         userRepository = mock(UserRepository.class);
         PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
+        loginAttempts = mock(LoginAttemptTracker.class);
         service = new UserServiceImpl(userRepository, passwordEncoder,
-                mock(EmailService.class), mock(GeoService.class));
+                mock(EmailService.class), mock(GeoService.class),
+                loginAttempts, new LoginAttemptProperties());
 
         user = new User();
         user.setId(3L);
@@ -154,6 +162,48 @@ class UserServiceImplLoginTest {
         // Wrong password on a blocked account still reads as bad credentials —
         // otherwise the error itself confirms the account exists.
         assertThrows(BadCredentialsException.class, () -> service.login("buyer@sujula.gm", "guess"));
+    }
+
+    @Test
+    void aWrongPasswordIsCountedAndAGoodOneClearsTheCount() {
+        assertThrows(BadCredentialsException.class, () -> service.login("buyer@sujula.gm", "guess"));
+        verify(loginAttempts).recordFailure(3L);
+
+        service.login("buyer@sujula.gm", PASSWORD);
+        verify(loginAttempts).recordSuccess(3L);
+    }
+
+    @Test
+    void anUnknownEmailIsNotCountedAgainstAnybody() {
+        assertThrows(BadCredentialsException.class, () -> service.login("nobody@sujula.gm", PASSWORD));
+
+        verify(loginAttempts, never()).recordFailure(any());
+    }
+
+    @Test
+    void aLockedOutAccountIsRefusedEvenWithTheRightPassword() {
+        user.setLockedUntil(LocalDateTime.now().plusMinutes(10));
+
+        LockedException error = assertThrows(LockedException.class,
+                () -> service.login("buyer@sujula.gm", PASSWORD));
+
+        assertTrue(error.getMessage().contains("Try again in"), "the owner is told how long to wait");
+        assertNull(SecurityContextHolder.getContext().getAuthentication());
+    }
+
+    @Test
+    void aLockedOutAccountStillReadsAsBadCredentialsToAGuesser() {
+        user.setLockedUntil(LocalDateTime.now().plusMinutes(10));
+
+        // The lock is only disclosed to someone who proved the account is theirs.
+        assertThrows(BadCredentialsException.class, () -> service.login("buyer@sujula.gm", "guess"));
+    }
+
+    @Test
+    void anExpiredLockNoLongerBlocksSignIn() {
+        user.setLockedUntil(LocalDateTime.now().minusSeconds(1));
+
+        assertEquals(3L, service.login("buyer@sujula.gm", PASSWORD).getId());
     }
 
     @Test

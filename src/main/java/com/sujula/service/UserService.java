@@ -45,6 +45,14 @@ public interface UserService {
 
     UserResponse unblockUser(Long id);
 
+    /**
+     * Lifts a brute-force lockout early and resets the failure count.
+     *
+     * <p>A lockout expires on its own; this is for the owner who is on the phone
+     * to support and cannot wait it out.
+     */
+    UserResponse unlockUser(Long id);
+
     UserResponse markFraud(Long id, boolean fraud);
 
     UserResponse enableUser(Long id);
