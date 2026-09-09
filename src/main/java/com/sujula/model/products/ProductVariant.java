@@ -6,9 +6,11 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 
 @Entity
@@ -46,6 +48,30 @@ public class ProductVariant {
                     name = "uk_variant_value_once",
                     columnNames = {"variant_id", "option_value_id"}))
     private List<ProductOptionValue> selectedValues = new ArrayList<>();
+
+    /**
+     * Human-readable summary of what this variant is: "Large, Red".
+     *
+     * <p>Built from the option values alone — deliberately not from
+     * {@code value.getOption().getName()}, which would lazy-load one extra row
+     * per option everywhere a variant is listed. Values are ordered by their
+     * option value's own sort order so the same variant always reads the same
+     * way, in the cart, on the order and in the catalogue.
+     *
+     * @return null for a product that has no variants worth naming
+     */
+    @Transient
+    public String getVariantLabel() {
+        if (selectedValues == null || selectedValues.isEmpty()) {
+            return null;
+        }
+        return selectedValues.stream()
+                .sorted(Comparator.comparing(ProductOptionValue::getSortOrder,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(ProductOptionValue::getDisplayValue)
+                .filter(Objects::nonNull)
+                .collect(Collectors.joining(", "));
+    }
 
     /** Base + surcharges, unless overridden. */
     @Transient

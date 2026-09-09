@@ -17,7 +17,6 @@ import com.sujula.model.order.CartItem;
 import com.sujula.model.products.Coupon;
 import com.sujula.model.products.Product;
 import com.sujula.model.products.ProductImage;
-import com.sujula.model.products.ProductOptionValue;
 import com.sujula.model.products.ProductVariant;
 import com.sujula.model.user.Vendor;
 import com.sujula.repository.order.CartItemRepository;
@@ -1077,15 +1076,6 @@ public class CartServiceImpl implements CartService {
      * per option on every cart read.
      */
     private static String variantLabel(ProductVariant variant) {
-        if (variant == null || variant.getSelectedValues() == null
-                || variant.getSelectedValues().isEmpty()) {
-            return null;
-        }
-        return variant.getSelectedValues().stream()
-                .sorted(Comparator.comparing(ProductOptionValue::getSortOrder,
-                        Comparator.nullsLast(Comparator.naturalOrder())))
-                .map(ProductOptionValue::getDisplayValue)
-                .filter(java.util.Objects::nonNull)
-                .collect(Collectors.joining(", "));
+        return variant != null ? variant.getVariantLabel() : null;
     }
 }

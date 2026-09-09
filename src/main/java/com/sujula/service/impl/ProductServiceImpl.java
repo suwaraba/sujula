@@ -159,6 +159,15 @@ public class ProductServiceImpl implements ProductService {
         Hibernate.initialize(p.getImages());
         Hibernate.initialize(p.getVariants());
         Hibernate.initialize(p.getAttributes());
+        // A variant is described by its option values, and each value by the
+        // option it belongs to ("Size"), so both levels have to be resolved here
+        // rather than lazily inside the response mapper.
+        for (ProductVariant variant : p.getVariants()) {
+            Hibernate.initialize(variant.getSelectedValues());
+            for (ProductOptionValue value : variant.getSelectedValues()) {
+                Hibernate.initialize(value.getOption());
+            }
+        }
         if (p.getVendor() != null) Hibernate.initialize(p.getVendor());
         if (p.getCategory() != null) Hibernate.initialize(p.getCategory());
         if (p.getBrand() != null) Hibernate.initialize(p.getBrand());

@@ -25,7 +25,6 @@ import com.sujula.model.products.Coupon;
 import com.sujula.model.products.CouponUsage;
 import com.sujula.model.products.Product;
 import com.sujula.model.products.ProductImage;
-import com.sujula.model.products.ProductOptionValue;
 import com.sujula.model.products.ProductVariant;
 import com.sujula.model.delivery.PickupPoint;
 import com.sujula.model.user.User;
@@ -1165,14 +1164,7 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private static String variantLabel(ProductVariant variant) {
-        if (variant == null || variant.getSelectedValues() == null || variant.getSelectedValues().isEmpty()) {
-            return null;
-        }
-        return variant.getSelectedValues().stream()
-                .sorted(Comparator.comparing(ProductOptionValue::getSortOrder, Comparator.nullsLast(Comparator.naturalOrder())))
-                .map(ProductOptionValue::getDisplayValue)
-                .filter(Objects::nonNull)
-                .collect(Collectors.joining(", "));
+        return variant != null ? variant.getVariantLabel() : null;
     }
 
     private static String primaryImageUrl(Product product) {
