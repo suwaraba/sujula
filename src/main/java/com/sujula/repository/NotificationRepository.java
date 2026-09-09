@@ -15,7 +15,11 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     Page<Notification> findByUserIdAndReadFalseOrderByCreatedAtDesc(Long userId, Pageable pageable);
     long countByUserIdAndReadFalse(Long userId);
 
-    @Modifying
-    @Query("UPDATE Notification n SET n.read = true WHERE n.user.id = :userId")
+    /**
+     * Bulk update, so it bypasses the persistence context — clear it afterwards
+     * or a read later in the same transaction still reports the old flags.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Notification n SET n.read = true WHERE n.user.id = :userId AND n.read = false")
     void markAllReadByUserId(@Param("userId") Long userId);
 }
