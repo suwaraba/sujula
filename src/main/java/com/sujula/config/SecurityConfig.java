@@ -46,6 +46,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/users/register",
+                                "/api/users/login",
                                 "/api/users/password/forgot",
                                 "/api/users/password/reset",
                                 "/api/users/verify-email",

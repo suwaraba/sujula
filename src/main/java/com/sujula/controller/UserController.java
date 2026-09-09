@@ -4,6 +4,7 @@ import com.sujula.dto.request.UserRequest;
 import com.sujula.dto.request.user.BlockUserRequest;
 import com.sujula.dto.request.user.ChangePasswordRequest;
 import com.sujula.dto.request.user.ForgotPasswordRequest;
+import com.sujula.dto.request.user.LoginRequest;
 import com.sujula.dto.request.user.ResendVerificationRequest;
 import com.sujula.dto.request.user.ResetPasswordRequest;
 import com.sujula.dto.request.user.UpdatePreferencesRequest;
@@ -46,6 +47,15 @@ public class UserController {
     @PostMapping("/register")
     public ResponseEntity<UserResponse> register(@Valid @RequestBody UserRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(userService.save(request));
+    }
+
+    /**
+     * Signs a returning user in. The session cookie the response carries is what
+     * authenticates every later request, so there is nothing to store client-side.
+     */
+    @PostMapping("/login")
+    public ResponseEntity<UserResponse> login(@Valid @RequestBody LoginRequest request) {
+        return ResponseEntity.ok(userService.login(request.getEmail(), request.getPassword()));
     }
 
     @PostMapping("/password/forgot")

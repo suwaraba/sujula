@@ -19,6 +19,9 @@ import jakarta.servlet.http.HttpSession;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
@@ -45,12 +48,64 @@ public class UserServiceImpl implements UserService {
     private final EmailService emailService;
     private final GeoService geoService;
 
+    /**
+     * Hash of a value nobody knows, verified against when the email is unknown.
+     *
+     * <p>Without it, a miss returns as fast as the lookup while a hit pays for a
+     * BCrypt comparison, and that difference alone tells an attacker which
+     * addresses are registered.
+     */
+    private final String absentUserHash;
+
     public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder, EmailService emailService, GeoService geoService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.emailService = emailService;
         this.geoService = geoService;
+        this.absentUserHash = passwordEncoder.encode(generateSecureToken());
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UserResponse login(String email, String password) {
+        if (email == null || email.isBlank() || password == null || password.isEmpty()) {
+            throw new BadCredentialsException(INVALID_CREDENTIALS);
+        }
+
+        User user = userRepository.findByEmailIgnoreCase(email.trim()).orElse(null);
+        if (user == null) {
+            passwordEncoder.matches(password, absentUserHash);
+            throw new BadCredentialsException(INVALID_CREDENTIALS);
+        }
+        if (!passwordEncoder.matches(password, user.getPassword())) {
+            throw new BadCredentialsException(INVALID_CREDENTIALS);
+        }
+
+        // Only after the password checks out: telling someone their account is
+        // blocked before they prove it is theirs would confirm it exists.
+        requireUsableAccount(user);
+
+        authenticate(user, getCurrentRequest());
+        return UserResponse.toResponse(user);
+    }
+
+    /**
+     * Refuses an account the platform has shut out.
+     *
+     * <p>{@code blocked} and {@code fraud} are moderation decisions and
+     * {@code enabled} an administrative one; all three mean the same thing at
+     * the door, and this is the one place that enforces them.
+     */
+    private void requireUsableAccount(User user) {
+        if (!user.isEnabled()) {
+            throw new DisabledException("This account has been disabled. Please contact support.");
+        }
+        if (user.isBlocked() || user.isFraud()) {
+            throw new LockedException("This account has been blocked. Please contact support.");
+        }
+    }
+
+    private static final String INVALID_CREDENTIALS = "Invalid email or password";
 
     // Characters used for random password generation — no ambiguous chars (0/O, 1/l/I)
     private static final String CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#$!";
@@ -461,7 +516,13 @@ public class UserServiceImpl implements UserService {
         SecurityContextHolder.setContext(securityContext);
 
         if (request != null) {
-            request.getSession(true).setAttribute(
+            HttpSession session = request.getSession(true);
+            // Rotate the session id on the way in. Spring Security applies
+            // fixation protection inside its own login filters, and this context
+            // is written straight to the session instead — so an id an attacker
+            // planted before sign-in would otherwise stay valid after it.
+            request.changeSessionId();
+            session.setAttribute(
                     HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
                     securityContext
             );

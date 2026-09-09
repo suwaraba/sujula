@@ -2,6 +2,9 @@ package com.sujula.exceptions;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -33,6 +36,24 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNotFound(ResourceNotFoundException ex) {
         return build(HttpStatus.NOT_FOUND, ex.getMessage(), null);
+    }
+
+    /**
+     * Wrong email or wrong password (401).
+     *
+     * <p>The message is fixed rather than taken from the exception: the two
+     * cases must be indistinguishable, or the endpoint becomes a way to test
+     * which addresses hold accounts.
+     */
+    @ExceptionHandler(BadCredentialsException.class)
+    public ResponseEntity<Map<String, Object>> handleBadCredentials(BadCredentialsException ex) {
+        return build(HttpStatus.UNAUTHORIZED, "Invalid email or password", null);
+    }
+
+    /** Credentials were right but the account is disabled, blocked or flagged (403). */
+    @ExceptionHandler({DisabledException.class, LockedException.class})
+    public ResponseEntity<Map<String, Object>> handleAccountShutOut(RuntimeException ex) {
+        return build(HttpStatus.FORBIDDEN, ex.getMessage(), null);
     }
 
     private ResponseEntity<Map<String, Object>> build(HttpStatus status, String message,

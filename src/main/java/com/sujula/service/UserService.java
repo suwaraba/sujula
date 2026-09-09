@@ -9,6 +9,23 @@ import org.springframework.data.domain.Pageable;
 
 public interface UserService {
 
+    /**
+     * Signs a returning user in and puts them in the session.
+     *
+     * <p>An unverified email is not a barrier — registration signs a user in
+     * before they have verified, so refusing them here would strand every
+     * account created that way. The response carries {@code emailVerified} for
+     * callers that need to gate on it.
+     *
+     * @throws org.springframework.security.authentication.BadCredentialsException
+     *         if the email is unknown or the password is wrong — the same failure
+     *         either way, so the endpoint cannot be used to discover which
+     *         addresses hold accounts
+     * @throws org.springframework.security.authentication.DisabledException  if the account is disabled
+     * @throws org.springframework.security.authentication.LockedException    if the account is blocked or flagged for fraud
+     */
+    UserResponse login(String email, String password);
+
     UserResponse getCurrentUser(Long userId);
 
     UserResponse findById(Long id);
