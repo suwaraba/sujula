@@ -16,6 +16,9 @@ public interface VendorOrderRepository extends JpaRepository<VendorOrder, Long> 
 
     List<VendorOrder> findByOrderId(Long orderId);
 
+    /** Whether this vendor has anything in this order — the basis of every vendor-scoped check. */
+    boolean existsByOrderIdAndVendorId(Long orderId, Long vendorId);
+
     Page<VendorOrder> findByVendorId(Long vendorId, Pageable pageable);
 
     Page<VendorOrder> findByVendorIdAndStatus(Long vendorId, VendorOrderStatus status, Pageable pageable);

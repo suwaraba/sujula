@@ -13,6 +13,7 @@ import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentMethod;
 import com.sujula.model.constant.PaymentStatus;
+import com.sujula.model.constant.UserRole;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.OrderStatusHistory;
 import com.sujula.model.order.Payment;
@@ -20,7 +21,9 @@ import com.sujula.model.user.User;
 import com.sujula.repository.PaymentRepository;
 import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.OrderStatusHistoryRepository;
+import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.repository.user.UserRepository;
+import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.AuditService;
 import com.sujula.service.EmailService;
 import com.sujula.service.NotificationService;
@@ -31,6 +34,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.domain.Page;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -75,7 +79,9 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentRepository paymentRepository;
     private final OrderRepository orderRepository;
     private final OrderStatusHistoryRepository statusHistoryRepository;
+    private final VendorOrderRepository vendorOrderRepository;
     private final UserRepository userRepository;
+    private final VendorRepository vendorRepository;
     private final EmailService emailService;
     private final NotificationService notificationService;
     private final AuditService auditService;
@@ -85,7 +91,9 @@ public class PaymentServiceImpl implements PaymentService {
     public PaymentServiceImpl(PaymentRepository paymentRepository,
                               OrderRepository orderRepository,
                               OrderStatusHistoryRepository statusHistoryRepository,
+                              VendorOrderRepository vendorOrderRepository,
                               UserRepository userRepository,
+                              VendorRepository vendorRepository,
                               EmailService emailService,
                               NotificationService notificationService,
                               AuditService auditService,
@@ -94,7 +102,9 @@ public class PaymentServiceImpl implements PaymentService {
         this.paymentRepository = paymentRepository;
         this.orderRepository = orderRepository;
         this.statusHistoryRepository = statusHistoryRepository;
+        this.vendorOrderRepository = vendorOrderRepository;
         this.userRepository = userRepository;
+        this.vendorRepository = vendorRepository;
         this.emailService = emailService;
         this.notificationService = notificationService;
         this.auditService = auditService;
@@ -435,6 +445,7 @@ public class PaymentServiceImpl implements PaymentService {
                     "This order is being paid by " + payment.getMethod().getDisplayName()
                             + ", so there is nothing to collect at handover");
         }
+        requireEntitledCollector(payment, orderId, collectorUserId);
         requireMatchingAmount(payment, request != null ? request.getAmountReceived() : null);
         settle(payment, collectorUserId,
                 request != null ? request.getCollectionReference() : null,
@@ -703,6 +714,59 @@ public class PaymentServiceImpl implements PaymentService {
     // ─────────────────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Refuses anyone who is not the person actually handing the goods over.
+     *
+     * <p>Being staff is not enough. Each in-person method has exactly one kind of
+     * collector — the store for a counter sale, the driver at the door, the
+     * operator at the hub — and without this check any vendor could settle any
+     * order in the platform, and read its total on the way out. A vendor must
+     * additionally have something in the order.
+     *
+     * <p>Driver and operator entitlement stops at the method: tying a collection
+     * to the specific delivery or pickup point assigned to it needs the delivery
+     * module, which does not exist yet.
+     */
+    private void requireEntitledCollector(Payment payment, Long orderId, Long collectorUserId) {
+        if (collectorUserId == null) {
+            throw new AccessDeniedException("A collection has to be attributed to whoever took the money");
+        }
+        User collector = userRepository.findById(collectorUserId)
+                .orElseThrow(() -> new AccessDeniedException("Unknown collector"));
+
+        UserRole role = collector.getRole();
+        if (role == UserRole.ADMIN) {
+            return;
+        }
+
+        PaymentMethod method = payment.getMethod();
+        switch (role) {
+            case VENDOR -> {
+                if (method != PaymentMethod.CASH_IN_STORE) {
+                    throw new AccessDeniedException(
+                            "A seller can only take payment for an order collected from their store");
+                }
+                Long vendorId = vendorRepository.findByUserId(collectorUserId)
+                        .orElseThrow(() -> new AccessDeniedException("No vendor profile for this account"))
+                        .getId();
+                if (!vendorOrderRepository.existsByOrderIdAndVendorId(orderId, vendorId)) {
+                    throw new AccessDeniedException("This order has nothing from your store");
+                }
+            }
+            case DELIVERY -> requireMethod(method, PaymentMethod.PAY_ON_DELIVERY,
+                    "A driver can only take payment on delivery");
+            case PICKUP_OPERATOR -> requireMethod(method, PaymentMethod.PAY_AT_PICKUP,
+                    "A pickup point can only take payment for a collection it is handling");
+            default -> throw new AccessDeniedException("This account cannot take payments");
+        }
+    }
+
+    private void requireMethod(PaymentMethod actual, PaymentMethod required, String message) {
+        if (actual != required) {
+            throw new AccessDeniedException(message);
+        }
+    }
 
     /** Money decisions are the ones most worth being able to answer for later. */
     private void auditPayment(AuditAction action, Payment payment, String summary, String details) {

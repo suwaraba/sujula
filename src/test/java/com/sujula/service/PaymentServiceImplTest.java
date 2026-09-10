@@ -16,14 +16,20 @@ import com.sujula.model.order.OrderStatusHistory;
 import com.sujula.model.order.Payment;
 import com.sujula.repository.PaymentRepository;
 import com.sujula.repository.order.OrderRepository;
+import com.sujula.model.constant.UserRole;
+import com.sujula.model.user.User;
+import com.sujula.model.user.Vendor;
 import com.sujula.repository.order.OrderStatusHistoryRepository;
+import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.repository.user.UserRepository;
+import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.impl.PaymentServiceImpl;
 import com.sujula.service.payment.PaymentGateway;
 import com.sujula.service.payment.PaymentProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -49,6 +55,8 @@ class PaymentServiceImplTest {
     private PaymentRepository paymentRepository;
     private OrderRepository orderRepository;
     private OrderStatusHistoryRepository statusHistoryRepository;
+    private VendorOrderRepository vendorOrderRepository;
+    private UserRepository userRepository;
     private PaymentProperties properties;
     private PaymentServiceImpl service;
 
@@ -60,7 +68,17 @@ class PaymentServiceImplTest {
         paymentRepository = mock(PaymentRepository.class);
         orderRepository = mock(OrderRepository.class);
         statusHistoryRepository = mock(OrderStatusHistoryRepository.class);
-        UserRepository userRepository = mock(UserRepository.class);
+        vendorOrderRepository = mock(VendorOrderRepository.class);
+        userRepository = mock(UserRepository.class);
+        VendorRepository vendorRepository = mock(VendorRepository.class);
+
+        // Collectors: an admin, a driver, and a vendor who owns part of order 7.
+        when(userRepository.findById(1L)).thenReturn(Optional.of(staff(1L, UserRole.ADMIN)));
+        when(userRepository.findById(2L)).thenReturn(Optional.of(staff(2L, UserRole.DELIVERY)));
+        when(userRepository.findById(3L)).thenReturn(Optional.of(staff(3L, UserRole.VENDOR)));
+        Vendor vendorProfile = Vendor.builder().id(50L).storeName("Kombo").build();
+        when(vendorRepository.findByUserId(3L)).thenReturn(Optional.of(vendorProfile));
+        when(vendorOrderRepository.existsByOrderIdAndVendorId(7L, 50L)).thenReturn(true);
         EmailService emailService = mock(EmailService.class);
         NotificationService notificationService = mock(NotificationService.class);
 
@@ -73,7 +91,8 @@ class PaymentServiceImplTest {
         when(noGateways.stream()).thenAnswer(invocation -> java.util.stream.Stream.empty());
 
         service = new PaymentServiceImpl(paymentRepository, orderRepository, statusHistoryRepository,
-                userRepository, emailService, notificationService, mock(AuditService.class),
+                vendorOrderRepository, userRepository, vendorRepository,
+                emailService, notificationService, mock(AuditService.class),
                 properties, noGateways);
 
         order = new Order();
@@ -179,7 +198,7 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending(PaymentMethod.PAY_ON_DELIVERY)));
 
         PaymentResponse payment = service.collectInPerson(7L,
-                ConfirmPaymentRequest.builder().collectionReference("RCPT-99").build(), null);
+                ConfirmPaymentRequest.builder().collectionReference("RCPT-99").build(), 1L);
 
         assertEquals(PaymentStatus.PAID, payment.getStatus());
         assertNotNull(payment.getPaidAt());
@@ -196,7 +215,7 @@ class PaymentServiceImplTest {
         order.setStatus(OrderStatus.DELIVERED);
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending(PaymentMethod.PAY_ON_DELIVERY)));
 
-        service.collectInPerson(7L, null, null);
+        service.collectInPerson(7L, null, 1L);
 
         assertEquals(OrderStatus.DELIVERED, order.getStatus());
         assertEquals(PaymentStatus.PAID, order.getPaymentStatus());
@@ -208,7 +227,7 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending(PaymentMethod.PAY_ON_DELIVERY)));
 
         assertThrows(BadRequestException.class, () -> service.collectInPerson(7L,
-                ConfirmPaymentRequest.builder().amountReceived(new BigDecimal("900.00")).build(), null));
+                ConfirmPaymentRequest.builder().amountReceived(new BigDecimal("900.00")).build(), 1L));
         assertEquals(PaymentStatus.PENDING, order.getPaymentStatus());
     }
 
@@ -216,7 +235,7 @@ class PaymentServiceImplTest {
     void refusesToCollectCashForAnOnlineOrder() {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending(PaymentMethod.CARD)));
 
-        assertThrows(BadRequestException.class, () -> service.collectInPerson(7L, null, null));
+        assertThrows(BadRequestException.class, () -> service.collectInPerson(7L, null, 1L));
     }
 
     @Test
@@ -248,6 +267,46 @@ class PaymentServiceImplTest {
 
         assertThrows(BadRequestException.class, () -> service.handleCallback(PaymentCallbackRequest.builder()
                 .transactionId("pi_abc").status(PaymentStatus.PAID).amount(new BigDecimal("1.00")).build()));
+    }
+
+    // ── Who may take the money ───────────────────────────────────────────────
+
+    @Test
+    void aDriverCannotSettleACounterSale() {
+        order.setDeliveryMode(DeliveryMode.VENDOR_PICKUP);
+        when(paymentRepository.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pending(PaymentMethod.CASH_IN_STORE)));
+
+        assertThrows(AccessDeniedException.class, () -> service.collectInPerson(7L, null, 2L));
+    }
+
+    @Test
+    void aSellerCannotSettleAnOrderThatIsNothingToDoWithThem() {
+        order.setDeliveryMode(DeliveryMode.VENDOR_PICKUP);
+        when(paymentRepository.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pending(PaymentMethod.CASH_IN_STORE)));
+        when(vendorOrderRepository.existsByOrderIdAndVendorId(7L, 50L)).thenReturn(false);
+
+        // Without this check any seller could settle any order in the platform —
+        // and read the buyer's total on the way out.
+        assertThrows(AccessDeniedException.class, () -> service.collectInPerson(7L, null, 3L));
+    }
+
+    @Test
+    void aSellerCanSettleTheirOwnCounterSale() {
+        order.setDeliveryMode(DeliveryMode.VENDOR_PICKUP);
+        when(paymentRepository.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pending(PaymentMethod.CASH_IN_STORE)));
+
+        assertEquals(PaymentStatus.PAID, service.collectInPerson(7L, null, 3L).getStatus());
+    }
+
+    @Test
+    void aSellerCannotTakeCashThatBelongsToTheDriver() {
+        when(paymentRepository.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pending(PaymentMethod.PAY_ON_DELIVERY)));
+
+        assertThrows(AccessDeniedException.class, () -> service.collectInPerson(7L, null, 3L));
     }
 
     // ── Refunds ──────────────────────────────────────────────────────────────
@@ -313,6 +372,16 @@ class PaymentServiceImplTest {
     }
 
     // ── Fixtures ─────────────────────────────────────────────────────────────
+
+    private static User staff(Long id, UserRole role) {
+        User user = new User();
+        user.setId(id);
+        user.setEmail(role.name().toLowerCase() + "@sujula.gm");
+        user.setFirstName(role.name());
+        user.setLastName("Staff");
+        user.setRole(role);
+        return user;
+    }
 
     private Payment pending(PaymentMethod method) {
         return Payment.builder()
