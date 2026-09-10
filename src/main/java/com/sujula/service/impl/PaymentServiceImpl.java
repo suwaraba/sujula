@@ -319,6 +319,13 @@ public class PaymentServiceImpl implements PaymentService {
                 payment.setCheckoutUrl(checkout.checkoutUrl());
                 payment.setClientSecret(checkout.clientSecret());
                 payment.setGatewayResponse(checkout.rawResponse());
+                if (gateway.settlesImmediately()) {
+                    // The provider took the money inside createCheckout, so no
+                    // callback is coming. Left pending, the order would sit unpaid
+                    // forever against money that has already moved.
+                    settle(payment, null, checkout.transactionId(),
+                            "Settled synchronously by " + gateway.name());
+                }
             }
             case OFFLINE_TRANSFER -> payment.setInstructions(bankTransferInstructions(payment));
             case IN_PERSON        -> payment.setInstructions(inPersonInstructions(payment, order));

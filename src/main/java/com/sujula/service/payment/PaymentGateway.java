@@ -35,6 +35,19 @@ public interface PaymentGateway {
     GatewayCheckout createCheckout(Payment payment, String returnUrl);
 
     /**
+     * True when {@link #createCheckout} has already taken the money, so there is
+     * no hosted page to send the buyer to and no callback to wait for.
+     *
+     * <p>Rare but real — a stored card charged synchronously behaves this way,
+     * and so does the mock gateway used before a provider is wired up. The
+     * service settles the payment itself rather than leaving it pending for a
+     * callback that will never arrive.
+     */
+    default boolean settlesImmediately() {
+        return false;
+    }
+
+    /**
      * Returns money through the provider.
      *
      * @throws UnsupportedOperationException when the provider cannot refund programmatically

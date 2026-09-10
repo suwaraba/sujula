@@ -136,6 +136,62 @@ class PaymentServiceImplTest {
                 InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build()));
     }
 
+    /** The same service, but with one gateway bean registered. */
+    @SuppressWarnings("unchecked")
+    private PaymentServiceImpl serviceWith(PaymentGateway gateway) {
+        ObjectProvider<PaymentGateway> gateways = mock(ObjectProvider.class);
+        when(gateways.stream()).thenAnswer(invocation -> java.util.stream.Stream.of(gateway));
+        return new PaymentServiceImpl(paymentRepository, orderRepository, statusHistoryRepository,
+                mock(VendorOrderRepository.class), userRepository, mock(VendorRepository.class),
+                mock(EmailService.class), mock(NotificationService.class), mock(AuditService.class),
+                properties, gateways);
+    }
+
+    @Test
+    void aGatewayThatTakesTheMoneyInlineLeavesThePaymentPaid() {
+        // The mock gateway used before a provider is integrated behaves this way,
+        // and so does a stored card charged synchronously: there is no callback
+        // coming, so a payment left PENDING here would never be settled at all.
+        PaymentServiceImpl withGateway = serviceWith(new ImmediateGateway());
+
+        PaymentResponse payment = withGateway.initiate(7L, null,
+                InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build());
+
+        assertEquals(PaymentStatus.PAID, payment.getStatus());
+        assertEquals(PaymentStatus.PAID, order.getPaymentStatus());
+        assertNotNull(payment.getPaidAt());
+        assertEquals("IMMEDIATE-TX", payment.getCollectionReference());
+    }
+
+    @Test
+    void aGatewayWithAHostedPageLeavesThePaymentPending() {
+        PaymentServiceImpl withGateway = serviceWith(new HostedPageGateway());
+
+        PaymentResponse payment = withGateway.initiate(7L, null,
+                InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build());
+
+        // The buyer has not paid yet — they have been handed a page to pay on.
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+        assertEquals("https://pay.example/checkout/HOSTED-TX", payment.getCheckoutUrl());
+    }
+
+    private static class ImmediateGateway implements PaymentGateway {
+        @Override public boolean supports(PaymentMethod method) { return method.requiresGateway(); }
+        @Override public String name() { return "immediate"; }
+        @Override public boolean settlesImmediately() { return true; }
+        @Override public GatewayCheckout createCheckout(Payment payment, String returnUrl) {
+            return new GatewayCheckout("IMMEDIATE-TX", null, null, "{}");
+        }
+    }
+
+    private static class HostedPageGateway implements PaymentGateway {
+        @Override public boolean supports(PaymentMethod method) { return method.requiresGateway(); }
+        @Override public String name() { return "hosted"; }
+        @Override public GatewayCheckout createCheckout(Payment payment, String returnUrl) {
+            return new GatewayCheckout("HOSTED-TX", "https://pay.example/checkout/HOSTED-TX", null, "{}");
+        }
+    }
+
     @Test
     void refusesCardWhenNoGatewayIsRegistered() {
         BadRequestException error = assertThrows(BadRequestException.class, () -> service.initiate(7L, null,
