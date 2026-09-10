@@ -60,10 +60,16 @@ public class SecurityConfig {
                                 // Verified by shared secret inside the controller.
                                 "/api/payments/callback"
                         ).permitAll()
-                        // A guest pays for their own order, identified by order
-                        // number plus the email used at checkout — both, so an
-                        // order number on its own reveals nothing.
-                        .requestMatchers("/api/guest/orders/*/payment",
+                        // Guest checkout, end to end. A guest has no account by
+                        // definition, so requiring authentication here would make
+                        // the whole flow unreachable. Every one of these resolves
+                        // an order by number plus the email used at checkout —
+                        // both, so an order number on its own reveals nothing, and
+                        // placing an order needs neither.
+                        .requestMatchers("/api/guest/orders",
+                                         "/api/guest/orders/lookup",
+                                         "/api/guest/orders/*/cancel",
+                                         "/api/guest/orders/*/payment",
                                          "/api/guest/orders/*/payment/methods").permitAll()
                         .anyRequest().authenticated()
                 );
