@@ -9,7 +9,10 @@ import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.products.*;
 import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.user.Vendor;
+import com.sujula.model.products.Category;
 import com.sujula.repository.product.BrandRepository;
+import com.sujula.repository.product.CategoryRepository;
+import com.sujula.util.Utils;
 import com.sujula.repository.product.ProductImageRepository;
 import com.sujula.repository.product.ProductRepository;
 import com.sujula.repository.product.ProductVariantRepository;
@@ -37,6 +40,7 @@ public class ProductCreateUpdateServiceImpl {
     private final ProductRepository productRepository;
     private final VendorRepository vendorRepository;
     private final BrandRepository brandRepository;
+    private final CategoryRepository categoryRepository;
     private final ProductVariantRepository variantRepository;
     private final ProductImageRepository productImageRepository;
     private final StorageService storageService;
@@ -154,6 +158,29 @@ public class ProductCreateUpdateServiceImpl {
         return ProductImageResponse.from(productImageRepository.save(image));
     }
 
+    /**
+     * Unpublishes a product.
+     *
+     * <p>Never a row delete: order lines point at the product, and orders already
+     * placed have to keep resolving to what was bought. An inactive product drops
+     * out of every catalogue query and is refused at checkout, which is what
+     * "deleted" means to a seller.
+     */
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    public void delete(Long vendorUserId, Long productId) {
+        Vendor vendor = requireActiveVendor(vendorUserId);
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new ResourceNotFoundException("Product not found with id " + productId));
+        assertOwnership(product, vendor);
+
+        if (!product.isActive()) {
+            return;
+        }
+        product.setActive(false);
+        productRepository.save(product);
+    }
+
     /** Reassigns display order: orderedImageIds must list every one of the product's images exactly once. */
     @Transactional
     @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
@@ -247,7 +274,11 @@ public class ProductCreateUpdateServiceImpl {
         }
     }
 
+    /** Null brand is allowed: most listings in this market are unbranded goods. */
     private Brand requireActiveBrand(Long brandId) {
+        if (brandId == null) {
+            return null;
+        }
         Brand brand = brandRepository.findById(brandId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Brand not found with id " + brandId));
@@ -261,12 +292,96 @@ public class ProductCreateUpdateServiceImpl {
                              Vendor vendor, Brand brand) {
         product.setBrand(brand);
         product.setName(request.getName().trim());
-        product.setDescription(request.getDescription() != null
-                ? request.getDescription().trim() : null);
+        product.setDescription(trimToNull(request.getDescription()));
+        product.setShortDescription(trimToNull(request.getShortDescription()));
         product.setPrice(request.getPrice());
+        product.setCompareAtPrice(request.getCompareAtPrice());
         product.setStock(request.getStock());
+        product.setSku(trimToNull(request.getSku()));
         product.setLatitude(vendor.getLatitude());   // canonical, never the raw input
         product.setLongitude(vendor.getLongitude());
+
+        // Derived from the vendor rather than taken from the request. A seller
+        // cannot list in a currency they do not settle in — checkout refuses that
+        // outright — nor claim to ship from a country they do not trade in, which
+        // is what every catalogue query filters on.
+        product.setPriceCurrency(vendor.getSettlementCurrency());
+        product.setCountry(vendor.getAddressCountryCode());
+
+        // Both are NOT NULL, and neither was ever set: a save failed on the
+        // constraint before any of this could be exercised.
+        if (product.getSlug() == null || product.getSlug().isBlank()) {
+            product.setSlug(uniqueSlug(request.getName()));
+        }
+
+        product.setCategory(resolveCategory(request.getCategoryId()));
+        product.setWeightKg(request.getWeightKg());
+        product.setDimensions(trimToNull(request.getDimensions()));
+        if (request.getDeliveryScope() != null) {
+            product.setDeliveryScope(request.getDeliveryScope());
+        }
+        if (request.getLowStockThreshold() != null) {
+            product.setLowStockThreshold(request.getLowStockThreshold());
+        }
+        if (request.getAllowBackorder() != null) {
+            product.setAllowBackorder(request.getAllowBackorder());
+        }
+        if (request.getActive() != null) {
+            product.setActive(request.getActive());
+        }
+
+        requireSaneCompareAtPrice(product);
+    }
+
+    /**
+     * A struck-through price below the asking price is not a discount, it is a
+     * misprint — and one a storefront would render as a saving.
+     */
+    private void requireSaneCompareAtPrice(Product product) {
+        if (product.getCompareAtPrice() != null
+                && product.getCompareAtPrice().compareTo(product.getPrice()) <= 0) {
+            throw new BadRequestException(
+                    "The compare-at price has to be above the selling price to show a saving");
+        }
+    }
+
+    /**
+     * A readable, unique slug from the product's name.
+     *
+     * <p>Collides rarely — two sellers naming a product identically — and when it
+     * does, a short suffix is cheaper than refusing the listing.
+     */
+    private String uniqueSlug(String name) {
+        String base = Utils.toSlug(name);
+        if (base.isBlank()) {
+            base = "product";
+        }
+        if (!productRepository.existsBySlug(base)) {
+            return base;
+        }
+        for (int attempt = 0; attempt < 5; attempt++) {
+            String candidate = base + "-" + UUID.randomUUID().toString().substring(0, 6);
+            if (!productRepository.existsBySlug(candidate)) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Could not allocate a unique slug for " + name);
+    }
+
+    private Category resolveCategory(Long categoryId) {
+        if (categoryId == null) {
+            return null;
+        }
+        Category category = categoryRepository.findById(categoryId)
+                .orElseThrow(() -> new ResourceNotFoundException("Category", categoryId));
+        if (!category.isActive()) {
+            throw new BadRequestException("Category '" + category.getName() + "' is not accepting listings");
+        }
+        return category;
+    }
+
+    private static String trimToNull(String value) {
+        return (value == null || value.isBlank()) ? null : value.trim();
     }
 
     /** Request location must match the vendor's registered location exactly. */

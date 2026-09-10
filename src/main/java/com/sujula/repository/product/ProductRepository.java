@@ -40,6 +40,13 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     boolean existsByVendorIdAndNameIgnoreCaseAndIdNot(Long vendorId, String productName, Long productId);
 
+    /**
+     * The vendor's own catalogue, unpublished listings included — the browse
+     * queries below all filter on active, so a vendor could otherwise never see
+     * a product they had unpublished, let alone put it back.
+     */
+    Page<Product> findByVendorIdOrderByCreatedAtDesc(Long vendorId, Pageable pageable);
+
     // ── Proximity-ranked browse queries ──────────────────────────────────────
     // Every query below is a native query (MySQL — no PostGIS/spatial extension
     // available) that great-circle-distances each product from (userLat, userLng)

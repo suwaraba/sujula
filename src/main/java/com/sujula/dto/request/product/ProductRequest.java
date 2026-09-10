@@ -1,13 +1,19 @@
 package com.sujula.dto.request.product;
 
+import com.sujula.model.constant.DeliveryScope;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.util.List;
 
-
-
-
+/**
+ * What a vendor submits to list or re-list a product.
+ *
+ * <p>Deliberately does not carry a slug, a price currency or a country: those
+ * are derived at save time from the product's name and its vendor, so a seller
+ * cannot list in a currency they do not settle in, or claim to ship from a
+ * country they do not trade in.
+ */
 public class ProductRequest {
 
     @NotBlank(message = "Product name is required")
@@ -31,9 +37,54 @@ public class ProductRequest {
     @DecimalMin(value = "-180.0") @DecimalMax(value = "180.0")
     private Double longitude;
 
-    @NotNull(message = "Brand is required")
+    /**
+     * Optional. Most listings in this market are unbranded goods, and a required
+     * brand would block every one of them.
+     */
     @Positive(message = "Brand id must be a positive number")
     private Long brandId;
+
+    /**
+     * Where the product sits in the catalogue tree. Without it the product is
+     * absent from category browsing, which is how most shoppers navigate.
+     */
+    @Positive(message = "Category id must be a positive number")
+    private Long categoryId;
+
+    @Size(max = 300, message = "Short description cannot exceed 300 characters")
+    private String shortDescription;
+
+    /** The vendor's own stock code for a product with no variants. */
+    @Size(max = 60)
+    private String sku;
+
+    /** Shown struck through beside the price. Must be above the price to mean anything. */
+    @DecimalMin(value = "0.01")
+    @Digits(integer = 10, fraction = 2)
+    private BigDecimal compareAtPrice;
+
+    /**
+     * Unit weight. Delivery is priced per kilo beyond an allowance, so a missing
+     * weight bills a bag of rice like a phone case.
+     */
+    @DecimalMin(value = "0.001", message = "Weight must be greater than 0")
+    @DecimalMax(value = "1000.0", message = "Weight cannot exceed 1000 kg")
+    private Double weightKg;
+
+    @Size(max = 120)
+    private String dimensions;
+
+    /** How far this product ships. Drives both the delivery price and country filtering. */
+    private DeliveryScope deliveryScope;
+
+    @Min(value = 0, message = "Low-stock threshold cannot be negative")
+    private Integer lowStockThreshold;
+
+    /** Accept orders past zero stock. Read at checkout. */
+    private Boolean allowBackorder;
+
+    /** Visible in the catalogue. Defaults to true on create; use it to unpublish. */
+    private Boolean active;
 
     @Valid
     private List<AttributeRequest> attributes;
@@ -181,5 +232,26 @@ public class ProductRequest {
     public void setOptions(List<OptionRequest> options) { this.options = options; }
     public List<VariantRequest> getVariants() { return variants; }
     public void setVariants(List<VariantRequest> variants) { this.variants = variants; }
+
+    public Long getCategoryId() { return categoryId; }
+    public void setCategoryId(Long categoryId) { this.categoryId = categoryId; }
+    public String getShortDescription() { return shortDescription; }
+    public void setShortDescription(String shortDescription) { this.shortDescription = shortDescription; }
+    public String getSku() { return sku; }
+    public void setSku(String sku) { this.sku = sku; }
+    public BigDecimal getCompareAtPrice() { return compareAtPrice; }
+    public void setCompareAtPrice(BigDecimal compareAtPrice) { this.compareAtPrice = compareAtPrice; }
+    public Double getWeightKg() { return weightKg; }
+    public void setWeightKg(Double weightKg) { this.weightKg = weightKg; }
+    public String getDimensions() { return dimensions; }
+    public void setDimensions(String dimensions) { this.dimensions = dimensions; }
+    public DeliveryScope getDeliveryScope() { return deliveryScope; }
+    public void setDeliveryScope(DeliveryScope deliveryScope) { this.deliveryScope = deliveryScope; }
+    public Integer getLowStockThreshold() { return lowStockThreshold; }
+    public void setLowStockThreshold(Integer lowStockThreshold) { this.lowStockThreshold = lowStockThreshold; }
+    public Boolean getAllowBackorder() { return allowBackorder; }
+    public void setAllowBackorder(Boolean allowBackorder) { this.allowBackorder = allowBackorder; }
+    public Boolean getActive() { return active; }
+    public void setActive(Boolean active) { this.active = active; }
 
 }

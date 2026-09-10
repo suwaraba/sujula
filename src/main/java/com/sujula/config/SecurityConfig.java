@@ -47,6 +47,12 @@ public class SecurityConfig {
                         // Store pages and store search: a shopper deciding where to
                         // buy has not signed in yet, and these carry no private figures.
                         .requestMatchers(HttpMethod.GET, "/api/vendors/storefront", "/api/vendors/storefront/**").permitAll()
+                        // Catalogue browse, search and the product page. Shoppers look
+                        // before they sign in, and location-ranked search is the main
+                        // way anything is found here. /mine is the seller's own back
+                        // office and is matched first, so the wildcard cannot open it.
+                        .requestMatchers(HttpMethod.GET, "/api/products/mine", "/api/products/mine/**").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/products/**").permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/users/register",
                                 "/api/users/login",

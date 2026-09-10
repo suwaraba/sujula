@@ -44,6 +44,8 @@ public class ProductServiceImpl implements ProductService {
     private final VendorRepository vendorRepository;
     private final ProductVariantRepository variantRepository;
     private final ExchangeRateService exchangeRateService;
+    /** Holds the catalogue write rules; this service reads and delegates. */
+    private final ProductCreateUpdateServiceImpl productWriteService;
 
 
 
@@ -174,56 +176,93 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public ProductResponse create(Long vendorUserId, ProductRequest request) {
-        return null;
-    }
-
-    @Override
-    public ProductResponse update(Long productId, Long vendorUserId, ProductRequest request) {
-        return null;
-    }
-    @Override
     @Transactional(readOnly = true)
     public ProductResponse findById(Long id) {
         return ProductResponse.from(findProductEntityById(id));
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public ProductResponse findPublishedById(Long id) {
+        Product product = findProductEntityById(id);
+        if (!product.isActive()) {
+            // Unpublishing is how a listing is withdrawn, and order lines still
+            // point at the row, so it is never deleted. To a shopper it has to
+            // look exactly like a product that was never there.
+            throw new ResourceNotFoundException("Product", id);
+        }
+        return ProductResponse.from(product);
+    }
 
     @Override
-    @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    @Transactional(readOnly = true)
+    public Page<ProductResponse> findMyProducts(Long vendorUserId, Pageable pageable) {
+        Vendor vendor = vendorRepository.findByUserId(vendorUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vendor for user", vendorUserId));
+        return productRepository.findByVendorIdOrderByCreatedAtDesc(vendor.getId(), pageable)
+                .map(product -> {
+                    initAssociations(product);
+                    return ProductResponse.from(product);
+                });
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ProductResponse findMineById(Long vendorUserId, Long productId) {
+        Vendor vendor = vendorRepository.findByUserId(vendorUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vendor for user", vendorUserId));
+        Product product = findProductEntityById(productId);
+        if (product.getVendor() == null || !vendor.getId().equals(product.getVendor().getId())) {
+            throw new ResourceNotFoundException("Product", productId);
+        }
+        return ProductResponse.from(product);
+    }
+
+    // ── Writes ───────────────────────────────────────────────────────────────
+    // Delegated rather than reimplemented. The catalogue write rules — ownership,
+    // duplicate names, option/variant rebuilding in the right order — live in one
+    // place; these existed as stubs returning null beside them, and a caller had
+    // no way to tell which of the two it had reached. Authorisation stays on the
+    // delegate, which is where the vendor id is checked against the principal.
+    //
+    // Note the argument order differs between the two: two Longs, silently
+    // swappable, so the mapping is spelled out here once.
+
+    @Override
+    public ProductResponse create(Long vendorUserId, ProductRequest request) {
+        return productWriteService.create(vendorUserId, request);
+    }
+
+    @Override
+    public ProductResponse update(Long productId, Long vendorUserId, ProductRequest request) {
+        return productWriteService.update(vendorUserId, productId, request);
+    }
+
+    @Override
     public void delete(Long productId, Long vendorUserId) {
-
+        productWriteService.delete(vendorUserId, productId);
     }
 
     @Override
-    public ProductImage addImage(Long productId, Long vendorUserId, MultipartFile file, String altText, boolean makeDefault) {
-        return null;
-    }
-
-
-
-    @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
     public ProductImageResponse addImage(Long productId, Long vendorUserId, String imageUrl,
                                          String altText, boolean makeDefault) {
-        return null;
+        return productWriteService.addImage(vendorUserId, productId, imageUrl, altText, makeDefault);
     }
 
-    /**
-     * Delete a product image.
-     * DB record is removed first; the R2 object is then deleted (outside the transaction boundary).
-     */
     @Override
-    @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    public List<ProductImageResponse> reorderImages(Long productId, Long vendorUserId,
+                                                    List<Long> imageIdsInOrder) {
+        return productWriteService.reorderImages(vendorUserId, productId, imageIdsInOrder);
+    }
+
+    @Override
     public void deleteImage(Long imageId, Long vendorUserId) {
-
+        productWriteService.removeImage(vendorUserId, imageId);
     }
 
     @Override
-    public ProductImage setDefaultImage(Long imageId, Long vendorUserId) {
-        return null;
+    public ProductImageResponse setDefaultImage(Long imageId, Long vendorUserId) {
+        return productWriteService.setDefaultImage(vendorUserId, imageId);
     }
 
     @Override
