@@ -144,10 +144,9 @@ public class Vendor {
     private List<BankAccount> bankAccounts = new ArrayList<>();
 
 
-    @JsonIgnore
-    @OneToMany(mappedBy = "vendor", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @Builder.Default
-    private List<Payout> payouts = new ArrayList<>();
+    // Payouts are not mapped from here: they belong to the owning User, so that
+    // drivers and pickup-point operators settle through the same table. Read a
+    // vendor's payouts by their user id.
 
     @CreationTimestamp
     @Column(updatable = false)

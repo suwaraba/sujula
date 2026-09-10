@@ -10,8 +10,10 @@ import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.constant.UserRole;
 import com.sujula.dto.GeoAddress;
 import com.sujula.dto.response.VendorResponse;
+import com.sujula.dto.response.VendorStorefrontResponse;
 import com.sujula.model.user.User;
 import com.sujula.model.user.Vendor;
+import com.sujula.repository.product.ProductRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.AuditService;
@@ -39,6 +41,7 @@ public class VendorServiceImpl implements VendorService {
 
     private final VendorRepository vendorRepository;
     private final UserRepository userRepository;
+    private final ProductRepository productRepository;
     private final EmailService emailService;
     private final AuditService auditService;
     private final GoogleMapsService geoService;
@@ -237,10 +240,67 @@ public class VendorServiceImpl implements VendorService {
     }
 
     @Override
+    @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
+    public VendorResponse updateSettlementCurrency(Long vendorId, String settlementCurrency) {
+        String currency = requireCurrencyCode(settlementCurrency);
+        Vendor vendor = findVendorById(vendorId);
+
+        if (currency.equals(vendor.getSettlementCurrency())) {
+            return VendorResponse.from(vendor);
+        }
+
+        // Checkout refuses a listing priced in anything but its vendor's
+        // settlement currency, so switching it under live listings would take the
+        // whole store off sale without saying so.
+        long mismatched = productRepository.countByVendorIdAndPriceCurrencyNot(vendorId, currency);
+        if (mismatched > 0) {
+            throw new BadRequestException(
+                    "This vendor has " + mismatched + " listing(s) priced in " + vendor.getSettlementCurrency()
+                            + ". Re-price or deactivate them before switching to " + currency + ".");
+        }
+
+        String previous = vendor.getSettlementCurrency();
+        vendor.setSettlementCurrency(currency);
+        Vendor saved = vendorRepository.save(vendor);
+
+        auditService.record(AuditAction.VENDOR_STATUS_CHANGED, "VENDOR", saved.getId(), saved.getStoreName(),
+                "Settlement currency changed from " + previous + " to " + currency,
+                "No listings were priced in another currency at the time of the change");
+
+        return VendorResponse.from(saved);
+    }
+
+    // ── Storefront ───────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public VendorStorefrontResponse findStorefrontBySlug(String slug) {
+        Vendor vendor = vendorRepository.findByStoreSlug(slug)
+                .orElseThrow(() -> new ResourceNotFoundException("Vendor", "no store with slug " + slug));
+        if (!vendor.getStatus().canTrade()) {
+            // A pending or suspended store is not a store yet, and saying so would
+            // confirm the slug is taken.
+            throw new ResourceNotFoundException("Vendor", "no store with slug " + slug);
+        }
+        return VendorStorefrontResponse.from(vendor);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<VendorStorefrontResponse> searchStorefront(String query, Pageable pageable) {
+        Page<Vendor> vendors = (query == null || query.isBlank())
+                ? vendorRepository.findByStatus(PartnerStatus.APPROVED, pageable)
+                : vendorRepository.searchByName(query.trim(), pageable);
+
+        return vendors.map(VendorStorefrontResponse::from);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public Vendor requireApproved(Long userId) {
         Vendor vendor = findVendorByUserId(userId);
-        if (vendor.getStatus() != PartnerStatus.APPROVED) {
+        if (!vendor.getStatus().canTrade()) {
             throw new BadRequestException("Your vendor account is not approved. Current status: " + vendor.getStatus());
         }
         return vendor;
@@ -267,6 +327,13 @@ public class VendorServiceImpl implements VendorService {
         if (!cityMatches || !countryMatches) {
             throw new BadRequestException("Address provided is not the same as your location.");
         }
+    }
+
+    private String requireCurrencyCode(String code) {
+        if (code == null || code.trim().length() != 3 || !code.trim().chars().allMatch(Character::isLetter)) {
+            throw new BadRequestException("Settlement currency must be a 3-letter ISO 4217 code");
+        }
+        return code.trim().toUpperCase();
     }
 
     private Vendor findVendorById(Long id) {

@@ -5,6 +5,7 @@ import com.sujula.dto.request.VendorApplicationRequest;
 import com.sujula.dto.request.VendorUpdateProfileRequest;
 import com.sujula.model.constant.PartnerStatus;
 import com.sujula.dto.response.VendorResponse;
+import com.sujula.dto.response.VendorStorefrontResponse;
 import com.sujula.model.user.Vendor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -30,6 +31,25 @@ public interface VendorService {
     VendorResponse updateBanner(Long userId, String bannerUrl);
 
     VendorResponse updateStatus(Long vendorId, PartnerStatus status, String reason);
+
+    /**
+     * Changes the currency a vendor prices and settles in.
+     *
+     * <p>Admin-only, because it is not a profile preference: every listing, order
+     * line and payout is denominated in it, and checkout refuses a product priced
+     * in anything else. Refused outright while listings in the old currency
+     * remain, since the alternative is a store that silently cannot be bought
+     * from.
+     */
+    VendorResponse updateSettlementCurrency(Long vendorId, String settlementCurrency);
+
+    // ── Storefront ───────────────────────────────────────────────────────────
+
+    /** One approved store, as a shopper sees it. No login, no private figures. */
+    VendorStorefrontResponse findStorefrontBySlug(String slug);
+
+    /** Approved stores, optionally filtered by name or description. */
+    Page<VendorStorefrontResponse> searchStorefront(String query, Pageable pageable);
 
     Vendor requireApproved(Long userId);
 

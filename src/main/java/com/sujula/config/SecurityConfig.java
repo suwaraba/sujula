@@ -44,6 +44,9 @@ public class SecurityConfig {
                         .ignoringRequestMatchers("/api/payments/callback"))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
+                        // Store pages and store search: a shopper deciding where to
+                        // buy has not signed in yet, and these carry no private figures.
+                        .requestMatchers(HttpMethod.GET, "/api/vendors/storefront", "/api/vendors/storefront/**").permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/users/register",
                                 "/api/users/login",

@@ -72,6 +72,14 @@ public class VendorApplicationRequest {
     private Double longitude;
 
     @Size(max = 255)
+    /**
+     * ISO-4217 code this vendor prices and settles in. Blank falls back to the
+     * platform default. It is fixed at application because every listing, order
+     * line and payout is denominated in it.
+     */
+    @Pattern(regexp = "^$|^[A-Z]{3}$", message = "settlementCurrency must be a 3-letter ISO 4217 code")
+    private String settlementCurrency;
+
     private String businessRegistrationNumber;
 
     @Size(max = 255)
@@ -95,6 +103,10 @@ public class VendorApplicationRequest {
                 .addressCountryCode(addressCountryCode)
                 .latitude(latitude)
                 .longitude(longitude)
+                // Blank leaves the entity's own default in place rather than
+                // overwriting a non-null column with null.
+                .settlementCurrency(settlementCurrency == null || settlementCurrency.isBlank()
+                        ? "GMD" : settlementCurrency.toUpperCase())
                 .businessRegistrationNumber(businessRegistrationNumber)
                 .taxNumber(taxNumber)
                 .status(PartnerStatus.PENDING)

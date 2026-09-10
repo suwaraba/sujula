@@ -76,9 +76,6 @@ public class CartServiceImpl implements CartService {
 
     private static final Logger log = LoggerFactory.getLogger(CartServiceImpl.class);
 
-    /** Vendor states allowed to sell. */
-    private static final Set<PartnerStatus> SELLABLE =
-            EnumSet.of(PartnerStatus.APPROVED, PartnerStatus.ACTIVE);
 
     private static final int MAX_QUANTITY = CartItemRequest.MAX_QUANTITY_PER_LINE;
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
@@ -496,7 +493,7 @@ public class CartServiceImpl implements CartService {
         if (vendor == null) {
             throw new BadRequestException("Product has no vendor and cannot be purchased");
         }
-        if (!SELLABLE.contains(vendor.getStatus())) {
+        if (!vendor.getStatus().canTrade()) {
             throw new BadRequestException(vendor.getStoreName() + " is not currently accepting orders");
         }
 
@@ -518,7 +515,7 @@ public class CartServiceImpl implements CartService {
         return product != null
                 && product.isActive()
                 && product.getVendor() != null
-                && SELLABLE.contains(product.getVendor().getStatus());
+                && product.getVendor().getStatus().canTrade();
     }
 
     /** Effective purchasable quantity, honouring the product's backorder setting. */
@@ -576,7 +573,7 @@ public class CartServiceImpl implements CartService {
             if (product == null || !product.isActive()) {
                 issues.add(itemIssue(item, CartIssueType.PRODUCT_UNAVAILABLE,
                         safeName(product) + " is no longer available"));
-            } else if (product.getVendor() == null || !SELLABLE.contains(product.getVendor().getStatus())) {
+            } else if (product.getVendor() == null || !product.getVendor().getStatus().canTrade()) {
                 issues.add(itemIssue(item, CartIssueType.VENDOR_UNAVAILABLE,
                         "This seller is not currently accepting orders"));
             }

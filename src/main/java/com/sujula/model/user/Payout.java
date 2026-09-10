@@ -17,6 +17,11 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class Payout {
+    // Owned by a User, not a Vendor, on purpose: drivers and pickup-point
+    // operators earn on this platform too, and settle through this same table.
+    // Vendor previously declared a payouts collection mapped by a "vendor"
+    // property that has never existed here, which stopped Hibernate building the
+    // entity manager at all.
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

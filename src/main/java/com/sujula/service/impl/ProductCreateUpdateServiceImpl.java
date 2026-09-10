@@ -34,10 +34,6 @@ public class ProductCreateUpdateServiceImpl {
 
     private static final int MAX_IMAGES_PER_PRODUCT = 3;
 
-    /** Vendors allowed to trade — the same rule order placement applies. */
-    private static final Set<PartnerStatus> SELLABLE =
-            EnumSet.of(PartnerStatus.APPROVED, PartnerStatus.ACTIVE);
-
     private final ProductRepository productRepository;
     private final VendorRepository vendorRepository;
     private final BrandRepository brandRepository;
@@ -238,7 +234,7 @@ public class ProductCreateUpdateServiceImpl {
         Vendor vendor = vendorRepository.findByUserId(vendorUserId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Vendor not found for user id " + vendorUserId));
-        if (!SELLABLE.contains(vendor.getStatus())) {
+        if (!vendor.getStatus().canTrade()) {
             throw new BadRequestException(
                     "Vendor account is not active. Current status: " + vendor.getStatus());
         }

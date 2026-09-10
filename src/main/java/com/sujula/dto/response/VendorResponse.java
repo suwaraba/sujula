@@ -31,6 +31,8 @@ public class VendorResponse {
     private Double latitude;
     private Double longitude;
     private PartnerStatus status;
+    /** What this vendor prices and settles in. Admin-changeable, fixed at application. */
+    private String settlementCurrency;
     private BigDecimal balance;
     private BigDecimal defaultCommissionRate;
     private BigDecimal rating;
@@ -63,7 +65,11 @@ public class VendorResponse {
                 .latitude(vendor.getLatitude())
                 .longitude(vendor.getLongitude())
                 .status(vendor.getStatus())
+                .settlementCurrency(vendor.getSettlementCurrency())
                 .balance(vendor.getBalance())
+                // Declared on this DTO since it was written, and never mapped.
+                // Owner-and-admin only, so there is nothing to withhold here.
+                .defaultCommissionRate(vendor.getDefaultCommissionRate())
                 .rating(vendor.getRating())
                 .totalReviews(vendor.getTotalReviews())
                 .totalSold(vendor.getTotalSold())

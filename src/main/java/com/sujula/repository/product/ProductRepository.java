@@ -31,6 +31,13 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     boolean existsByVendorIdAndNameIgnoreCase(Long vendorId, String productName);
 
+    /**
+     * Listings this vendor prices in some other currency. Checkout refuses a
+     * product whose currency disagrees with its vendor's settlement currency, so
+     * changing that currency has to account for what is already listed.
+     */
+    long countByVendorIdAndPriceCurrencyNot(Long vendorId, String priceCurrency);
+
     boolean existsByVendorIdAndNameIgnoreCaseAndIdNot(Long vendorId, String productName, Long productId);
 
     // ── Proximity-ranked browse queries ──────────────────────────────────────

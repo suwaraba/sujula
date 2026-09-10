@@ -103,8 +103,6 @@ public class OrderServiceImpl implements OrderService {
     private static final Set<VendorOrderStatus> VENDOR_TERMINAL = Set.of(
             VendorOrderStatus.DELIVERED, VendorOrderStatus.CANCELLED, VendorOrderStatus.REFUNDED);
 
-    private static final Set<PartnerStatus> SELLABLE = EnumSet.of(PartnerStatus.APPROVED, PartnerStatus.ACTIVE);
-
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
     private final OrderRepository orderRepository;
@@ -870,7 +868,7 @@ public class OrderServiceImpl implements OrderService {
         if (vendor == null) {
             throw new BadRequestException("Product has no vendor and cannot be purchased");
         }
-        if (!SELLABLE.contains(vendor.getStatus())) {
+        if (!vendor.getStatus().canTrade()) {
             throw new BadRequestException(vendor.getStoreName() + " is not currently accepting orders");
         }
         String listing = product.getPriceCurrency();
@@ -945,8 +943,7 @@ public class OrderServiceImpl implements OrderService {
     private PickupPoint requirePickupPoint(Long pickupPointId) {
         PickupPoint point = pickupPointRepository.findById(pickupPointId)
                 .orElseThrow(() -> new ResourceNotFoundException("PickupPoint", pickupPointId));
-        PartnerStatus status = point.getStatus();
-        if (!point.isActive() || (status != PartnerStatus.APPROVED && status != PartnerStatus.ACTIVE)) {
+        if (!point.isActive() || !point.getStatus().canTrade()) {
             throw new BadRequestException(point.getName() + " is not accepting parcels right now");
         }
         return point;
