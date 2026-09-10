@@ -60,6 +60,10 @@ public class SecurityConfig {
                                 // Verified by shared secret inside the controller.
                                 "/api/payments/callback"
                         ).permitAll()
+                        // The cart is the storefront's front door: a shopper fills
+                        // one before deciding whether to sign in, and the controller
+                        // issues its own HttpOnly cookie to tell guest carts apart.
+                        .requestMatchers("/api/cart", "/api/cart/**").permitAll()
                         // Guest checkout, end to end. A guest has no account by
                         // definition, so requiring authentication here would make
                         // the whole flow unreachable. Every one of these resolves
