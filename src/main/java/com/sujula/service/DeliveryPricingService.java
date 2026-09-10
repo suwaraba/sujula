@@ -58,4 +58,16 @@ public interface DeliveryPricingService {
                                   DeliveryDestination destination,
                                   DeliveryMode mode,
                                   String displayCurrency);
+
+    /**
+     * Fills in a destination's coordinates by geocoding its written address, and
+     * returns it unchanged when it already has them or when geocoding fails —
+     * an unreachable geocoder must never stop a buyer from checking out.
+     *
+     * <p>Quoting does this internally; it is exposed so checkout can resolve the
+     * destination once, price against it, and store the same coordinates on the
+     * order, rather than geocoding the same address twice and risking two
+     * different answers.
+     */
+    DeliveryDestination resolveDestination(DeliveryDestination destination);
 }

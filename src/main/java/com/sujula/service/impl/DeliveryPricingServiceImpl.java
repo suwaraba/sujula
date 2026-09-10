@@ -306,6 +306,11 @@ public class DeliveryPricingServiceImpl implements DeliveryPricingService {
         return new Distance(properties.fallbackKmFor(scope).setScale(DISTANCE_SCALE, RoundingMode.HALF_UP), true);
     }
 
+    @Override
+    public DeliveryDestination resolveDestination(DeliveryDestination destination) {
+        return withCoordinates(destination);
+    }
+
     /** Fills in the destination's coordinates by geocoding its address, when it has none. */
     private DeliveryDestination withCoordinates(DeliveryDestination destination) {
         if (destination == null || destination.hasCoordinates()) {

@@ -1,6 +1,8 @@
 package com.sujula.dto.request.order;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -68,4 +70,16 @@ public class GuestCheckoutRequest {
     @NotBlank
     @Size(min = 2, max = 2)
     private String shippingCountry;
+
+    /**
+     * Dropped pin, when the guest's device gave one. Optional: without it the
+     * written address is geocoded at checkout. Supplied, it is trusted over the
+     * text — in much of the country a street name resolves to a neighbourhood at
+     * best, and the pin is the only thing a courier can navigate to.
+     */
+    @DecimalMin(value = "-90.0")  @DecimalMax(value = "90.0")
+    private Double shippingLatitude;
+
+    @DecimalMin(value = "-180.0") @DecimalMax(value = "180.0")
+    private Double shippingLongitude;
 }

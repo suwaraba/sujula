@@ -55,6 +55,14 @@ public class OrderAdminDto {
     private String shippingPostalCode;
     private String shippingCountry;
 
+    /**
+     * The point delivery was priced against and the courier navigates to. Admin
+     * and operations only — it is not on any vendor-facing view, where nothing
+     * about where the buyer is may appear.
+     */
+    private Double shippingLatitude;
+    private Double shippingLongitude;
+
     private PaymentStatus paymentStatus;
     private PaymentMethod paymentMethod;
     private String paymentReference;
@@ -92,6 +100,8 @@ public class OrderAdminDto {
                 .shippingStreet(order.getShippingStreet())
                 .shippingApartment(order.getShippingApartment())
                 .shippingCity(order.getShippingCity())
+                .shippingLatitude(order.getShippingLatitude())
+                .shippingLongitude(order.getShippingLongitude())
                 .shippingState(order.getShippingState())
                 .shippingPostalCode(order.getShippingPostalCode())
                 .shippingCountry(order.getShippingCountry())

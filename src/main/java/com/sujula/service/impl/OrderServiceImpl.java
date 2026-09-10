@@ -138,7 +138,8 @@ public class OrderServiceImpl implements OrderService {
 
         List<ItemSpec> specs = toSpecs(request.getItems());
         CheckoutResult result = priceExplicitItems(specs, defaultCurrency, request.getCouponCode(), customerId);
-        applyDeliveryPricing(result, DeliveryDestination.of(address), DeliveryMode.HOME_DELIVERY);
+        DeliveryDestination destination = resolveDestination(DeliveryDestination.of(address));
+        applyDeliveryPricing(result, destination, DeliveryMode.HOME_DELIVERY);
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
@@ -161,6 +162,8 @@ public class OrderServiceImpl implements OrderService {
                 .shippingState(address.getState())
                 .shippingPostalCode(address.getPostalCode())
                 .shippingCountry(address.getCountryCode())
+                .shippingLatitude(destination.latitude())
+                .shippingLongitude(destination.longitude())
                 .notes(request.getNotes())
                 .build();
 
@@ -193,10 +196,15 @@ public class OrderServiceImpl implements OrderService {
         // actually travels to, so it is the hub that prices the delivery.
         DeliveryMode mode = request.getPickupPointId() != null
                 ? DeliveryMode.PICKUP_POINT : DeliveryMode.HOME_DELIVERY;
+        UserCheckoutRequest.DeliveryAddress deliveryAddress = request.getDeliveryAddress();
         DeliveryDestination destination = (mode == DeliveryMode.PICKUP_POINT)
                 ? DeliveryDestination.of(requirePickupPoint(request.getPickupPointId()))
-                : new DeliveryDestination(null, null, shippingStreet,
+                : new DeliveryDestination(
+                        deliveryAddress != null ? deliveryAddress.getLatitude() : null,
+                        deliveryAddress != null ? deliveryAddress.getLongitude() : null,
+                        shippingStreet,
                         recipient.getCity(), recipient.getRegion(), null, recipient.getCountry());
+        destination = resolveDestination(destination);
         applyDeliveryPricing(result, destination, mode);
 
         Order order = Order.builder()
@@ -219,6 +227,8 @@ public class OrderServiceImpl implements OrderService {
                 .shippingCity(recipient.getCity())
                 .shippingState(recipient.getRegion())
                 .shippingCountry(recipient.getCountry())
+                .shippingLatitude(destination.latitude())
+                .shippingLongitude(destination.longitude())
                 .notes(request.getNotes())
                 .build();
 
@@ -243,7 +253,8 @@ public class OrderServiceImpl implements OrderService {
         requireCheckoutable(quote);
 
         CheckoutResult result = buildFromQuote(quote);
-        applyDeliveryPricing(result, DeliveryDestination.of(address), DeliveryMode.HOME_DELIVERY);
+        DeliveryDestination destination = resolveDestination(DeliveryDestination.of(address));
+        applyDeliveryPricing(result, destination, DeliveryMode.HOME_DELIVERY);
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
@@ -266,6 +277,8 @@ public class OrderServiceImpl implements OrderService {
                 .shippingState(address.getState())
                 .shippingPostalCode(address.getPostalCode())
                 .shippingCountry(address.getCountryCode())
+                .shippingLatitude(destination.latitude())
+                .shippingLongitude(destination.longitude())
                 .notes(notes)
                 .build();
 
@@ -301,11 +314,11 @@ public class OrderServiceImpl implements OrderService {
             result = priceExplicitItems(specs, requestedCurrency, request.getCouponCode(), null);
         }
 
-        applyDeliveryPricing(result,
-                new DeliveryDestination(null, null,
-                        request.getShippingStreet(), request.getShippingCity(), request.getShippingState(),
-                        request.getShippingPostalCode(), request.getShippingCountry()),
-                DeliveryMode.HOME_DELIVERY);
+        DeliveryDestination destination = resolveDestination(new DeliveryDestination(
+                request.getShippingLatitude(), request.getShippingLongitude(),
+                request.getShippingStreet(), request.getShippingCity(), request.getShippingState(),
+                request.getShippingPostalCode(), request.getShippingCountry()));
+        applyDeliveryPricing(result, destination, DeliveryMode.HOME_DELIVERY);
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
@@ -331,6 +344,8 @@ public class OrderServiceImpl implements OrderService {
                 .shippingState(request.getShippingState())
                 .shippingPostalCode(request.getShippingPostalCode())
                 .shippingCountry(request.getShippingCountry())
+                .shippingLatitude(destination.latitude())
+                .shippingLongitude(destination.longitude())
                 .notes(request.getNotes())
                 .build();
 
@@ -938,6 +953,27 @@ public class OrderServiceImpl implements OrderService {
 
         result.shipping = shipping;
         result.total = result.total.add(shipping);
+    }
+
+    /**
+     * Puts the delivery address on a map before anything is priced.
+     *
+     * <p>Every order carries the point it is going to, not just the words for it.
+     * Delivery here is priced from the distance between vendor and buyer, so a
+     * destination that never resolved falls back to a flat per-scope distance and
+     * the buyer is billed for a journey nobody measured; and a courier in a
+     * country where most addresses do not resolve to a street needs somewhere to
+     * navigate to. The coordinates are resolved once, here, and then stored on
+     * the order — priced and delivered against the same point, and unaffected if
+     * the buyer later edits the saved address it came from.
+     *
+     * <p>Best-effort by design: a geocoder that is down or unconfigured leaves
+     * the coordinates null and checkout carries on with the fallback distances.
+     * Refusing the order would be the worse failure.
+     */
+    private DeliveryDestination resolveDestination(DeliveryDestination destination) {
+        DeliveryDestination resolved = deliveryPricingService.resolveDestination(destination);
+        return resolved != null ? resolved : destination;
     }
 
     private PickupPoint requirePickupPoint(Long pickupPointId) {

@@ -151,6 +151,19 @@ public class Order {
     private String shippingPostalCode;
     private String shippingCountry;
 
+    /**
+     * Where the parcel is actually going, resolved once at checkout — supplied by
+     * the buyer's device or geocoded from the address above when it was not.
+     *
+     * <p>Kept on the order rather than re-derived, for three reasons: delivery was
+     * priced from these exact coordinates and the price has to stay explicable
+     * afterwards; a saved address the buyer later edits must not move an order
+     * that has already shipped; and the courier needs a point, not a street name,
+     * in a country where most addresses do not resolve to one.
+     */
+    private Double shippingLatitude;
+    private Double shippingLongitude;
+
     // ── Billing address snapshot ──────────────────────────────────────────────
 
     private String billingFullName;
@@ -468,6 +481,27 @@ public class Order {
 
 	public void setShippingCountry(String shippingCountry) {
 		this.shippingCountry = shippingCountry;
+	}
+
+	public Double getShippingLatitude() {
+		return shippingLatitude;
+	}
+
+	public void setShippingLatitude(Double shippingLatitude) {
+		this.shippingLatitude = shippingLatitude;
+	}
+
+	public Double getShippingLongitude() {
+		return shippingLongitude;
+	}
+
+	public void setShippingLongitude(Double shippingLongitude) {
+		this.shippingLongitude = shippingLongitude;
+	}
+
+	/** True once the order has a point a courier can navigate to. */
+	public boolean hasShippingCoordinates() {
+		return shippingLatitude != null && shippingLongitude != null;
 	}
 
 	public String getBillingFullName() {

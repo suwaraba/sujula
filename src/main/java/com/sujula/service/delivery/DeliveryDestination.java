@@ -61,10 +61,15 @@ public record DeliveryDestination(Double latitude,
                 point.getCity(), point.getState(), point.getPostalCode(), point.getCountryCode());
     }
 
-    /** Built from the order's own shipping snapshot, so a placed order can be re-quoted. */
+    /**
+     * Built from the order's own shipping snapshot, so a placed order can be
+     * re-quoted. Coordinates come from the order itself: they were resolved once
+     * at checkout, and re-deriving them later could move a parcel that has
+     * already been priced and dispatched.
+     */
     public static DeliveryDestination of(Order order) {
         return new DeliveryDestination(
-                null, null,
+                order.getShippingLatitude(), order.getShippingLongitude(),
                 joinStreet(order.getShippingStreet(), order.getShippingApartment()),
                 order.getShippingCity(), order.getShippingState(),
                 order.getShippingPostalCode(), order.getShippingCountry());

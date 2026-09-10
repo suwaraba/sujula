@@ -1,5 +1,6 @@
 package com.sujula.service;
 
+import com.sujula.dto.GeoAddress;
 import com.sujula.dto.request.ExchangeRateRequest;
 import com.sujula.dto.response.ExchangeRateResponse;
 import com.sujula.model.constant.DeliveryMode;
@@ -23,7 +24,13 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * The pricing arithmetic, without Spring or a database — the parts a checkout
@@ -240,4 +247,59 @@ class DeliveryPricingServiceImplTest {
             throw new UnsupportedOperationException();
         }
     }
+
+    // ── Destination resolution ───────────────────────────────────────────────
+    // Exposed so checkout can geocode once, price against the result and store
+    // the same coordinates on the order.
+
+    @Test
+    void geocodesAWrittenAddressThatHasNoCoordinates() {
+        GoogleMapsService maps = mock(GoogleMapsService.class);
+        when(maps.getCoordinates(anyString(), anyString()))
+                .thenReturn(new GeoAddress("14 Kairaba Avenue", DEST_LAT, DEST_LNG, "Gambia", "GM", "Serekunda"));
+        DeliveryPricingServiceImpl geocoding =
+                new DeliveryPricingServiceImpl(properties, new FixedRates(), maps, null, null);
+
+        DeliveryDestination resolved = geocoding.resolveDestination(new DeliveryDestination(
+                null, null, "14 Kairaba Avenue", "Serekunda", null, null, "GM"));
+
+        assertTrue(resolved.hasCoordinates());
+        assertEquals(DEST_LAT, resolved.latitude());
+        assertEquals(DEST_LNG, resolved.longitude());
+        // The written address survives the round trip — it is still what the
+        // buyer typed and what appears on the order.
+        assertEquals("14 Kairaba Avenue", resolved.addressLine());
+    }
+
+    @Test
+    void keepsCoordinatesTheBuyerAlreadySupplied() {
+        GoogleMapsService maps = mock(GoogleMapsService.class);
+        DeliveryPricingServiceImpl geocoding =
+                new DeliveryPricingServiceImpl(properties, new FixedRates(), maps, null, null);
+
+        DeliveryDestination resolved = geocoding.resolveDestination(destination());
+
+        assertEquals(DEST_LAT, resolved.latitude());
+        // A dropped pin beats a street name here: most addresses in this market
+        // do not geocode to a point, and the pin is what a courier navigates to.
+        verify(maps, never()).getCoordinates(anyString(), anyString());
+    }
+
+    @Test
+    void anUnreachableGeocoderDoesNotStopCheckout() {
+        GoogleMapsService maps = mock(GoogleMapsService.class);
+        when(maps.getCoordinates(anyString(), anyString()))
+                .thenThrow(new IllegalStateException("geocoder unreachable"));
+        DeliveryPricingServiceImpl geocoding =
+                new DeliveryPricingServiceImpl(properties, new FixedRates(), maps, null, null);
+
+        DeliveryDestination resolved = geocoding.resolveDestination(new DeliveryDestination(
+                null, null, "14 Kairaba Avenue", "Serekunda", null, null, "GM"));
+
+        // Null coordinates, not an exception: pricing falls back to the per-scope
+        // distance, and the buyer still gets to place the order.
+        assertNull(resolved.latitude());
+        assertNull(resolved.longitude());
+    }
+
 }
