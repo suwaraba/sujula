@@ -61,6 +61,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Objects;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -953,6 +954,62 @@ public class OrderServiceImpl implements OrderService {
 
         result.shipping = shipping;
         result.total = result.total.add(shipping);
+
+        freezeVendorSettlement(result.vendorOrders);
+    }
+
+    /**
+     * Writes onto each vendor slice what that vendor is owed, in that vendor's
+     * own currency, before the order is saved.
+     *
+     * <p>Frozen rather than derived later, because everything it is derived from
+     * moves: the platform's commission rate is an editable field on the vendor,
+     * and exchange rates change every day. A payout recomputed next week would
+     * quietly restate what a seller was owed for an order they shipped last week.
+     *
+     * <p>Delivery converts at the same rate the goods did — the rate implied by
+     * this slice's own display and native subtotals, not a fresh lookup — so a
+     * parcel and its contents cannot end up priced off two different rates.
+     * Runs after delivery pricing, since the legs do not exist before then.
+     */
+    static void freezeVendorSettlement(List<VendorOrder> vendorOrders) {
+        for (VendorOrder vendorOrder : vendorOrders) {
+            BigDecimal deliveryDisplay = vendorOrder.getItems().stream()
+                    .map(OrderItem::getDeliveryCost)
+                    .filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            BigDecimal totalNative = vendorOrder.getTotalNative();
+            BigDecimal subtotalNative = vendorOrder.getSubtotalNative();
+            BigDecimal subtotalDisplay = vendorOrder.getSubtotal();
+
+            if (subtotalNative != null && subtotalDisplay != null && subtotalDisplay.signum() > 0) {
+                vendorOrder.setDeliveryNative(deliveryDisplay
+                        .multiply(subtotalNative)
+                        .divide(subtotalDisplay, RateTable.MONEY_SCALE, RoundingMode.HALF_UP));
+            }
+
+            // Null when this vendor's lines spanned more than one listing currency,
+            // in which case there is no single native total to take a cut of and
+            // payout falls back to the per-line native amounts on each item.
+            if (totalNative == null) {
+                continue;
+            }
+
+            Vendor vendor = vendorOrder.getVendor();
+            BigDecimal rate = vendor != null && vendor.getDefaultCommissionRate() != null
+                    ? vendor.getDefaultCommissionRate()
+                    : BigDecimal.ZERO;
+            BigDecimal commission = totalNative
+                    .multiply(rate)
+                    .divide(HUNDRED, RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+
+            vendorOrder.setCommissionRate(rate);
+            vendorOrder.setCommissionNative(commission);
+            // Delivery is deliberately not added: the platform arranges it and
+            // keeps it. The vendor is paid for the goods.
+            vendorOrder.setPayoutNative(totalNative.subtract(commission));
+        }
     }
 
     /**

@@ -90,6 +90,32 @@ public class VendorOrder {
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal total;
 
+    // ── Settlement, frozen at checkout ───────────────────────────────────────
+    // All in nativeCurrency. Frozen rather than computed on demand: the platform's
+    // commission rate changes, exchange rates change daily, and neither may
+    // restate what a vendor was owed for an order already placed.
+
+    /** Platform commission percentage applied to this slice, as it stood at checkout. */
+    @Column(precision = 5, scale = 2)
+    private BigDecimal commissionRate;
+
+    @Column(precision = 12, scale = 2)
+    private BigDecimal commissionNative;
+
+    /**
+     * Delivery on this vendor's lines, converted at the same rate the goods were.
+     *
+     * <p>Recorded for the vendor's own books, not paid to them: the platform
+     * arranges and keeps delivery, so it is deliberately absent from
+     * {@link #payoutNative}.
+     */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal deliveryNative;
+
+    /** What the vendor is owed: {@code totalNative - commissionNative}. */
+    @Column(precision = 12, scale = 2)
+    private BigDecimal payoutNative;
+
     /** Vendor-scoped coupon applied to this slice, if any. Snapshot survives coupon deletion. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "coupon_id")
