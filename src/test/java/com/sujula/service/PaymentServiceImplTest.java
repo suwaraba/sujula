@@ -73,7 +73,8 @@ class PaymentServiceImplTest {
         when(noGateways.stream()).thenAnswer(invocation -> java.util.stream.Stream.empty());
 
         service = new PaymentServiceImpl(paymentRepository, orderRepository, statusHistoryRepository,
-                userRepository, emailService, notificationService, properties, noGateways);
+                userRepository, emailService, notificationService, mock(AuditService.class),
+                properties, noGateways);
 
         order = new Order();
         order.setId(7L);

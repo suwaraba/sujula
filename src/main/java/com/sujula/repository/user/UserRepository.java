@@ -16,6 +16,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
     boolean existsByEmail(String email);
     boolean existsByEmailIgnoreCase(String email);
     Page<User> findByRole(UserRole role, Pageable pageable);
+
+    /** Used at startup to tell an unadministered deployment from a healthy one. */
+    long countByRole(UserRole role);
     Optional<User> findByEmailVerificationToken(String token);
     Optional<User> findByPasswordResetToken(String token);
 

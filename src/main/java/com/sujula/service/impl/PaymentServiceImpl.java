@@ -8,6 +8,7 @@ import com.sujula.dto.response.payment.PaymentMethodOption;
 import com.sujula.dto.response.payment.PaymentResponse;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
+import com.sujula.model.constant.AuditAction;
 import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentMethod;
@@ -20,6 +21,7 @@ import com.sujula.repository.PaymentRepository;
 import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.OrderStatusHistoryRepository;
 import com.sujula.repository.user.UserRepository;
+import com.sujula.service.AuditService;
 import com.sujula.service.EmailService;
 import com.sujula.service.NotificationService;
 import com.sujula.service.PaymentService;
@@ -76,6 +78,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final UserRepository userRepository;
     private final EmailService emailService;
     private final NotificationService notificationService;
+    private final AuditService auditService;
     private final PaymentProperties properties;
     private final ObjectProvider<PaymentGateway> gateways;
 
@@ -85,6 +88,7 @@ public class PaymentServiceImpl implements PaymentService {
                               UserRepository userRepository,
                               EmailService emailService,
                               NotificationService notificationService,
+                              AuditService auditService,
                               PaymentProperties properties,
                               ObjectProvider<PaymentGateway> gateways) {
         this.paymentRepository = paymentRepository;
@@ -93,6 +97,7 @@ public class PaymentServiceImpl implements PaymentService {
         this.userRepository = userRepository;
         this.emailService = emailService;
         this.notificationService = notificationService;
+        this.auditService = auditService;
         this.properties = properties;
         this.gateways = gateways;
     }
@@ -414,7 +419,11 @@ public class PaymentServiceImpl implements PaymentService {
         settle(payment, adminUserId,
                 request != null ? request.getCollectionReference() : null,
                 request != null ? request.getNote() : null);
-        return PaymentResponse.from(paymentRepository.save(payment));
+        Payment saved = paymentRepository.save(payment);
+        auditPayment(AuditAction.PAYMENT_TRANSFER_CONFIRMED, saved,
+                "Bank transfer of " + saved.getAmount() + " " + saved.getCurrency() + " confirmed",
+                request != null ? request.getCollectionReference() : null);
+        return PaymentResponse.from(saved);
     }
 
     @Override
@@ -430,7 +439,12 @@ public class PaymentServiceImpl implements PaymentService {
         settle(payment, collectorUserId,
                 request != null ? request.getCollectionReference() : null,
                 request != null ? request.getNote() : null);
-        return PaymentResponse.from(paymentRepository.save(payment));
+        Payment saved = paymentRepository.save(payment);
+        auditPayment(AuditAction.PAYMENT_COLLECTED_IN_PERSON, saved,
+                saved.getAmount() + " " + saved.getCurrency() + " collected at handover via "
+                        + saved.getMethod().getDisplayName(),
+                request != null ? request.getCollectionReference() : null);
+        return PaymentResponse.from(saved);
     }
 
     @Override
@@ -438,7 +452,9 @@ public class PaymentServiceImpl implements PaymentService {
     public PaymentResponse markFailed(Long orderId, String reason) {
         Payment payment = requireOpenPayment(orderId);
         fail(payment, reason);
-        return PaymentResponse.from(paymentRepository.save(payment));
+        Payment saved = paymentRepository.save(payment);
+        auditPayment(AuditAction.PAYMENT_MARKED_FAILED, saved, "Payment marked as failed", reason);
+        return PaymentResponse.from(saved);
     }
 
     @Override
@@ -452,7 +468,9 @@ public class PaymentServiceImpl implements PaymentService {
             return PaymentResponse.from(payment);   // idempotent
         }
         abandon(payment, reason);
-        return PaymentResponse.from(paymentRepository.save(payment));
+        Payment saved = paymentRepository.save(payment);
+        auditPayment(AuditAction.PAYMENT_CANCELLED, saved, "Payment cancelled", reason);
+        return PaymentResponse.from(saved);
     }
 
     @Override
@@ -494,6 +512,9 @@ public class PaymentServiceImpl implements PaymentService {
 
         applyRefund(payment, amount, request != null ? request.getReason() : null, adminUserId);
         Payment saved = paymentRepository.save(payment);
+        auditPayment(AuditAction.PAYMENT_REFUNDED, saved,
+                amount + " " + saved.getCurrency() + " refunded, leaving the payment " + saved.getStatus(),
+                request != null ? request.getReason() : null);
         notifyBuyer(saved.getOrder(), "Refund Processed",
                 "A refund of " + amount + " " + saved.getCurrency() + " for order "
                         + saved.getOrder().getOrderNumber() + " has been processed.");
@@ -682,6 +703,11 @@ public class PaymentServiceImpl implements PaymentService {
     // ─────────────────────────────────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────────────────────────────────
+
+    /** Money decisions are the ones most worth being able to answer for later. */
+    private void auditPayment(AuditAction action, Payment payment, String summary, String details) {
+        auditService.record(action, "PAYMENT", payment.getId(), payment.getReference(), summary, details);
+    }
 
     private Optional<PaymentGateway> gatewayFor(PaymentMethod method) {
         return gateways.stream().filter(g -> g.supports(method)).findFirst();

@@ -4,12 +4,14 @@ package com.sujula.service.impl;
 
 import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.exceptions.BadRequestException;
+import com.sujula.model.constant.AuditAction;
 import com.sujula.model.constant.UserRole;
 
 import com.sujula.dto.request.UserRequest;
 import com.sujula.dto.response.user.UserResponse;
 import com.sujula.model.user.User;
 import com.sujula.repository.user.UserRepository;
+import com.sujula.service.AuditService;
 import com.sujula.service.EmailService;
 import com.sujula.service.GeoService;
 import com.sujula.service.UserService;
@@ -47,6 +49,7 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
     private final GeoService geoService;
+    private final AuditService auditService;
     private final LoginAttemptTracker loginAttempts;
     private final LoginAttemptProperties loginAttemptProperties;
 
@@ -60,12 +63,14 @@ public class UserServiceImpl implements UserService {
     private final String absentUserHash;
 
     public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder, EmailService emailService,
-                           GeoService geoService, LoginAttemptTracker loginAttempts,
+                           GeoService geoService, AuditService auditService,
+                           LoginAttemptTracker loginAttempts,
                            LoginAttemptProperties loginAttemptProperties) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.emailService = emailService;
         this.geoService = geoService;
+        this.auditService = auditService;
         this.loginAttempts = loginAttempts;
         this.loginAttemptProperties = loginAttemptProperties;
         this.absentUserHash = passwordEncoder.encode(Utils.generateSecureToken());
@@ -217,7 +222,8 @@ public class UserServiceImpl implements UserService {
         requireAdmin();
         User user = findUserEntityById(id);
         user.setEnabled(false);
-        userRepository.save(user);
+        User saved = userRepository.save(user);
+        audit(AuditAction.USER_DELETED, saved, "Account deleted (disabled, history kept)");
     }
 
     @Override
@@ -257,9 +263,21 @@ public class UserServiceImpl implements UserService {
     public UserResponse blockUser(Long id, boolean blocked, boolean fraud) {
         requireAdmin();
         User user = findUserEntityById(id);
+        boolean wasBlocked = user.isBlocked();
+        boolean wasFraud = user.isFraud();
         user.setBlocked(blocked);
         user.setFraud(fraud);
-        return UserResponse.toResponse(userRepository.save(user));
+        User saved = userRepository.save(user);
+
+        if (blocked != wasBlocked) {
+            audit(blocked ? AuditAction.USER_BLOCKED : AuditAction.USER_UNBLOCKED, saved,
+                    blocked ? "Account blocked" : "Account unblocked");
+        }
+        if (fraud != wasFraud) {
+            audit(fraud ? AuditAction.USER_FRAUD_FLAGGED : AuditAction.USER_FRAUD_CLEARED, saved,
+                    fraud ? "Flagged as fraudulent" : "Fraud flag cleared");
+        }
+        return UserResponse.toResponse(saved);
     }
 
     @Override
@@ -267,8 +285,13 @@ public class UserServiceImpl implements UserService {
     public UserResponse unblockUser(Long id) {
         requireAdmin();
         User user = findUserEntityById(id);
+        if (!user.isBlocked()) {
+            return UserResponse.toResponse(user);
+        }
         user.setBlocked(false);
-        return UserResponse.toResponse(userRepository.save(user));
+        User saved = userRepository.save(user);
+        audit(AuditAction.USER_UNBLOCKED, saved, "Account unblocked");
+        return UserResponse.toResponse(saved);
     }
 
     @Override
@@ -277,7 +300,9 @@ public class UserServiceImpl implements UserService {
         requireAdmin();
         User user = findUserEntityById(id);
         loginAttempts.clear(user);
-        return UserResponse.toResponse(userRepository.save(user));
+        User saved = userRepository.save(user);
+        audit(AuditAction.USER_UNLOCKED, saved, "Sign-in lockout lifted");
+        return UserResponse.toResponse(saved);
     }
 
     @Override
@@ -285,8 +310,14 @@ public class UserServiceImpl implements UserService {
     public UserResponse markFraud(Long id, boolean fraud) {
         requireAdmin();
         User user = findUserEntityById(id);
+        if (user.isFraud() == fraud) {
+            return UserResponse.toResponse(user);
+        }
         user.setFraud(fraud);
-        return UserResponse.toResponse(userRepository.save(user));
+        User saved = userRepository.save(user);
+        audit(fraud ? AuditAction.USER_FRAUD_FLAGGED : AuditAction.USER_FRAUD_CLEARED, saved,
+                fraud ? "Flagged as fraudulent" : "Fraud flag cleared");
+        return UserResponse.toResponse(saved);
     }
 
     @Override
@@ -296,6 +327,7 @@ public class UserServiceImpl implements UserService {
         User user = findUserEntityById(id);
         user.setEnabled(true);
         User saved = userRepository.save(user);
+        audit(AuditAction.USER_ENABLED, saved, "Account enabled");
         emailService.sendAccountStatusChangeEmail(saved.getEmail(), saved.getFullName(), true, "Account enabled");
         return UserResponse.toResponse(saved);
     }
@@ -307,6 +339,7 @@ public class UserServiceImpl implements UserService {
         User user = findUserEntityById(id);
         user.setEnabled(false);
         User saved = userRepository.save(user);
+        audit(AuditAction.USER_DISABLED, saved, "Account disabled");
         emailService.sendAccountStatusChangeEmail(saved.getEmail(), saved.getFullName(), false, "Account disabled");
         return UserResponse.toResponse(saved);
     }
@@ -411,6 +444,9 @@ public class UserServiceImpl implements UserService {
     public void deleteAccountPermanently(Long id) {
         requireAdmin();
         User user = findUserEntityById(id);
+        // Recorded first: once the row is gone this entry is the only evidence
+        // the account ever existed, or that anyone decided to remove it.
+        audit(AuditAction.USER_PURGED, user, "Account permanently deleted");
         userRepository.delete(user);
     }
 
@@ -481,6 +517,10 @@ public class UserServiceImpl implements UserService {
             User saved = userRepository.save(user);
             emailService.sendVerificationEmail(saved.getEmail(), saved.getFullName(), saved.getEmailVerificationToken());
         });
+    }
+
+    private void audit(AuditAction action, User target, String summary) {
+        auditService.record(action, "USER", target.getId(), target.getEmail(), summary);
     }
 
     private Long getAuthenticatedUserId() {

@@ -5,6 +5,7 @@ import com.sujula.dto.request.VendorApplicationRequest;
 import com.sujula.dto.request.VendorUpdateProfileRequest;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
+import com.sujula.model.constant.AuditAction;
 import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.constant.UserRole;
 import com.sujula.dto.GeoAddress;
@@ -13,6 +14,7 @@ import com.sujula.model.user.User;
 import com.sujula.model.user.Vendor;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.user.VendorRepository;
+import com.sujula.service.AuditService;
 import com.sujula.service.EmailService;
 import com.sujula.service.GoogleMapsService;
 import com.sujula.service.VendorService;
@@ -38,6 +40,7 @@ public class VendorServiceImpl implements VendorService {
     private final VendorRepository vendorRepository;
     private final UserRepository userRepository;
     private final EmailService emailService;
+    private final AuditService auditService;
     private final GoogleMapsService geoService;
 
     @Override
@@ -221,6 +224,13 @@ public class VendorServiceImpl implements VendorService {
 
         Vendor saved = vendorRepository.save(vendor);
         String effectiveReason = reason != null && !reason.isBlank() ? reason.trim() : "No reason provided";
+
+        // Approving a seller lets them take money from buyers, and suspending one
+        // cuts off their livelihood; both are decisions someone has to answer for.
+        auditService.record(AuditAction.VENDOR_STATUS_CHANGED, "VENDOR", saved.getId(), saved.getStoreName(),
+                "Vendor status changed from " + oldStatus + " to " + newStatus,
+                "Reason: " + effectiveReason);
+
         emailService.sendVendorStatusChangeEmail(user.getEmail(), saved.getStoreName(), newStatus.name(), effectiveReason);
 
         return VendorResponse.from(saved);

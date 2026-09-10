@@ -55,7 +55,7 @@ class UserServiceImplLoginTest {
 
         loginAttempts = mock(LoginAttemptTracker.class);
         service = new UserServiceImpl(userRepository, passwordEncoder,
-                mock(EmailService.class), mock(GeoService.class),
+                mock(EmailService.class), mock(GeoService.class), mock(AuditService.class),
                 loginAttempts, new LoginAttemptProperties());
 
         user = new User();
