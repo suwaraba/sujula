@@ -4,6 +4,7 @@ import com.sujula.model.R2Properties;
 import com.sujula.service.StorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
@@ -17,6 +18,7 @@ import java.time.Duration;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@ConditionalOnExpression("'${sujula.r2.access-key-id:}'.length() > 0")
 public class StorageServiceImpl implements StorageService {
 
     private final S3Client r2Client;
