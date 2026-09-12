@@ -27,6 +27,17 @@ public class SecurityConfig {
     @Value("${sujula.google.geocoding.api-key:}")
     private String apiKey;
 
+    /**
+     * Whether Swagger UI and the OpenAPI document are reachable without signing in.
+     *
+     * <p>Off unless switched on. The document is a complete map of the API — every
+     * path, every role-gated write, every request shape — which is a gift to
+     * anyone probing the service, so production does not serve it anonymously.
+     * The dev profile turns it on.
+     */
+    @Value("${sujula.docs.enabled:false}")
+    private boolean docsEnabled;
+
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -73,7 +84,13 @@ public class SecurityConfig {
                         // CSRF token to present; the endpoint authenticates it
                         // with a shared secret instead.
                         .ignoringRequestMatchers("/api/payments/callback"))
-                .authorizeHttpRequests(auth -> auth
+                .authorizeHttpRequests(auth -> {
+                    if (docsEnabled) {
+                        auth.requestMatchers(
+                                "/swagger-ui.html", "/swagger-ui/**",
+                                "/v3/api-docs", "/v3/api-docs/**").permitAll();
+                    }
+                    auth
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to
                         // buy has not signed in yet, and these carry no private figures.
@@ -112,8 +129,8 @@ public class SecurityConfig {
                                          "/api/guest/orders/*/cancel",
                                          "/api/guest/orders/*/payment",
                                          "/api/guest/orders/*/payment/methods").permitAll()
-                        .anyRequest().authenticated()
-                );
+                        .anyRequest().authenticated();
+                });
         return http.build();
     }
 
