@@ -12,13 +12,19 @@ import com.google.maps.GeoApiContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
 @Configuration
 @EnableMethodSecurity
 @EnableWebSecurity
 public class SecurityConfig {
 
-    @Value("${google.maps.api.key}")
+    /**
+     * Same key the geocoding service uses. This read named a property nothing
+     * defined, and an unresolvable @Value with no default fails context startup —
+     * so the security configuration was what brought the application down.
+     */
+    @Value("${sujula.google.geocoding.api-key:}")
     private String apiKey;
 
 
@@ -33,11 +39,36 @@ public class SecurityConfig {
                 .build();
     }
 
+
+    /**
+     * Makes the readable-cookie CSRF pattern actually work for a browser client.
+     *
+     * <p>{@code withHttpOnlyFalse()} above exists so JavaScript can read the
+     * {@code XSRF-TOKEN} cookie and echo it back in a header — what Angular does
+     * natively, what axios does via {@code xsrfCookieName}, and what every
+     * hand-rolled fetch wrapper does. The default handler, however, expects that
+     * header to carry an XOR-masked token, and the raw cookie value is the only
+     * thing a browser has. The two halves disagreed, so every POST was refused:
+     * login, registration and checkout were all unreachable from a browser, which
+     * only showed up once the application was actually run against.
+     *
+     * <p>Setting the attribute name to null opts out of the masking, so the raw
+     * cookie value validates. The masking exists to frustrate a BREACH attack on
+     * a token rendered into an HTML response body — which does not apply here,
+     * because this service returns JSON and never renders the token into a page.
+     */
+    private static CsrfTokenRequestAttributeHandler spaCsrfTokenRequestHandler() {
+        CsrfTokenRequestAttributeHandler handler = new CsrfTokenRequestAttributeHandler();
+        handler.setCsrfRequestAttributeName(null);
+        return handler;
+    }
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        .csrfTokenRequestHandler(spaCsrfTokenRequestHandler())
                         // A payment provider posts a machine callback and has no
                         // CSRF token to present; the endpoint authenticates it
                         // with a shared secret instead.
