@@ -1,7 +1,7 @@
 -- ============================================================================
 --  Sujula development seed
 -- ============================================================================
---  Populates all 39 tables with one coherent, related dataset. Run it by hand;
+--  Populates all 44 tables with one coherent, related dataset. Run it by hand;
 --  it is deliberately NOT auto-loaded on startup, because seed data appearing
 --  in a database by surprise is worse than typing one command, and this file
 --  deletes before it inserts.
@@ -26,14 +26,27 @@
 --
 --  ── If it fails on the first DELETE ────────────────────────────────────────
 --
---  "Table 'sujula.notifications' doesn't exist" means the schema predates the
---  `read` -> `is_read` fix: `read` is reserved in MySQL, that CREATE TABLE
---  failed, and Hibernate logged it and carried on. Start the application once
---  on current code so ddl-auto creates the table, then re-run this. To check
---  what is actually there:
+--  Every "doesn't exist" and "unknown column" here has the same cause and the
+--  same fix: the database is older than the code. Hibernate's ddl-auto adds what
+--  is missing, so start the application once on current code, then re-run this.
+--
+--      "Table 'sujula.user_sessions' doesn't exist"
+--      — and the same for mfa_recovery_codes, oauth_accounts,
+--      phone_verifications or account_data_requests. The database predates the
+--      /auth and /me layers; those five tables are new.
+--
+--      "Unknown column 'phone_verified' in 'field list'"
+--      — the users table predates phone verification.
+--
+--      "Table 'sujula.notifications' doesn't exist"
+--      — the schema predates the `read` -> `is_read` fix. `read` is reserved in
+--      MySQL, so that CREATE TABLE failed, and Hibernate logged it and carried
+--      on rather than stopping.
+--
+--  To see what is actually there:
 --
 --      SELECT table_name FROM information_schema.tables
---       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 39
+--       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 44
 --
 --  ── Conventions ────────────────────────────────────────────────────────────
 --
@@ -48,7 +61,9 @@
 --
 --      10xx  users            13xx  products          16xx  payments
 --      11xx  vendors          14xx  orders            17xx  deliveries
---      12xx  catalogue        15xx  vendor orders     18xx  everything else
+--      12xx  catalogue        15xx  vendor orders     18xx  sessions, MFA,
+--                                                           linked accounts,
+--                                                           data requests
 --
 --  ── What the data represents ───────────────────────────────────────────────
 --
@@ -76,13 +91,48 @@
 --            review, so the last-mile tables have something in them even
 --            though no endpoint writes them yet.
 --
+--  ── And what the accounts are in the middle of ─────────────────────────────
+--
+--  The auth tables are seeded with state rather than with placeholders, because
+--  half of what /auth and /me do is only observable when something is already
+--  in progress:
+--
+--      Aminata   two live devices, an authenticator enrolled, three recovery
+--                codes of which one is already spent, phone proved
+--      Oliver    signs in with both Google and Apple, no password he has ever
+--                chosen, no phone — and one session that has already rotated
+--                its refresh token, so the spent one is a demonstrable replay
+--      Modou     mid-verification: neither email nor phone proved yet, and a
+--                live phone challenge waiting for its code
+--      Sulayman  blocked, five failed verification attempts behind him, and an
+--                erasure request in flight
+--
 --  All passwords are  Sujula123!  (a real BCrypt hash, verified against the
---  application's own encoder).
+--  application's own encoder). The refresh tokens, recovery codes and phone
+--  codes seeded below are equally real — the hashes stored are the hashes the
+--  application itself would compute — and the values are printed in the notes
+--  at the end of this file.
 -- ============================================================================
 
 SET NAMES utf8mb4;
 SET @PW = '$2a$10$nRluET0D32C7aC1ANGfIZ.yyg2UmvHcZTSm2az36pyqS7sHvXcdmm';
 SET @NOW = '2026-09-12 09:00:00.000000';
+
+-- Two relative clocks, for the rows whose whole point is that they are still
+-- open when you run this. A fixed timestamp is right for history — an order was
+-- placed when it was placed — but wrong for anything with a deadline: a phone
+-- challenge seeded to expire ten minutes after a date in the file is expired by
+-- the time anyone runs the seed, and the code printed in the notes below would
+-- be refused rather than accepted. These two are the difference between data
+-- that reads correctly and data that works.
+--
+-- Standard interval syntax, valid in both MySQL and H2.
+--   @SOON    an open challenge, still answerable
+--   @FUTURE  a live session, and a download link that has not lapsed
+--   @LAPSED  a session past its refresh window, which must be refused
+SET @SOON   = CURRENT_TIMESTAMP + INTERVAL '30' MINUTE;
+SET @FUTURE = CURRENT_TIMESTAMP + INTERVAL '30' DAY;
+SET @LAPSED = CURRENT_TIMESTAMP - INTERVAL '7' DAY;
 
 START TRANSACTION;
 
@@ -795,19 +845,19 @@ VALUES
  -- yesterday's, and is what GET /me/sessions shows her she could sign out.
  (1801, 1004, '3603c99a7dee6931f58bba6ebeaa0936e67ff1e3939052f692eb481fdfdd6139', NULL,
   'Chrome on Android', 'Mozilla/5.0 (Linux; Android 14; Infinix X669C) AppleWebKit/537.36',
-  '41.222.10.14', 'GM', '2026-09-11 08:15:00.000000', @NOW, '2026-10-11 08:15:00.000000', NULL, NULL, 0),
+  '41.222.10.14', 'GM', '2026-09-11 08:15:00.000000', @NOW, @FUTURE, NULL, NULL, 0),
  (1802, 1004, '7afaf5d4b71d9447aa0afd3fdb0e2db0333c434b4656dcdc504e6532c585d90f', NULL,
   'Firefox on Windows', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 Firefox/131.0',
   '41.222.10.14', 'GM', '2026-09-05 19:40:00.000000', '2026-09-11 21:02:00.000000',
-  '2026-10-05 19:40:00.000000', NULL, NULL, 0),
+  @FUTURE, NULL, NULL, 0),
 
  -- A vendor and a buyer abroad, so the device list is not all one country.
  (1803, 1002, 'ef18219e7ec9ab4e1d18b2b565b2c8f25e5a0743a7b1b204d036e3354a832ed8', NULL,
   'Safari on iOS', 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
-  '41.222.11.90', 'GM', '2026-09-09 07:05:00.000000', @NOW, '2026-10-09 07:05:00.000000', NULL, NULL, 0),
+  '41.222.11.90', 'GM', '2026-09-09 07:05:00.000000', @NOW, @FUTURE, NULL, NULL, 0),
  (1804, 1005, '1983a183253caeb411fe8000aa7042c6cbc7c3a64adc919e48227c7821a30cf7', NULL,
   'Chrome on macOS', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/537.36',
-  '86.140.22.7', 'GB', '2026-09-10 11:30:00.000000', @NOW, '2026-10-10 11:30:00.000000', NULL, NULL, 0),
+  '86.140.22.7', 'GB', '2026-09-10 11:30:00.000000', @NOW, @FUTURE, NULL, NULL, 0),
 
  -- One session that has already rotated once. Refreshing with the token behind
  -- previous_token_hash is a replay: the legitimate client moved on to the
@@ -816,13 +866,13 @@ VALUES
  (1805, 1005, 'a1b7c3d9e5f2048516273849506172839405162738495061728394051627384a',
   '30550aca7cd587d9156420d022eea8c062cf096a0d17fbbf3b157aec3af01198',
   'Edge on Windows', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/129.0',
-  '86.140.22.7', 'GB', '2026-09-08 06:00:00.000000', @NOW, '2026-10-08 06:00:00.000000', NULL, NULL, 1),
+  '86.140.22.7', 'GB', '2026-09-08 06:00:00.000000', @NOW, @FUTURE, NULL, NULL, 1),
 
  -- Ended, for the two reasons a session ends without the user asking.
  (1806, 1006, '82b45eeac3a87adc0008792f9808d99b1daf8e271b92fc9467cfb235297c886d', NULL,
   'Chrome on Android', 'Mozilla/5.0 (Linux; Android 13; TECNO KI5k) AppleWebKit/537.36',
   '41.222.14.3', 'GM', '2026-07-02 10:00:00.000000', '2026-07-20 10:00:00.000000',
-  '2026-08-01 10:00:00.000000', NULL, NULL, 0),
+  @LAPSED, NULL, NULL, 0),
  (1807, 1007, 'f5a38a4c7aa9f0890acd64eead5ce83340d54b8a12611735bafc8121d014fee5', NULL,
   'Sujula Driver App', 'SujulaDriver/1.4 (Android 14)',
   '41.222.19.51', 'GM', '2026-09-01 05:30:00.000000', '2026-09-07 18:45:00.000000',
@@ -868,7 +918,7 @@ INSERT INTO phone_verifications (id, user_id, phone, code_hash, attempts, expire
  -- Live: Modou is mid-verification. The code is in the notes; POST
  -- /auth/verify-phone/confirm with it completes the flow.
  (1831, 1006, '+2203100006', '$2a$10$w6T6bwAzzN1PofDiHXYezu/YIJLLfpsAOu8Tn2kFAoTjkFLUIyafq',
-  0, '2026-09-12 09:10:00.000000', NULL, @NOW),
+  0, @SOON, NULL, @NOW),
  -- Already confirmed, and kept: the history of which numbers were proved when
  -- is worth more than the row is expensive.
  (1832, 1004, '+2203100004', '$2a$10$w6T6bwAzzN1PofDiHXYezu/YIJLLfpsAOu8Tn2kFAoTjkFLUIyafq',
@@ -895,7 +945,7 @@ VALUES
  (1841, 1005, 'EXPORT', 'COMPLETED', 'EXP-7F3A2B91',
   '2026-09-09 10:00:00.000000', '2026-09-09 10:01:00.000000', '2026-09-09 10:01:30.000000',
   'data:application/json;base64,eyJleHBvcnRlZEF0IjoiMjAyNi0wOS0wOVQxMDowMTozMCJ9',
-  '2026-09-16 10:01:30.000000', NULL),
+  @FUTURE, NULL),
  -- Waiting for the worker, which picks it up within the minute.
  (1842, 1006, 'EXPORT', 'PENDING', 'EXP-C40D18E2', @NOW, NULL, NULL, NULL, NULL, NULL),
  -- An erasure in flight. Asking again while this is open returns this row
@@ -954,7 +1004,9 @@ COMMIT;
 --                                         session is revoked rather than renewed.
 --                                         Check GET /me/sessions afterwards —
 --                                         1805 comes back revoked, TOKEN_REPLAY.
---     sujula-dev-refresh-modou-expired    past its refresh window. 401, and
+--     sujula-dev-refresh-modou-expired    past its refresh window — seeded a
+--                                         week in the past, so it is expired
+--                                         whenever you run this. 401, and
 --                                         nothing is revoked: an expired token
 --                                         is not evidence of anything.
 --
@@ -976,15 +1028,18 @@ COMMIT;
 --
 --   ── An unfinished phone verification ─────────────────────────────────────
 --
---   Modou has a live challenge on +2203100006, code 445120, and the same code
---   is seeded against Aminata's already-confirmed number. Sulayman's row has
+--   Modou has a live challenge on +2203100006, code 445120. It is good for
+--   thirty minutes from the moment you run this file, not from a date written
+--   into it — a challenge seeded to expire at a fixed timestamp is expired
+--   before anyone can use it, which makes the row decorative. The same code is
+--   seeded against Aminata's already-confirmed number. Sulayman's row has
 --   burnt all five attempts and expired: that is what a refused verification
 --   looks like in the data, and it is why a sixth attempt is not simply a
 --   fresh start.
 --
 --   ── Data-protection requests in every state ──────────────────────────────
 --
---     EXP-7F3A2B91   done, Oliver, with a download that expires
+--     EXP-7F3A2B91   done, Oliver, with a download good for thirty days
 --     EXP-C40D18E2   queued, Modou — the worker takes it within the minute
 --     ERA-9B21EF07   an erasure in flight against the blocked account
 --     EXP-1D5C77A4   failed, with the reason kept for the person who asked
