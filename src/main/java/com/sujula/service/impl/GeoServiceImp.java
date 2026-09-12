@@ -3,6 +3,8 @@ package com.sujula.service.impl;
 import com.maxmind.geoip2.DatabaseReader;
 import com.maxmind.geoip2.model.CountryResponse;
 import com.sujula.service.GeoService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -17,6 +19,8 @@ import java.util.Locale;
 
 @Service
 public class GeoServiceImp implements GeoService {
+
+    private static final Logger log = LoggerFactory.getLogger(GeoServiceImp.class);
 
     private static final List<String> COUNTRY_HEADERS = List.of(
             "CF-IPCountry",
@@ -35,13 +39,29 @@ public class GeoServiceImp implements GeoService {
 
     private final DatabaseReader countryReader;
 
+    /**
+     * The MaxMind database is optional, and deliberately so.
+     *
+     * <p>It is the <em>fallback</em>: {@link #getCountryCode(HttpServletRequest)}
+     * reads the CDN's own country header first, and behind Cloudflare, CloudFront
+     * or Vercel that header is always present and the database is never consulted.
+     * Refusing to start without it took down every deployment that did not need
+     * it — and because {@code AuditServiceImpl} depends on this bean, it took the
+     * whole application with it.
+     *
+     * <p>Absent, country-by-IP resolution returns null, which is exactly what it
+     * already returns for a private address or an unresolvable one. Every caller
+     * handles that.
+     */
     public GeoServiceImp(
             @Value("${sujula.geoip.country-database:classpath:GeoLite2-Country.mmdb}") Resource countryDatabase
     ) throws IOException {
         if (!countryDatabase.exists()) {
-            throw new IllegalStateException(
-                    "GeoIP country database is required. Configure sujula.geoip.country-database or provide GeoLite2-Country.mmdb on the classpath."
-            );
+            log.warn("[Geo] No GeoIP country database at {} — falling back to CDN country headers. "
+                            + "Set sujula.geoip.country-database to enable country-by-IP lookup.",
+                    countryDatabase.getDescription());
+            this.countryReader = null;
+            return;
         }
 
         try (InputStream inputStream = countryDatabase.getInputStream()) {
@@ -86,6 +106,10 @@ public class GeoServiceImp implements GeoService {
     @Override
     public String getCountryCode(String ip) {
         if (!isPublicIp(ip)) {
+            return null;
+        }
+
+        if (countryReader == null) {
             return null;
         }
 

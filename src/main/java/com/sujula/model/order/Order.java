@@ -15,7 +15,6 @@ import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentMethod;
 import com.sujula.model.constant.PaymentStatus;
-import com.sujula.model.delivery.Delivery;
 import com.sujula.model.products.Coupon;
 import com.sujula.model.user.User;
 
@@ -214,8 +213,6 @@ public class Order {
     private Long pickupPointId;
 
     @JsonIgnore   // avoid circular serialisation and lazy-init issues
-    @OneToOne(mappedBy = "order", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    private Delivery delivery;
 
     // ── Notes ─────────────────────────────────────────────────────────────────
 
@@ -560,13 +557,6 @@ public class Order {
 		this.payment = payment;
 	}
 
-	public Delivery getDelivery() {
-		return delivery;
-	}
-
-	public void setDelivery(Delivery delivery) {
-		this.delivery = delivery;
-	}
 
 	public String getNotes() {
 		return notes;

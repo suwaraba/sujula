@@ -33,11 +33,17 @@ public interface DeliveryRepository extends JpaRepository<Delivery, Long> {
     long countByDriverIdAndStatus(Long driverId, DeliveryStatus status);
 
     /**
-     * Paginated deliveries for a driver with Order, Driver, and PickupPoint eagerly fetched.
-     * Avoids LazyInitializationException when building DeliveryResponse (spring.jpa.open-in-view=false).
+     * Paginated deliveries for a driver with the order line, its order, the driver
+     * and the pickup point eagerly fetched. Avoids LazyInitializationException when
+     * building DeliveryResponse (spring.jpa.open-in-view=false).
+     *
+     * <p>A delivery hangs off an {@code OrderItem}, not an {@code Order} — each
+     * product in a multivendor basket travels on its own — so the order is reached
+     * through the line rather than directly.
      */
     @Query(value      = "SELECT d FROM Delivery d " +
-                        "LEFT JOIN FETCH d.order " +
+                        "LEFT JOIN FETCH d.orderItem oi " +
+                        "LEFT JOIN FETCH oi.order " +
                         "LEFT JOIN FETCH d.driver " +
                         "LEFT JOIN FETCH d.pickupPoint " +
                         "WHERE d.driver.id = :driverId",
