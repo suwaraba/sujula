@@ -11,6 +11,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import com.google.maps.GeoApiContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
@@ -37,6 +38,12 @@ public class SecurityConfig {
      */
     @Value("${sujula.docs.enabled:false}")
     private boolean docsEnabled;
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+    }
 
 
     @Bean
@@ -83,7 +90,15 @@ public class SecurityConfig {
                         // A payment provider posts a machine callback and has no
                         // CSRF token to present; the endpoint authenticates it
                         // with a shared secret instead.
-                        .ignoringRequestMatchers("/api/payments/callback"))
+                        //
+                        // /auth and /me are the bearer-token surface. CSRF exists
+                        // because a browser attaches cookies to a cross-site request
+                        // on its own; an Authorization header is never attached on
+                        // its own, so there is nothing for a forged request to ride.
+                        // Requiring a cookie-delivered CSRF token here would also
+                        // make the API unusable from a native client, which has no
+                        // cookie jar to read one from.
+                        .ignoringRequestMatchers("/api/payments/callback", "/auth/**", "/me/**"))
                 .authorizeHttpRequests(auth -> {
                     if (docsEnabled) {
                         auth.requestMatchers(
@@ -91,6 +106,22 @@ public class SecurityConfig {
                                 "/v3/api-docs", "/v3/api-docs/**").permitAll();
                     }
                     auth
+                        // ── Token authentication ─────────────────────────────
+                        // Getting in, proving an address, or recovering a lost
+                        // password all have to work before there is an identity.
+                        .requestMatchers(HttpMethod.POST,
+                                "/auth/register",
+                                "/auth/login",
+                                "/auth/refresh",
+                                "/auth/verify-email",
+                                "/auth/password/forgot",
+                                "/auth/password/reset").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/auth/oauth/*/callback").permitAll()
+                        // Everything else under /auth changes an account someone
+                        // already holds: signing out, rotating a password, turning
+                        // multi-factor on or off. /me is the account itself.
+                        .requestMatchers("/auth/**", "/me", "/me/**").authenticated()
+
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to
                         // buy has not signed in yet, and these carry no private figures.
@@ -130,7 +161,12 @@ public class SecurityConfig {
                                          "/api/guest/orders/*/payment",
                                          "/api/guest/orders/*/payment/methods").permitAll()
                         .anyRequest().authenticated();
-                });
+                })
+                // Runs before the username/password filter so a bearer token is
+                // resolved first, and yields to an existing session if one is
+                // already established — the two mechanisms coexist rather than
+                // compete, and both leave the same User on the principal.
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 

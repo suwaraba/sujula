@@ -19,6 +19,30 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     Page<Order> findByCustomerId(Long customerId, Pageable pageable);
 
+    /**
+     * A customer's order history as a data export needs it: five scalar columns
+     * and nothing else.
+     *
+     * <p>An export covers a lifetime of orders in one pass. Hydrating each into
+     * a managed {@code Order} — with its items, its coupon, its address snapshot
+     * and its payment — would load several hundred times the data for the five
+     * fields the export actually writes, and would pin all of it in the
+     * persistence context at once.
+     */
+    @Query("SELECT o.orderNumber AS orderNumber, o.status AS status, o.total AS total, "
+         + "o.currency AS currency, o.createdAt AS placedAt "
+         + "FROM Order o WHERE o.customer.id = :customerId ORDER BY o.createdAt DESC")
+    List<OrderExportView> findExportRows(@Param("customerId") Long customerId);
+
+    /** The projection {@link #findExportRows} returns. */
+    interface OrderExportView {
+        String getOrderNumber();
+        OrderStatus getStatus();
+        BigDecimal getTotal();
+        String getCurrency();
+        LocalDateTime getPlacedAt();
+    }
+
     Optional<Order> findByOrderNumber(String orderNumber);
 
     Page<Order> findByStatus(OrderStatus status, Pageable pageable);

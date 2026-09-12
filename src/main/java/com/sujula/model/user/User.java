@@ -48,6 +48,16 @@ public class User {
     @Column(nullable = false)
     private boolean emailVerified = false;
 
+    /**
+     * Whether the number on this account has been proved, not merely typed.
+     *
+     * <p>Worth more than email verification in this market: a phone is how a
+     * courier reaches a buyer and how mobile money identifies a seller, so an
+     * unproved number is a delivery that fails and a payout that goes astray.
+     */
+    @Column(nullable = false)
+    private boolean phoneVerified = false;
+
     @Column(nullable = false)
     @Builder.Default
     private boolean blocked = false;
@@ -123,7 +133,7 @@ public class User {
 
     
 public User(Long id, String email, String password, String firstName, String lastName, String phone, UserRole role,
-			boolean enabled, boolean emailVerified, boolean blocked, boolean fraud, String profileImageUrl, String preferredCurrency,
+			boolean enabled, boolean emailVerified, boolean phoneVerified, boolean blocked, boolean fraud, String profileImageUrl, String preferredCurrency,
 			String preferredLanguage, String detectedCountryCode, String emailVerificationToken,
 			LocalDateTime emailVerificationTokenExpiry, String passwordResetToken,
 			LocalDateTime passwordResetTokenExpiry, int failedLoginAttempts, LocalDateTime lockedUntil,
@@ -139,6 +149,7 @@ public User(Long id, String email, String password, String firstName, String las
 		this.role = role;
 		this.enabled = enabled;
 		this.emailVerified = emailVerified;
+		this.phoneVerified = phoneVerified;
 		this.blocked = blocked;
 		this.fraud = fraud;
 		this.profileImageUrl = profileImageUrl;
@@ -275,6 +286,14 @@ public User(Long id, String email, String password, String firstName, String las
 
 	public void setEmailVerified(boolean emailVerified) {
 		this.emailVerified = emailVerified;
+	}
+
+	public boolean isPhoneVerified() {
+		return phoneVerified;
+	}
+
+	public void setPhoneVerified(boolean phoneVerified) {
+		this.phoneVerified = phoneVerified;
 	}
 
 
