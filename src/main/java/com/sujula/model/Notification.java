@@ -48,7 +48,16 @@ public class Notification {
     private String type;  // ORDER_UPDATE, DELIVERY_UPDATE, PROMO, etc.
     private String referenceId;
 
-    @Column(nullable = false)
+    /**
+     * Column is {@code is_read}, not {@code read}.
+     *
+     * <p>{@code read} is a reserved word in MySQL, so the generated
+     * {@code create table notifications (... read bit not null ...)} was a syntax
+     * error — the table was never created, the application started anyway because
+     * Hibernate logs DDL failures and continues, and every notification write
+     * would then have failed against a table that did not exist.
+     */
+    @Column(name = "is_read", nullable = false)
     @Builder.Default
     private boolean read = false;
 
