@@ -1,6 +1,6 @@
 package com.sujula.service.auth.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.sujula.model.auth.AccountDataRequest;
 import com.sujula.model.constant.DataRequestStatus;
 import com.sujula.model.constant.DataRequestType;
@@ -53,6 +53,12 @@ public class AccountDataProcessor {
     private final OAuthAccountRepository oauthAccounts;
     private final AddressRepository addresses;
     private final OrderRepository orders;
+    /**
+     * Jackson 3's mapper — {@code tools.jackson}, not {@code com.fasterxml}.
+     * Spring Boot 4 auto-configures the former and no longer registers a bean of
+     * the latter, which is still on the classpath transitively and will inject
+     * nothing.
+     */
     private final ObjectMapper objectMapper;
 
     public AccountDataProcessor(AccountDataRequestRepository requests, UserRepository users,

@@ -90,6 +90,11 @@ START TRANSACTION;
 -- Reverse foreign-key order. No FOREIGN_KEY_CHECKS=0 anywhere: if this order
 -- is wrong the database says so, which is the point.
 
+DELETE FROM account_data_requests  WHERE id >= 1000;
+DELETE FROM phone_verifications    WHERE id >= 1000;
+DELETE FROM oauth_accounts         WHERE id >= 1000;
+DELETE FROM mfa_recovery_codes     WHERE id >= 1000;
+DELETE FROM user_sessions          WHERE id >= 1000;
 DELETE FROM handover_codes         WHERE id >= 1000;
 DELETE FROM delivery_tracking      WHERE id >= 1000;
 DELETE FROM proof_of_delivery      WHERE id >= 1000;
@@ -179,28 +184,29 @@ INSERT INTO gift_cards (id, code, currency, initial_amount, remaining_balance, i
 
 INSERT INTO users
  (id, first_name, last_name, email, password, phone, role,
-  enabled, email_verified, blocked, fraud, totp_enabled, totp_verified,
+  enabled, email_verified, phone_verified, blocked, fraud,
+  totp_enabled, totp_verified, totp_secret,
   failed_login_attempts, preferred_currency, preferred_language, detected_country_code,
   created_at, updated_at)
 VALUES
  (1001, 'Fatou',  'Jallow',  'fatou.admin@sujula.gm',      @PW, '+2203100001', 'ADMIN',
-  1, 1, 0, 0, 0, 0, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
+  1, 1, 1, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
  (1002, 'Lamin',  'Touray',  'lamin.kombo@sujula.gm',      @PW, '+2203100002', 'VENDOR',
-  1, 1, 0, 0, 0, 0, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
+  1, 1, 1, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
  (1003, 'Awa',    'Diallo',  'awa.teranga@sujula.sn',      @PW, '+2217700003', 'VENDOR',
-  1, 1, 0, 0, 0, 0, 0, 'XOF', 'fr', 'SN', @NOW, @NOW),
+  1, 1, 1, 0, 0, 0, 0, NULL, 0, 'XOF', 'fr', 'SN', @NOW, @NOW),
  (1004, 'Aminata','Ceesay',  'aminata.ceesay@example.gm',  @PW, '+2203100004', 'CUSTOMER',
-  1, 1, 0, 0, 0, 0, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
+  1, 1, 1, 0, 0, 1, 1, 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', 0, 'GMD', 'en', 'GM', @NOW, @NOW),
  (1005, 'Oliver', 'Bennett', 'oliver.bennett@example.co.uk',@PW,'+447700900005','CUSTOMER',
-  1, 1, 0, 0, 0, 0, 0, 'GBP', 'en', 'GB', @NOW, @NOW),
+  1, 1, 0, 0, 0, 0, 0, NULL, 0, 'GBP', 'en', 'GB', @NOW, @NOW),
  (1006, 'Modou',  'Sanneh',  'modou.sanneh@example.gm',    @PW, '+2203100006', 'CUSTOMER',
-  1, 0, 0, 0, 0, 0, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
+  1, 0, 0, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
  (1007, 'Ebrima', 'Bojang',  'ebrima.driver@sujula.gm',    @PW, '+2203100007', 'DELIVERY',
-  1, 1, 0, 0, 0, 0, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
+  1, 1, 1, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
  (1008, 'Isatou', 'Camara',  'isatou.pickup@sujula.gm',    @PW, '+2203100008', 'PICKUP_OPERATOR',
-  1, 1, 0, 0, 0, 0, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
+  1, 1, 1, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
  (1009, 'Sulayman','Gomez',  'sulayman.blocked@example.gm',@PW, '+2203100009', 'CUSTOMER',
-  1, 1, 1, 1, 0, 0, 3, 'GMD', 'en', 'GM', @NOW, @NOW);
+  1, 1, 0, 1, 1, 0, 0, NULL, 3, 'GMD', 'en', 'GM', @NOW, @NOW);
 
 -- ── vendor_payouts ──────────────────────────────────────────────────────────
 -- Hangs off users, not vendors. No service writes these: amounts owed are
@@ -770,10 +776,144 @@ INSERT INTO handover_codes (id, delivery_id, code, code_type, used, used_at, use
 INSERT INTO delivery_routes (id, driver_id, route_date, delivery_ids, optimized_order, total_estimated_distance_km, estimated_duration_minutes, created_at, updated_at) VALUES
  (1740, 1090, '2026-09-12', '1700,1701', '1700,1701', 12.40, 55, @NOW, @NOW);
 
+-- ── user_sessions ───────────────────────────────────────────────────────────
+-- Devices that are signed in. The refresh tokens are real: each hash below is
+-- the SHA-256 of a token printed in the notes at the end of this file, so the
+-- seeded sessions can actually be exercised against POST /auth/refresh rather
+-- than only looked at.
+--
+-- Tokens are stored hashed and never in clear — the column holds the digest,
+-- not the credential. SHA-256 rather than BCrypt on purpose: a 256-bit random
+-- token has nothing to guess, so the slow hash buys nothing and would make the
+-- lookup-by-hash on every refresh impossible.
+
+INSERT INTO user_sessions
+ (id, user_id, refresh_token_hash, previous_token_hash, device_label, user_agent,
+  ip_address, country_code, created_at, last_seen_at, expires_at, revoked_at, revoked_reason, version)
+VALUES
+ -- Aminata on two devices. The phone is what she is holding; the laptop is
+ -- yesterday's, and is what GET /me/sessions shows her she could sign out.
+ (1801, 1004, '3603c99a7dee6931f58bba6ebeaa0936e67ff1e3939052f692eb481fdfdd6139', NULL,
+  'Chrome on Android', 'Mozilla/5.0 (Linux; Android 14; Infinix X669C) AppleWebKit/537.36',
+  '41.222.10.14', 'GM', '2026-09-11 08:15:00.000000', @NOW, '2026-10-11 08:15:00.000000', NULL, NULL, 0),
+ (1802, 1004, '7afaf5d4b71d9447aa0afd3fdb0e2db0333c434b4656dcdc504e6532c585d90f', NULL,
+  'Firefox on Windows', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 Firefox/131.0',
+  '41.222.10.14', 'GM', '2026-09-05 19:40:00.000000', '2026-09-11 21:02:00.000000',
+  '2026-10-05 19:40:00.000000', NULL, NULL, 0),
+
+ -- A vendor and a buyer abroad, so the device list is not all one country.
+ (1803, 1002, 'ef18219e7ec9ab4e1d18b2b565b2c8f25e5a0743a7b1b204d036e3354a832ed8', NULL,
+  'Safari on iOS', 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15',
+  '41.222.11.90', 'GM', '2026-09-09 07:05:00.000000', @NOW, '2026-10-09 07:05:00.000000', NULL, NULL, 0),
+ (1804, 1005, '1983a183253caeb411fe8000aa7042c6cbc7c3a64adc919e48227c7821a30cf7', NULL,
+  'Chrome on macOS', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/537.36',
+  '86.140.22.7', 'GB', '2026-09-10 11:30:00.000000', @NOW, '2026-10-10 11:30:00.000000', NULL, NULL, 0),
+
+ -- One session that has already rotated once. Refreshing with the token behind
+ -- previous_token_hash is a replay: the legitimate client moved on to the
+ -- current one, so whoever presents the old one is not it, and the session is
+ -- revoked rather than refreshed. This row is what makes that demonstrable.
+ (1805, 1005, 'a1b7c3d9e5f2048516273849506172839405162738495061728394051627384a',
+  '30550aca7cd587d9156420d022eea8c062cf096a0d17fbbf3b157aec3af01198',
+  'Edge on Windows', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/129.0',
+  '86.140.22.7', 'GB', '2026-09-08 06:00:00.000000', @NOW, '2026-10-08 06:00:00.000000', NULL, NULL, 1),
+
+ -- Ended, for the two reasons a session ends without the user asking.
+ (1806, 1006, '82b45eeac3a87adc0008792f9808d99b1daf8e271b92fc9467cfb235297c886d', NULL,
+  'Chrome on Android', 'Mozilla/5.0 (Linux; Android 13; TECNO KI5k) AppleWebKit/537.36',
+  '41.222.14.3', 'GM', '2026-07-02 10:00:00.000000', '2026-07-20 10:00:00.000000',
+  '2026-08-01 10:00:00.000000', NULL, NULL, 0),
+ (1807, 1007, 'f5a38a4c7aa9f0890acd64eead5ce83340d54b8a12611735bafc8121d014fee5', NULL,
+  'Sujula Driver App', 'SujulaDriver/1.4 (Android 14)',
+  '41.222.19.51', 'GM', '2026-09-01 05:30:00.000000', '2026-09-07 18:45:00.000000',
+  '2026-10-01 05:30:00.000000', '2026-09-07 18:46:00.000000', 'LOGOUT', 0);
+
+-- ── mfa_recovery_codes ──────────────────────────────────────────────────────
+-- Only the hashes are kept, exactly as the API does it — the codes themselves
+-- are shown to the user once at activation and never stored. The three below
+-- belong to Aminata, whose account has an authenticator enrolled; the raw codes
+-- are in the notes so the recovery path can be tested end to end.
+
+INSERT INTO mfa_recovery_codes (id, user_id, code_hash, used_at, created_at) VALUES
+ (1811, 1004, '$2a$10$dM0/ckvU.j.bM2GGA9c4d.nV6yymwjZ3456a30hpLmyxmKcGghxw.', NULL, @NOW),
+ (1812, 1004, '$2a$10$uYdUdeiuxQOS3gqGSUGds.YP8XXAIs2o7owjnpOypDYoz2Ul7fJVW', NULL, @NOW),
+ -- Spent. A recovery code is single use, and a used one is kept rather than
+ -- deleted so the count of what remains stays honest.
+ (1813, 1004, '$2a$10$01O9ffCkLM0EmIXTrCw3z.g76vqOGdF5C3SygX4PEZSkuJTVMiYqK',
+  '2026-09-10 22:14:00.000000', @NOW);
+
+-- ── oauth_accounts ──────────────────────────────────────────────────────────
+-- Identity is the provider's subject claim and never the email address. A
+-- person who changes their Google address keeps their account; someone who
+-- later acquires an address another person once used does not inherit theirs.
+
+INSERT INTO oauth_accounts (id, user_id, provider, provider_user_id, email, linked_at, last_used_at) VALUES
+ (1821, 1005, 'GOOGLE', '109327741556028834421', 'oliver.bennett@example.co.uk',
+  '2026-08-14 09:12:00.000000', @NOW),
+ -- Same person, second provider. Apple's private relay address is deliberate:
+ -- it is what Apple actually returns when someone hides their email, and code
+ -- that assumes an address is routable or unique-per-person breaks on it.
+ (1822, 1005, 'APPLE', '001432.8f3c9a2b4e5d6f71.0913', 'k7m2x9p4qz@privaterelay.appleid.com',
+  '2026-08-20 20:45:00.000000', NULL),
+ (1823, 1004, 'GOOGLE', '117884920037451126690', 'aminata.ceesay@example.gm',
+  '2026-06-03 14:20:00.000000', '2026-09-11 08:15:00.000000');
+
+-- ── phone_verifications ─────────────────────────────────────────────────────
+-- A number is claimed here and written to the profile only once the code is
+-- confirmed, so an unconfirmed attempt never changes the account. Codes are
+-- hashed like passwords: a six-digit code is guessable, which is why the row
+-- carries an attempt count and an expiry.
+
+INSERT INTO phone_verifications (id, user_id, phone, code_hash, attempts, expires_at, confirmed_at, created_at) VALUES
+ -- Live: Modou is mid-verification. The code is in the notes; POST
+ -- /auth/verify-phone/confirm with it completes the flow.
+ (1831, 1006, '+2203100006', '$2a$10$w6T6bwAzzN1PofDiHXYezu/YIJLLfpsAOu8Tn2kFAoTjkFLUIyafq',
+  0, '2026-09-12 09:10:00.000000', NULL, @NOW),
+ -- Already confirmed, and kept: the history of which numbers were proved when
+ -- is worth more than the row is expensive.
+ (1832, 1004, '+2203100004', '$2a$10$w6T6bwAzzN1PofDiHXYezu/YIJLLfpsAOu8Tn2kFAoTjkFLUIyafq',
+  1, '2026-06-01 10:05:00.000000', '2026-06-01 10:02:00.000000', '2026-06-01 10:00:00.000000'),
+ -- Burnt through its attempts and expired. This is what a failed verification
+ -- looks like, and the row is why a fourth attempt is refused rather than
+ -- silently starting over.
+ (1833, 1009, '+2203100009', '$2a$10$w6T6bwAzzN1PofDiHXYezu/YIJLLfpsAOu8Tn2kFAoTjkFLUIyafq',
+  5, '2026-08-30 12:00:00.000000', NULL, '2026-08-30 11:55:00.000000');
+
+-- ── account_data_requests ───────────────────────────────────────────────────
+-- The data-protection queue. Erasure on this platform is pseudonymisation:
+-- orders, payments and payouts are financial records that must be kept, so the
+-- rows stay and the personal data in them is overwritten. Deleting a buyer
+-- would tear the referential heart out of every order they ever placed.
+
+INSERT INTO account_data_requests
+ (id, user_id, type, status, reference, requested_at, started_at, completed_at,
+  download_url, download_expires_at, failure_reason)
+VALUES
+ -- Finished. The payload is stored on the row rather than in a bucket: an
+ -- export is the most concentrated personal data the platform ever produces,
+ -- and a bucket is one misconfiguration away from being public.
+ (1841, 1005, 'EXPORT', 'COMPLETED', 'EXP-7F3A2B91',
+  '2026-09-09 10:00:00.000000', '2026-09-09 10:01:00.000000', '2026-09-09 10:01:30.000000',
+  'data:application/json;base64,eyJleHBvcnRlZEF0IjoiMjAyNi0wOS0wOVQxMDowMTozMCJ9',
+  '2026-09-16 10:01:30.000000', NULL),
+ -- Waiting for the worker, which picks it up within the minute.
+ (1842, 1006, 'EXPORT', 'PENDING', 'EXP-C40D18E2', @NOW, NULL, NULL, NULL, NULL, NULL),
+ -- An erasure in flight. Asking again while this is open returns this row
+ -- rather than queueing a second, so a retry on a bad connection cannot start
+ -- two erasure jobs racing over one account.
+ (1843, 1009, 'ERASURE', 'PROCESSING', 'ERA-9B21EF07',
+  '2026-09-12 08:58:00.000000', '2026-09-12 08:59:00.000000', NULL, NULL, NULL, NULL),
+ -- Failed, with the reason kept for the person who asked. A job that fails
+ -- silently is a data-protection request nobody knows went missing.
+ (1844, 1003, 'EXPORT', 'FAILED', 'EXP-1D5C77A4',
+  '2026-08-28 16:00:00.000000', '2026-08-28 16:01:00.000000', '2026-08-28 16:01:12.000000',
+  NULL, NULL, 'Could not serialise the export: order 1402 had no currency recorded');
+
 COMMIT;
 
 -- ── What you now have ───────────────────────────────────────────────────────
 --
+
 --   Sign in as any of these, password  Sujula123!
 --
 --     fatou.admin@sujula.gm          ADMIN
@@ -794,6 +934,63 @@ COMMIT;
 --     GET /api/products/search?q=wax&userLat=51.52&userLng=-0.16&currency=GBP
 --                                       location-ranked, converted prices.
 --     GET /api/admin/orders/1401        the buyer's side of the same order.
+--
+--   ── Signing in without signing in ───────────────────────────────────────
+--
+--   The seeded sessions hold real refresh tokens. Each hash in user_sessions is
+--   the SHA-256 of the value below, so these work against POST /auth/refresh
+--   straight after seeding — no login round trip needed:
+--
+--     sujula-dev-refresh-aminata-phone    Aminata, Android          session 1801
+--     sujula-dev-refresh-aminata-laptop   Aminata, Windows          session 1802
+--     sujula-dev-refresh-lamin-vendor     Lamin the vendor, iOS     session 1803
+--     sujula-dev-refresh-oliver-london    Oliver in London          session 1804
+--
+--   And two that must fail, which is the more interesting half:
+--
+--     sujula-dev-refresh-rotated-away     replayed. Session 1805 has already
+--                                         rotated past it, so refreshing with it
+--                                         is treated as theft: 401, and the
+--                                         session is revoked rather than renewed.
+--                                         Check GET /me/sessions afterwards —
+--                                         1805 comes back revoked, TOKEN_REPLAY.
+--     sujula-dev-refresh-modou-expired    past its refresh window. 401, and
+--                                         nothing is revoked: an expired token
+--                                         is not evidence of anything.
+--
+--     curl -X POST localhost:8080/auth/refresh -H 'Content-Type: application/json' \
+--          -d '{"refreshToken":"sujula-dev-refresh-aminata-phone"}'
+--
+--   ── The second factor ────────────────────────────────────────────────────
+--
+--   Aminata has an authenticator enrolled. Her recovery codes are seeded as
+--   hashes, as the API stores them; the raw values are:
+--
+--     7K2M-9QX4    unused
+--     B3TN-6RWZ    unused
+--     H8PD-2LVC    already spent — using it is refused, which is the point of
+--                  keeping a used code rather than deleting it
+--
+--   Sign in with {"email":..., "password":..., "recoveryCode":"7K2M-9QX4"}.
+--   Each one works once.
+--
+--   ── An unfinished phone verification ─────────────────────────────────────
+--
+--   Modou has a live challenge on +2203100006, code 445120, and the same code
+--   is seeded against Aminata's already-confirmed number. Sulayman's row has
+--   burnt all five attempts and expired: that is what a refused verification
+--   looks like in the data, and it is why a sixth attempt is not simply a
+--   fresh start.
+--
+--   ── Data-protection requests in every state ──────────────────────────────
+--
+--     EXP-7F3A2B91   done, Oliver, with a download that expires
+--     EXP-C40D18E2   queued, Modou — the worker takes it within the minute
+--     ERA-9B21EF07   an erasure in flight against the blocked account
+--     EXP-1D5C77A4   failed, with the reason kept for the person who asked
+--
+--   Asking for an erasure again while ERA-9B21EF07 is open returns that same
+--   request rather than starting a second one.
 --
 --   And one thing you cannot do: move a vendor order to DELIVERED through the
 --   API. Order 1403 is delivered only because this file wrote it that way.

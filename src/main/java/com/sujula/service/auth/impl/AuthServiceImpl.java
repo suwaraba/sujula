@@ -75,6 +75,7 @@ public class AuthServiceImpl implements AuthService {
     private final LoginAttemptTracker loginAttempts;
     private final EmailService emailService;
     private final OAuthExchange oauthExchange;
+    private final SessionReplayGuard replayGuard;
     private final Environment environment;
 
     public AuthServiceImpl(UserRepository users, UserSessionRepository sessions,
@@ -84,7 +85,8 @@ public class AuthServiceImpl implements AuthService {
                            TotpService totpService, SessionFactory sessionFactory,
                            AuthMapper mapper, AuthProperties properties,
                            LoginAttemptTracker loginAttempts, EmailService emailService,
-                           OAuthExchange oauthExchange, Environment environment) {
+                           OAuthExchange oauthExchange, SessionReplayGuard replayGuard,
+                           Environment environment) {
         this.users = users;
         this.sessions = sessions;
         this.recoveryCodes = recoveryCodes;
@@ -98,6 +100,7 @@ public class AuthServiceImpl implements AuthService {
         this.loginAttempts = loginAttempts;
         this.emailService = emailService;
         this.oauthExchange = oauthExchange;
+        this.replayGuard = replayGuard;
         this.environment = environment;
     }
 
@@ -190,11 +193,12 @@ public class AuthServiceImpl implements AuthService {
     /**
      * Refreshes a session, or ends it if the token was replayed.
      *
-     * <p>{@code REQUIRES_NEW} on the replay path is the subtle part: the
-     * revocation must survive the exception that follows it. Written inside the
-     * caller's transaction, the rollback that carries the 401 back would also
-     * roll back the revocation — leaving the stolen token's session alive, which
-     * is precisely the outcome the detection exists to prevent.
+     * <p>The replay path is the subtle part: the revocation must survive the
+     * exception that follows it. Written inside this transaction, the rollback
+     * that carries the 401 back would also roll back the revocation — leaving
+     * the stolen token's session alive, which is precisely the outcome the
+     * detection exists to prevent. {@link SessionReplayGuard} is a separate bean
+     * so its {@code REQUIRES_NEW} actually applies.
      */
     @Override
     @Transactional
@@ -211,20 +215,8 @@ public class AuthServiceImpl implements AuthService {
             return sessionFactory.rotate(session, mapper.toProfile(session.getUser()));
         }
 
-        sessions.findByPreviousTokenHash(hash).ifPresent(this::handleReplay);
+        sessions.findByPreviousTokenHash(hash).ifPresent(replayGuard::revokeOnReplay);
         throw new BadCredentialsException("That refresh token is not valid. Sign in again.");
-    }
-
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    protected void handleReplay(UserSession session) {
-        if (session.isActive()) {
-            session.revoke(SessionRevocationReason.TOKEN_REPLAY);
-            sessions.save(session);
-            log.warn("[Auth] Refresh token replay on session {} (user {}) — session revoked. "
-                            + "The token presented had already been rotated away, so it was not the "
-                            + "legitimate client's.",
-                    session.getId(), session.getUser().getId());
-        }
     }
 
     @Override
