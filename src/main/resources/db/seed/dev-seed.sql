@@ -1,14 +1,39 @@
 -- ============================================================================
 --  Sujula development seed
 -- ============================================================================
---  Populates all 39 tables with one coherent, related dataset. Written to be
---  run by hand against a dev database:
+--  Populates all 39 tables with one coherent, related dataset. Run it by hand;
+--  it is deliberately NOT auto-loaded on startup, because seed data appearing
+--  in a database by surprise is worse than typing one command, and this file
+--  deletes before it inserts.
 --
+--  ── How to run it ──────────────────────────────────────────────────────────
+--
+--  IntelliJ (easiest, and no shell quoting to get wrong)
+--      Open this file, pick the sujula data source in the top bar, Ctrl+Enter.
+--      Or: Database tool window > right-click the schema > Run SQL Script.
+--
+--  Windows PowerShell
+--      Get-Content src\main\resources\db\seed\dev-seed.sql | mysql -u root -p sujula
+--
+--      NOT  mysql ... < file.sql  — PowerShell has no input redirection and
+--      answers "The '<' operator is reserved for future use."
+--
+--  Windows cmd.exe
+--      mysql -u root -p sujula < src\main\resources\db\seed\dev-seed.sql
+--
+--  macOS / Linux
 --      mysql -u root -p sujula < src/main/resources/db/seed/dev-seed.sql
 --
---  Deliberately NOT auto-loaded on startup. Seed data appearing in a database
---  by surprise is worse than having to type one command, and this file deletes
---  before it inserts.
+--  ── If it fails on the first DELETE ────────────────────────────────────────
+--
+--  "Table 'sujula.notifications' doesn't exist" means the schema predates the
+--  `read` -> `is_read` fix: `read` is reserved in MySQL, that CREATE TABLE
+--  failed, and Hibernate logged it and carried on. Start the application once
+--  on current code so ddl-auto creates the table, then re-run this. To check
+--  what is actually there:
+--
+--      SELECT table_name FROM information_schema.tables
+--       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 39
 --
 --  ── Conventions ────────────────────────────────────────────────────────────
 --
