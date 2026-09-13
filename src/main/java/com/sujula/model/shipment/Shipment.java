@@ -203,6 +203,63 @@ public class Shipment {
     @Setter
     private LocalDateTime nextAttemptAfter;
 
+    // ── Sitting at a counter ─────────────────────────────────────────────────
+
+    /**
+     * The pickup point currently holding this parcel.
+     *
+     * <p>Null whenever it is moving or finished. Set when a point accepts it and
+     * cleared when it leaves, so "what is on my shelf" is one indexed read
+     * rather than a walk through the custody chain for every parcel in the
+     * country.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @jakarta.persistence.ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "held_at_pickup_point_id")
+    @Setter
+    private com.sujula.model.delivery.PickupPoint heldAtPickupPoint;
+
+    /**
+     * Where on the shelf it is.
+     *
+     * <p>A location label, not a credential. An operator with two hundred
+     * parcels behind a counter needs to be able to walk to the right one, and
+     * "the Galaxy for the lady from Serrekunda" is not a filing system. Anyone
+     * who can see this can already see the parcel; what they still cannot do is
+     * release it, because that needs the recipient's code.
+     */
+    @Column(length = 12)
+    @Setter
+    private String shelfCode;
+
+    @Setter
+    private LocalDateTime storedAt;
+
+    /**
+     * When it stops being stored and starts going back.
+     *
+     * <p>Computed from the point's own storage window when it is accepted, and
+     * frozen: an operator who later shortens their window must not retroactively
+     * make somebody's parcel overdue.
+     */
+    @Setter
+    private LocalDateTime storageDeadline;
+
+    /** What the operator earns for this one, frozen when they accepted it. */
+    @Column(precision = 12, scale = 2)
+    @Setter
+    private BigDecimal pickupCommission;
+
+    @Column(length = 3)
+    @Setter
+    private String pickupCommissionCurrency;
+
+    /** Whether this parcel is past the day it should have been collected. */
+    public boolean isOverdue(LocalDateTime now) {
+        return storageDeadline != null && heldAtPickupPoint != null
+                && storageDeadline.isBefore(now);
+    }
+
     // ── Timestamps, each one a consequence of an event ───────────────────────
 
     private LocalDateTime collectedAt;

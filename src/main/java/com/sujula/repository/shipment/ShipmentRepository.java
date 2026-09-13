@@ -47,4 +47,76 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
     Page<Shipment> findHistoryForDriver(@Param("driverId") Long driverId, Pageable pageable);
 
     List<Shipment> findByStatus(ShipmentStatus status);
+
+    // ── What is on a counter ─────────────────────────────────────────────────
+
+    /**
+     * Parcels sitting at one point right now.
+     *
+     * <p>Read from the shipment's own column rather than by walking the custody
+     * chain. The chain is the truth about how a parcel got there; this is the
+     * question an operator asks two hundred times a day, and it has to be one
+     * indexed read.
+     */
+    List<Shipment> findByHeldAtPickupPointIdOrderByStoredAtAsc(Long pickupPointId);
+
+    /** Parcels past the day they should have been collected. */
+    @Query("SELECT s FROM Shipment s WHERE s.heldAtPickupPoint.id = :pickupPointId "
+         + "AND s.storageDeadline IS NOT NULL AND s.storageDeadline < :now "
+         + "ORDER BY s.storageDeadline ASC")
+    List<Shipment> findOverdueAt(@Param("pickupPointId") Long pickupPointId,
+                                 @Param("now") java.time.LocalDateTime now);
+
+    /**
+     * Parcels on their way to a point but not yet handed over.
+     *
+     * <p>Found through the legs, because until somebody accepts one it is a
+     * driver's problem rather than a counter's — but an operator expecting six
+     * parcels this afternoon wants to know that before they arrive.
+     */
+    @Query("SELECT DISTINCT s FROM Shipment s JOIN s.legs l "
+         + "WHERE l.destinationPickupPoint.id = :pickupPointId "
+         + "AND l.assignmentStatus IN (com.sujula.model.constant.LegAssignmentStatus.ACCEPTED, "
+         + "                           com.sujula.model.constant.LegAssignmentStatus.IN_PROGRESS) "
+         + "AND s.heldAtPickupPoint IS NULL "
+         + "ORDER BY s.updatedAt ASC")
+    List<Shipment> findIncomingTo(@Param("pickupPointId") Long pickupPointId);
+
+    /** How many a point is holding. What the stored count is recounted from. */
+    long countByHeldAtPickupPointId(Long pickupPointId);
+
+    /**
+     * A parcel at this point, by id.
+     *
+     * <p>The point goes into the query, so a parcel on another counter is not
+     * found rather than fetched and refused — and this row carries a recipient's
+     * name and phone number.
+     */
+    @Query("SELECT s FROM Shipment s WHERE s.id = :id AND s.heldAtPickupPoint.id = :pickupPointId")
+    Optional<Shipment> findAtPickupPoint(@Param("id") Long id,
+                                         @Param("pickupPointId") Long pickupPointId);
+
+    /**
+     * A parcel a point may accept: on its way here, and not yet on anybody's
+     * shelf.
+     */
+    @Query("SELECT s FROM Shipment s WHERE s.id = :id AND s.heldAtPickupPoint IS NULL "
+         + "AND EXISTS (SELECT 1 FROM ShipmentLeg l WHERE l.shipment = s "
+         + "            AND l.destinationPickupPoint.id = :pickupPointId)")
+    Optional<Shipment> findIncomingById(@Param("id") Long id,
+                                        @Param("pickupPointId") Long pickupPointId);
+
+    /** Whether a shelf code is already in use at a point. */
+    boolean existsByHeldAtPickupPointIdAndShelfCode(Long pickupPointId, String shelfCode);
+
+    /** Everything a point has handled, for earnings. */
+    @Query("SELECT s FROM Shipment s WHERE s.pickupCommission IS NOT NULL "
+         + "AND s.storedAt >= :from AND s.storedAt < :to "
+         + "AND EXISTS (SELECT 1 FROM ShipmentLeg l WHERE l.shipment = s "
+         + "            AND (l.destinationPickupPoint.id = :pickupPointId "
+         + "                 OR l.originPickupPoint.id = :pickupPointId)) "
+         + "ORDER BY s.storedAt DESC")
+    List<Shipment> findHandledBy(@Param("pickupPointId") Long pickupPointId,
+                                 @Param("from") java.time.LocalDateTime from,
+                                 @Param("to") java.time.LocalDateTime to);
 }

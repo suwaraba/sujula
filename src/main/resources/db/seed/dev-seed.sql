@@ -571,15 +571,43 @@ INSERT INTO notifications (id, user_id, title, message, type, reference_id, is_r
 -- postal code system. Seeded as an empty string because that is the truth, but
 -- the column should be nullable.
 
+-- A counter here is a shop with a back room, not a depot. capacity is a real
+-- physical limit and stored_parcels is RECOUNTED from the parcels actually held
+-- rather than nudged up and down - a number that drifts drifts into accepting
+-- parcels there is no room for.
+--
+-- postal_code is NULL rather than ''. It used to be NOT NULL, which forced every
+-- Gambian counter to store an empty string to satisfy a constraint no real row
+-- could meet; the empty string in this file was the tell. Latitude and longitude
+-- carry the weight instead, which is why an application requires them and not a
+-- postcode: the position is what a driver navigates to and what exists here.
+--
+-- 1097 is closed for the week. It is deliberately in the data because the public
+-- search has to NOT return it: sending a shopper to a shuttered counter is worse
+-- than showing them nothing. Its status is APPROVED and active is 1 - being shut
+-- for a funeral is not the same as being suspended, and all three are separate
+-- questions.
+
 INSERT INTO pickup_points
  (id, operator_user_id, name, address_street, address_apartment, city, state, postal_code,
   country_code, latitude, longitude, contact_phone, contact_email, manager_name,
   opening_hours, active, status, total_transactions, monthly_deliveries, total_earnings,
+  capacity, stored_parcels, storage_days, commission_per_parcel, commission_currency,
+  closed_until, closure_reason,
   profile_image_url, admin_note, created_at, updated_at)
 VALUES
- (1096, 1008, 'Westfield Junction Pickup', 'Westfield Junction', 'Unit 3', 'Serekunda', 'West Coast', '',
+ (1096, 1008, 'Westfield Junction Pickup', 'Westfield Junction', 'Unit 3', 'Serekunda', 'West Coast', NULL,
   'GM', 13.44290000, -16.67760000, '+2203100008', 'isatou.pickup@sujula.gm', 'Isatou Camara',
   'Mon-Sat 08:00-20:00', 1, 'APPROVED', 214, 46, 18400.00,
+  40, 1, 7, 25.00, 'GMD',
+  NULL, NULL,
+  NULL, NULL, @NOW, @NOW),
+
+ (1097, 1008, 'Latrikunda Sabiji Counter', 'Sabiji Road', NULL, 'Latrikunda', 'Kanifing', NULL,
+  'GM', 13.41200000, -16.68900000, '+2203100018', 'latrikunda@sujula.gm', 'Isatou Camara',
+  'Mon-Fri 09:00-18:00', 1, 'APPROVED', 31, 4, 2100.00,
+  25, 0, 5, 25.00, 'GMD',
+  @FUTURE, 'Closed for a family funeral. Back next week.',
   NULL, NULL, @NOW, @NOW);
 
 -- ── products ────────────────────────────────────────────────────────────────
@@ -1824,7 +1852,9 @@ INSERT INTO shipments
   origin_latitude, origin_longitude, origin_address,
   parcel_count, delivery_fee, fee_currency,
   failed_attempts, next_attempt_after,
-  collected_at, delivered_at, returned_at, cancelled_at, created_at, updated_at)
+  collected_at, delivered_at, returned_at, cancelled_at, created_at, updated_at,
+  held_at_pickup_point_id, shelf_code, stored_at, storage_deadline,
+  pickup_commission, pickup_commission_currency)
 VALUES
  -- Order 1403: collected and delivered, and the reason vendor_order 1504's
  -- escrow could be released at all.
@@ -1834,7 +1864,12 @@ VALUES
   13.45300000, -16.67500000, '14 Kairaba Avenue, Serekunda',
   1, 110.00, 'GMD',
   0, NULL,
-  @NOW, @NOW, NULL, NULL, @NOW, @NOW),
+  @NOW, @NOW, NULL, NULL, @NOW, @NOW,
+  -- Went through the Westfield counter and was collected from it. held_at is
+  -- NULL because it is no longer on the shelf, and the shelf code and the
+  -- commission stay: they are the record of where it sat and what handling it
+  -- was worth, which is what an earnings statement next month is built from.
+  NULL, 'B-417', @NOW, @NOW, 25.00, 'GMD'),
 
  -- Order 1404: the diaspora parcel. Fatou paid in Madrid; Isatou is waiting in
  -- Serrekunda and has no account.
@@ -1844,7 +1879,8 @@ VALUES
   13.45300000, -16.67500000, '14 Kairaba Avenue, Serekunda',
   1, 380.00, 'GMD',
   0, NULL,
-  @NOW, NULL, NULL, NULL, @NOW, @NOW),
+  @NOW, NULL, NULL, NULL, @NOW, @NOW,
+  NULL, NULL, NULL, NULL, NULL, NULL),
 
  -- Order 1401's Banjul slice: packed, offered, and nobody has answered yet.
  (1902, 0, 'SHP-SEED-0003', 1501, 'DRIVER_OFFERED',
@@ -1853,7 +1889,24 @@ VALUES
   13.45300000, -16.67500000, '14 Kairaba Avenue, Serekunda',
   2, 209.09, 'GMD',
   0, NULL,
-  NULL, NULL, NULL, NULL, @NOW, @NOW);
+  NULL, NULL, NULL, NULL, @NOW, @NOW,
+  NULL, NULL, NULL, NULL, NULL, NULL),
+
+ -- On the shelf at Westfield right now, waiting for somebody to collect it.
+ -- This is the row the counter's screen is built from, and what makes
+ -- pickup_points.stored_parcels = 1 true rather than asserted.
+ --
+ -- Its deadline is in the future, so returning it is refused: somebody may be
+ -- travelling to collect, and sending it back early takes a decision that is
+ -- not the counter's to take.
+ (1903, 0, 'SHP-SEED-0004', 1502, 'AT_PICKUP_POINT',
+  'Binta Faal', '+2203100010', 'Bakau New Town', 'Bakau', 'GM',
+  13.47810000, -16.68200000,
+  13.45300000, -16.67500000, 'Teranga Mobile, Dakar',
+  1, 96.43, 'GMD',
+  0, NULL,
+  @NOW, NULL, NULL, NULL, @NOW, @NOW,
+  1096, 'A-118', @NOW, @FUTURE, 25.00, 'GMD');
 
 -- Legs are what a driver accepts, not shipments. The driver who can reach a shop
 -- on Kairaba Avenue is frequently not the one who covers the street a parcel is
@@ -1894,7 +1947,16 @@ VALUES
   13.45300000, -16.67500000, 'Kombo Electronics, Kairaba Avenue',
   13.44290000, -16.67760000, 'Westfield Junction',
   NULL, 1096,
-  1.800, 209.09, 'GMD', @NOW, @NOW);
+  1.800, 209.09, 'GMD', @NOW, @NOW),
+
+ -- The leg that carried 1903 to the counter. Completed, because the counter
+ -- accepted it and the parcel is on the shelf now.
+ (1913, 0, 1903, 1, 'ORIGIN_TO_PICKUP', 'COMPLETED', 1090,
+  @NOW, NULL, @NOW, NULL, @NOW, @NOW, NULL,
+  13.45300000, -16.67500000, 'Teranga Mobile',
+  13.44290000, -16.67760000, 'Westfield Junction',
+  NULL, 1096,
+  2.100, 96.43, 'GMD', @NOW, @NOW);
 
 -- The chain itself. Append-only: a correction is a new event, because "the
 -- driver said they delivered it and then said they had not" is a fact worth
@@ -1943,7 +2005,26 @@ VALUES
   '871460', 1736,
   13.49000000, -16.65000000, 240.00, 4310.55, 0,
   NULL, NULL, NULL, 'Signal was gone in the compound; uploaded on the road',
-  @NOW, 1, 'seed-evt-1923', @NOW);
+  @NOW, 1, 'seed-evt-1923', @NOW),
+
+ -- 1903: collected from the seller, then handed across a counter. Its
+ -- AT_PICKUP_POINT status is derived from the second of these, and its
+ -- collected_at from the first — a parcel on a shelf that had never been
+ -- collected would be the hole C4 exists to close.
+ (1924, 1903, 1913, 'COLLECTED', 1007, NULL,
+  '660419', 1733,
+  13.45301000, -16.67499000, 10.00, 1.85, 1,
+  NULL, NULL, NULL, NULL,
+  @NOW, 0, 'seed-evt-1924', @NOW),
+ -- Recorded by the OPERATOR (user 1008), not the driver. The receiving party
+ -- verifies the giving party's code, which is the same shape as every other
+ -- link and the only thing a code can prove. within_geofence is true without a
+ -- phone's guess: a counter is a fixed, reviewed address.
+ (1925, 1903, 1913, 'DEPOSITED', 1008, NULL,
+  '905177', 1731,
+  13.44290000, -16.67760000, NULL, 0.00, 1,
+  NULL, NULL, NULL, 'Onto shelf A-118',
+  @NOW, 0, 'seed-evt-1925', @NOW);
 
 -- 1902 has no events at all, and that is the point of it: its DRIVER_OFFERED
 -- status is derived from the leg being offered rather than from anything having
@@ -2546,6 +2627,46 @@ COMMIT;
 --   false. It was recorded and flagged rather than refused. The parcel may
 --   genuinely have changed hands, and refusing would have stranded it — but the
 --   chain says plainly that the position does not corroborate the handover.
+--
+--   ── The counter ─────────────────────────────────────────────────────────
+--
+--     GET /pickup-points?lat=13.4429&lng=-16.6776&radius=5
+--                                       needs no account: a shopper picks where
+--                                       to collect before signing in. Westfield
+--                                       (1096) comes back; Latrikunda (1097)
+--                                       does not, because it is closed for a
+--                                       funeral. Sending somebody to a shuttered
+--                                       counter is worse than showing nothing.
+--     GET /pickup-points/1096           an address, hours, and how full it is as
+--                                       a BAND. No operator name, no contact
+--                                       email, no parcel count — that this shop
+--                                       holds a hundred and ninety parcels is a
+--                                       fact about somebody's business.
+--     GET /pickup/points/1096/parcels   as Isatou. Three piles: what is coming,
+--                                       what is on the shelf (1903 on A-118),
+--                                       and what is overdue. Incoming parcels
+--                                       carry no recipient name — they are not
+--                                       here yet.
+--     POST /pickup/points/1096/parcels/1903/return
+--                                       refused: its deadline has not passed.
+--                                       Somebody may be travelling to collect,
+--                                       and sending it back early takes a
+--                                       decision that is not the counter's.
+--     POST /pickup/points/1096/parcels/1903/release
+--                                       needs the recipient's code AND the name
+--                                       of whoever is collecting. A code alone
+--                                       would let anybody who overheard it take
+--                                       the parcel; a name alone anybody who
+--                                       read the label. A brother collecting for
+--                                       his sister is allowed and written down.
+--     POST /pickup/points/1097/parcels/1903/accept
+--                                       refused, and says WHICH of the four
+--                                       reasons it is — closed, suspended,
+--                                       switched off, or full.
+--
+--   pickup_points.stored_parcels is 1 for Westfield, and that is not an
+--   assertion: it is recounted from the shipments actually held there. A count
+--   that could drift would drift into accepting parcels there is no room for.
 --
 --   ── Signing in without signing in ───────────────────────────────────────
 --

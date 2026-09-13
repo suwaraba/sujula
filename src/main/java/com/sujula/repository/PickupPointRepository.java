@@ -82,4 +82,85 @@ public interface PickupPointRepository extends JpaRepository<PickupPoint, Long> 
          + "                 com.sujula.model.constant.PartnerStatus.ACTIVE) "
          + "AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL")
     List<PickupPoint> findCollectableIn(@Param("countryCode") String countryCode);
+
+    // ── The operator's own points ────────────────────────────────────────────
+
+    /**
+     * Every point this operator runs.
+     *
+     * <p>A list rather than one row: somebody who runs a counter well is
+     * frequently asked to run a second, and a model that allowed only one would
+     * have them opening a second account to do it.
+     */
+    List<PickupPoint> findByOperatorUserIdOrderByNameAsc(Long operatorUserId);
+
+    /** One of theirs, by id. Another operator's point is not found. */
+    @Query("SELECT p FROM PickupPoint p WHERE p.id = :id AND p.operatorUser.id = :operatorUserId")
+    Optional<PickupPoint> findByIdAndOperatorUserId(@Param("id") Long id,
+                                                    @Param("operatorUserId") Long operatorUserId);
+
+    // ── Public search ────────────────────────────────────────────────────────
+
+    /**
+     * Points near a place, nearest first.
+     *
+     * <p>The distance is computed in the database so the sort and the limit both
+     * happen there. Fetching every point in the country and sorting in Java
+     * would work today and stop working the first month this platform is busy.
+     *
+     * <p>A bounding box narrows the candidates before the trigonometry runs -
+     * the box is cheap and wrong at the edges, the haversine is exact and
+     * expensive, and doing the cheap one first is what keeps this query usable
+     * without a spatial index.
+     *
+     * <p>Only approved, active points, and only ones that are not closed for the
+     * week: a shopper sent to a shuttered counter has been actively misdirected,
+     * which is worse than being shown nothing.
+     *
+     * <p>Two things here are deliberate and were both bugs first.
+     *
+     * <p>The id is selected explicitly rather than {@code p.*}: a database is
+     * free to return columns in whatever order it likes - H2 and MySQL disagree
+     * - so reading a wide row by position is a cast exception waiting for the
+     * first schema change.
+     *
+     * <p>The distance is filtered in a derived table rather than with HAVING.
+     * HAVING with no GROUP BY makes the whole statement an implicit aggregate,
+     * which returns ONE row whatever the WHERE matched - so a search with no
+     * counters nearby came back with a phantom one. A subquery keeps the alias
+     * usable and the row count honest.
+     */
+    @Query(value = """
+            SELECT near.point_id, near.distance_km FROM (
+                SELECT p.id AS point_id, (6371 * ACOS(LEAST(1.0, GREATEST(-1.0,
+                         COS(RADIANS(:lat)) * COS(RADIANS(p.latitude))
+                       * COS(RADIANS(p.longitude) - RADIANS(:lng))
+                       + SIN(RADIANS(:lat)) * SIN(RADIANS(p.latitude)))))) AS distance_km
+                FROM pickup_points p
+                WHERE p.active = TRUE
+                  AND p.status = 'APPROVED'
+                  AND (p.closed_until IS NULL OR p.closed_until < CURRENT_TIMESTAMP)
+                  AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+                  AND p.latitude BETWEEN :lat - (:radiusKm / 111.0)
+                                     AND :lat + (:radiusKm / 111.0)
+                  AND p.longitude BETWEEN :lng - (:radiusKm / 111.0)
+                                      AND :lng + (:radiusKm / 111.0)
+            ) near
+            WHERE near.distance_km <= :radiusKm
+            ORDER BY near.distance_km ASC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Object[]> findNear(@Param("lat") double lat, @Param("lng") double lng,
+                            @Param("radiusKm") double radiusKm, @Param("limit") int limit);
+
+    /** One point, visible to the public only if it is open for business. */
+    @Query("SELECT p FROM PickupPoint p WHERE p.id = :id AND p.active = TRUE "
+         + "AND p.status = com.sujula.model.constant.PartnerStatus.APPROVED")
+    Optional<PickupPoint> findPublicById(@Param("id") Long id);
+
+    /** Points in a town, for a shopper who gave a place rather than a position. */
+    @Query("SELECT p FROM PickupPoint p WHERE p.active = TRUE "
+         + "AND p.status = com.sujula.model.constant.PartnerStatus.APPROVED "
+         + "AND LOWER(p.city) = LOWER(:city) ORDER BY p.name ASC")
+    List<PickupPoint> findPublicInCity(@Param("city") String city);
 }

@@ -268,6 +268,25 @@ public class SecurityConfig {
                         // anyone but the person bringing their parcel.
                         .requestMatchers("/driver", "/driver/**").authenticated()
 
+                        // Finding a counter is public. A shopper chooses where
+                        // to collect before signing in, and frequently before
+                        // they have an account at all — requiring one would make
+                        // the delivery option invisible to exactly the people
+                        // most likely to want it.
+                        //
+                        // What these carry is chosen to be safe open: an
+                        // address, opening hours, and how full the counter is as
+                        // a BAND rather than a count. No operator name, no
+                        // contact email, no parcel counts, no earnings.
+                        .requestMatchers(HttpMethod.GET, "/pickup-points", "/pickup-points/*")
+                                .permitAll()
+
+                        // Running one is not. These rows lead to recipients'
+                        // names and phone numbers, and the operator is resolved
+                        // from the session and goes into every query beside the
+                        // point id.
+                        .requestMatchers("/pickup", "/pickup/**").authenticated()
+
                         .requestMatchers("/vendor/analytics/**", "/vendor/balance",
                                          "/vendor/transactions", "/vendor/payouts",
                                          "/vendor/payouts/**", "/vendor/statements/**")
