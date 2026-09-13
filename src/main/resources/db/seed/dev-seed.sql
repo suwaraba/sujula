@@ -277,7 +277,11 @@ VALUES
  (1008, 'Isatou', 'Camara',  'isatou.pickup@sujula.gm',    @PW, '+2203100008', 'PICKUP_OPERATOR',
   1, 1, 1, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
  (1009, 'Sulayman','Gomez',  'sulayman.blocked@example.gm',@PW, '+2203100009', 'CUSTOMER',
-  1, 1, 0, 1, 1, 0, 0, NULL, 3, 'GMD', 'en', 'GM', @NOW, @NOW);
+  1, 1, 0, 1, 1, 0, 0, NULL, 3, 'GMD', 'en', 'GM', @NOW, @NOW),
+ (1010, 'Mariama','Jarju',   'mariama.jarju@example.gm',   @PW, '+2203100010', 'VENDOR',
+  1, 1, 1, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
+ (1011, 'Ndeye',  'Sarr',    'ndeye.sarr@example.sn',      @PW, '+2217700011', 'CUSTOMER',
+  1, 1, 1, 0, 0, 0, 0, NULL, 0, 'XOF', 'fr', 'SN', @NOW, @NOW);
 
 -- ── vendor_payouts ──────────────────────────────────────────────────────────
 -- Hangs off users, not vendors. No service writes these: amounts owed are
@@ -294,26 +298,74 @@ INSERT INTO vendor_payouts (id, user_id, amount, currency, status, reference, no
 -- measured from. Without them pricing falls back to a flat per-scope distance.
 -- The two settlement currencies are the point of this pair.
 
+-- Three stores, one per rung of the onboarding ladder: APPROVED and trading,
+-- APPROVED with documents that came back refused, and PENDING_KYC with nothing
+-- sent yet.
+--
+-- `settlement_currency` and `address_country_code` are the two independent
+-- answers on this table, and 1103 is the row that proves they are independent:
+-- Mariama's shop stands in Dakar and settles in GMD, because she banks in
+-- Banjul. A system that read the currency off the address would have
+-- re-denominated her whole business without telling her.
+--
+-- `geocode_confidence` is what delivery prices from. 1103 is NONE — a market
+-- stall with no street number that no geocoder knows — and the store still
+-- exists, because most of the region looks like that and refusing would shut
+-- out the sellers this marketplace is mainly for. Until she drops a pin, a
+-- collection from her is priced from a scope fallback rather than a distance.
+
 INSERT INTO vendors
  (id, user_id, store_name, store_slug, description, store_email, store_phone, website,
   address_street, address_city, address_state, address_postal_code, address_country_code,
-  latitude, longitude, settlement_currency, status, default_commission_rate,
+  latitude, longitude, geocode_confidence, geocoded_at,
+  pickup_street, pickup_city, pickup_state, pickup_postal_code, pickup_country_code,
+  pickup_latitude, pickup_longitude, pickup_geocode_confidence, pickup_instructions,
+  settlement_currency, status, default_commission_rate,
   balance, rating, total_reviews, total_sold, business_registration_number, tax_number,
+  return_policy, shipping_policy, store_policy, handling_days,
+  vacation_mode, vacation_message,
   logo_url, banner_url, created_at, updated_at)
 VALUES
  (1101, 1002, 'Kombo Electronics', 'kombo-electronics',
   'Phones, speakers and kettles on Kairaba Avenue since 2014.',
   'shop@kombo.gm', '+2204380001', NULL,
   '14 Kairaba Avenue', 'Serekunda', 'West Coast', NULL, 'GM',
-  13.43830000, -16.67810000, 'GMD', 'APPROVED', 10.00,
+  13.43830000, -16.67810000, 'EXACT', @NOW,
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  'GMD', 'APPROVED', 10.00,
   810.00, 4.60, 2, 14, 'GM-RC-884120', 'GM-TIN-55231',
+  'Fourteen days for anything unopened. Phones with a broken seal are exchange only.',
+  'Collected from the shop on Kairaba Avenue. We do not post.',
+  NULL, 1,
+  0, NULL,
   NULL, NULL, @NOW, @NOW),
  (1102, 1003, 'Teranga Textiles', 'teranga-textiles',
   'Wax prints and damask, cut to six yards. Ships from Ziguinchor.',
   'bonjour@teranga.sn', '+2213390002', NULL,
   '8 Rue de France', 'Ziguinchor', 'Ziguinchor', '27000', 'SN',
-  12.56410000, -16.27190000, 'XOF', 'APPROVED', 12.50,
+  12.56410000, -16.27190000, 'CENTROID', @NOW,
+  -- Cloth is cut at the shop and stored in a depot two streets away, which is
+  -- where a driver actually goes. Pricing a collection from the shop front
+  -- would be wrong on every order they take.
+  'Entrepôt Boucotte, Rue 14', 'Ziguinchor', 'Ziguinchor', '27000', 'SN',
+  12.55980000, -16.27540000, 'APPROXIMATE',
+  'Blue gate behind the mosque. Ask for Awa.',
+  'XOF', 'APPROVED', 12.50,
   96000.00, 4.80, 1, 6, 'SN-RC-220914', NULL,
+  'Cut cloth cannot be returned. Faults reported within 48 hours are replaced.',
+  NULL, 'Six yards minimum on wax prints.', 3,
+  0, NULL,
+  NULL, NULL, @NOW, @NOW),
+ (1103, 1010, 'Jarju Provisions', 'jarju-provisions',
+  'Rice, oil and tinned goods, wholesale and retail.',
+  NULL, '+2203100010', NULL,
+  'Étal 214, Marché Sandaga', 'Dakar', 'Dakar', NULL, 'SN',
+  NULL, NULL, 'NONE', NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  'GMD', 'PENDING_KYC', 10.00,
+  0.00, 0.00, 0, 0, NULL, NULL,
+  NULL, NULL, NULL, 2,
+  0, NULL,
   NULL, NULL, @NOW, @NOW);
 
 -- ── wishlists ───────────────────────────────────────────────────────────────
@@ -557,16 +609,156 @@ INSERT INTO reviews (id, product_id, user_id, rating, title, comment, verified, 
 -- Where a payout would go. MOBILE_MONEY is the account type that matters most
 -- in this market, and is deliberately the default for one of the two.
 
+-- `account_number`, `iban` and `mobile_money_phone` are encrypted columns: the
+-- JPA converter seals them with AES-GCM on the way in, and PUT
+-- /vendor/stores/{id}/bank-account refuses outright when no key is configured
+-- rather than writing one of these in clear.
+--
+-- The values below are plaintext, which is deliberate and safe in one
+-- direction only. The decrypt path returns anything without the `enc:v1:`
+-- marker unchanged, so a hand-written seed still reads; nothing about that can
+-- cause a plaintext row to be *written* through the application. Read one of
+-- these back through the API and it comes out as typed here. Save one through
+-- the endpoint and the column turns into ciphertext — which is what
+-- BankAccountEncryptionTest asserts by reading the raw column past the mapping.
+--
+-- The `*_last4` columns are the readable half, and the only half any response
+-- carries. Nothing the API returns about a payout destination could be used to
+-- send money anywhere.
+--
+-- `currency` is the VENDOR's settlement currency, never a buyer's display one.
+-- 1322 is XOF because Awa banks in Senegal, whatever an order was charged in.
+
 INSERT INTO vendor_bank_accounts
- (id, vendor_id, account_holder_name, bank_name, account_number, account_type, currency,
-  iban, swift_code, routing_number, mobile_money_phone, is_default, verified, created_at, updated_at)
+ (id, vendor_id, account_holder_name, bank_name, account_number, account_number_last4,
+  account_type, currency, iban, iban_last4, swift_code, routing_number,
+  mobile_money_phone, mobile_money_last4, mobile_money_provider,
+  is_default, verified, last_changed_by_user_id, last_changed_at, created_at, updated_at)
 VALUES
- (1320, 1101, 'Lamin Touray', 'Trust Bank Gambia', '0123456789', 'CHECKING',     'GMD',
-  NULL, 'TBLGGMGM', NULL, NULL, 1, 1, @NOW, @NOW),
- (1321, 1101, 'Lamin Touray', 'Africell Money',    '+2203100002', 'MOBILE_MONEY', 'GMD',
-  NULL, NULL, NULL, '+2203100002', 0, 1, @NOW, @NOW),
- (1322, 1102, 'Awa Diallo',   'Wave Senegal',      '+2217700003', 'MOBILE_MONEY', 'XOF',
-  NULL, NULL, NULL, '+2217700003', 1, 0, @NOW, @NOW);
+ (1320, 1101, 'Lamin Touray', 'Trust Bank Gambia', '0123456789', '6789', 'CHECKING',     'GMD',
+  NULL, NULL, 'TBLGGMGM', NULL, NULL, NULL, NULL, 1, 1, 1002, @NOW, @NOW, @NOW),
+ (1321, 1101, 'Lamin Touray', 'Africell Money',    '+2203100002', '0002', 'MOBILE_MONEY', 'GMD',
+  NULL, NULL, NULL, NULL, '+2203100002', '0002', 'Africell Money', 0, 1, 1002, @NOW, @NOW, @NOW),
+ (1322, 1102, 'Awa Diallo',   'Wave Senegal',      '+2217700003', '0003', 'MOBILE_MONEY', 'XOF',
+  NULL, NULL, NULL, NULL, '+2217700003', '0003', 'Wave', 1, 0, 1003, @NOW, @NOW, @NOW);
+
+-- 1103 has no payout destination at all. That is the correct state for a store
+-- that has not been verified: there is nothing to pay out to yet, and the
+-- endpoint that sets one re-authenticates the caller before it will.
+
+-- ── store_operating_hours ───────────────────────────────────────────────────
+-- When a driver may collect. Structured rather than the free-text opening hours
+-- a storefront usually carries, because dispatch reads this: a pickup scheduled
+-- for 03:00 because "Mon-Sat 9-6" was a string nobody could parse is a driver
+-- standing outside a shuttered shop.
+--
+-- `closed` is a flag rather than two null times so that "shut on Sunday" and
+-- "nobody has filled Sunday in yet" are different answers. 1101 is closed on
+-- Sunday; 1103 has no rows at all, which is the second case.
+
+INSERT INTO store_operating_hours (id, vendor_id, day_of_week, closed, opens_at, closes_at) VALUES
+ (1350, 1101, 'MONDAY',    0, '09:00:00', '18:00:00'),
+ (1351, 1101, 'TUESDAY',   0, '09:00:00', '18:00:00'),
+ (1352, 1101, 'WEDNESDAY', 0, '09:00:00', '18:00:00'),
+ (1353, 1101, 'THURSDAY',  0, '09:00:00', '18:00:00'),
+ (1354, 1101, 'FRIDAY',    0, '09:00:00', '12:30:00'),
+ (1355, 1101, 'SATURDAY',  0, '09:00:00', '16:00:00'),
+ (1356, 1101, 'SUNDAY',    1, NULL,       NULL),
+ (1357, 1102, 'MONDAY',    0, '08:30:00', '17:00:00'),
+ (1358, 1102, 'SATURDAY',  0, '08:30:00', '13:00:00');
+
+-- ── kyc_documents ───────────────────────────────────────────────────────────
+-- What a store produced to be allowed to trade. Only the storage key is here;
+-- the file is an object with its own access rules. A passport scan in a
+-- database column is a passport scan in a backup, a staging dump and an
+-- analyst's laptop.
+--
+-- Re-uploading supersedes rather than replaces, and 1360/1363 are that pair:
+-- Awa's first national ID came back refused as unreadable and the second is the
+-- live one. Both rows survive, and the reason on the first is the record of why
+-- her onboarding took three weeks.
+--
+-- What is *required* depends on what the store claims to be. 1101 gave a
+-- registration number and a tax number, so both certificates are asked of it.
+-- 1103 gave neither and is asked for an identity document and a proof of
+-- address, which is all a market trader has — demanding a company's paperwork
+-- from her is how a marketplace turns away the sellers it exists for.
+
+INSERT INTO kyc_documents
+ (id, vendor_id, type, status, file_url, original_filename, content_type, size_bytes,
+  expires_on, rejection_reason, reviewed_by_user_id, reviewed_at, superseded_at, submitted_at)
+VALUES
+ (1360, 1101, 'NATIONAL_ID',           'ACCEPTED',
+  'kyc/1101/national-id-a4f21c.jpg',    'lamin-id.jpg',      'image/jpeg', 184320,
+  '2031-04-18', NULL, 1001, @NOW, NULL, @NOW),
+ (1361, 1101, 'PROOF_OF_ADDRESS',      'ACCEPTED',
+  'kyc/1101/nawec-bill-77b902.pdf',     'nawec-bill.pdf',    'application/pdf', 96001,
+  NULL, NULL, 1001, @NOW, NULL, @NOW),
+ (1362, 1101, 'BUSINESS_REGISTRATION', 'ACCEPTED',
+  'kyc/1101/rc-884120-2f81aa.pdf',      'registration.pdf',  'application/pdf', 210455,
+  NULL, NULL, 1001, @NOW, NULL, @NOW),
+ (1363, 1101, 'TAX_CERTIFICATE',       'ACCEPTED',
+  'kyc/1101/tin-55231-9c04de.pdf',      'tin.pdf',           'application/pdf', 118204,
+  NULL, NULL, 1001, @NOW, NULL, @NOW),
+ (1364, 1102, 'NATIONAL_ID',           'REJECTED',
+  'kyc/1102/cni-first-try-1b7e33.jpg',  'cni.jpg',           'image/jpeg', 44100,
+  NULL, 'The photograph is too dark to read the number. Please send it again in daylight.',
+  1001, @NOW, @NOW, @NOW),
+ (1365, 1102, 'NATIONAL_ID',           'ACCEPTED',
+  'kyc/1102/cni-second-try-8d21f0.jpg', 'cni-2.jpg',         'image/jpeg', 198340,
+  '2029-11-02', NULL, 1001, @NOW, NULL, @NOW),
+ (1366, 1102, 'PROOF_OF_ADDRESS',      'REJECTED',
+  'kyc/1102/bail-4c9911.pdf',           'bail.pdf',          'application/pdf', 88210,
+  NULL, 'This lease is for the depot. Send something showing the shop address on Rue de France.',
+  1001, @NOW, NULL, @NOW),
+ (1367, 1102, 'BUSINESS_REGISTRATION', 'ACCEPTED',
+  'kyc/1102/rc-220914-3a77bc.pdf',      'rc.pdf',            'application/pdf', 156700,
+  NULL, NULL, 1001, @NOW, NULL, @NOW);
+
+-- 1103 has no rows: NOT_STARTED, which is why it sits in PENDING_KYC. That
+-- state is waiting on Mariama, and PENDING is waiting on a reviewer; collapsed
+-- into one status, the review queue would be mostly applications nobody sent.
+
+-- ── store_staff ─────────────────────────────────────────────────────────────
+-- People who work in a shop without owning it. Invited by email, because the
+-- usual invitee is a relative or an assistant who has never used the platform —
+-- 1371 is exactly that, and it has no user_id at all.
+--
+-- The token is stored as a SHA-256 digest, like every other bearer credential
+-- here. 1372 was removed, so its digest is null: otherwise a link mailed last
+-- week still opens the shop.
+--
+-- Permissions come from a store-only enum. There is no value a seller can put
+-- in the table below that reaches another vendor's data or the platform's —
+-- the dangerous grants are unrepresentable rather than rejected, which is the
+-- difference between a check that can be forgotten and one that cannot.
+
+INSERT INTO store_staff
+ (id, vendor_id, user_id, email, display_name, status,
+  invite_token_hash, invite_expires_at, invited_by_user_id,
+  accepted_at, revoked_at, created_at, updated_at)
+VALUES
+ (1370, 1101, 1006, 'modou.sanneh@example.gm', 'Modou (shop floor)', 'ACTIVE',
+  NULL, NULL, 1002, @NOW, NULL, @NOW, @NOW),
+ (1371, 1101, NULL, 'binta.cousin@example.gm', 'Binta', 'INVITED',
+  '5f2c8e1a9b73d04e6f8a1c2b3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60',
+  @FUTURE, 1002, NULL, NULL, @NOW, @NOW),
+ (1372, 1102, 1011, 'ndeye.sarr@example.sn', 'Ndeye', 'REVOKED',
+  NULL, NULL, 1003, @NOW, @NOW, @NOW, @NOW);
+
+INSERT INTO store_staff_permissions (staff_id, permission) VALUES
+ (1370, 'ORDERS_VIEW'),
+ (1370, 'ORDERS_FULFIL'),
+ (1370, 'CATALOGUE_MANAGE'),
+ (1371, 'ORDERS_VIEW');
+
+-- 1372 has no permissions: revoking clears them rather than leaving a row that
+-- still describes what somebody used to be allowed to do.
+--
+-- Note who is NOT in this table: Lamin and Awa. The owner is not a staff row —
+-- there is no invitation to accept and no permission to withdraw — and
+-- GET /vendor/stores/{id}/staff puts them at the top of the list from the
+-- vendor record instead.
 
 -- ── product options, values and variants ────────────────────────────────────
 -- The phone is the only product with real variants: storage and colour, with
@@ -1825,6 +2017,105 @@ COMMIT;
 --   Bojang"; the public page says "A driver has been assigned." That
 --   substitution is the only thing between a driver's notes and a stranger who
 --   was forwarded the SMS.
+--
+--   ── Opening a shop ───────────────────────────────────────────────────────
+--
+--     POST /vendor/stores                       opens one in PENDING_KYC
+--     GET  /vendor/stores/1101                  Lamin's, as its owner sees it
+--     PATCH /vendor/stores/1101                 policies, hours, collection point
+--
+--   Three stores are seeded, and the interesting one is 1103. Mariama's stall
+--   is in Dakar and she settles in GMD, because she banks in Banjul. Compare it
+--   with 1102, which is also in Senegal and settles in XOF. Same country, two
+--   currencies — which is only possible because the address and the settlement
+--   currency are two answers to two questions, and nothing reads one off the
+--   other. Send POST /vendor/stores with a Senegalese address and no currency
+--   and you get GMD, the platform default, not XOF inferred from the country.
+--
+--   1103 also has no coordinates at all. A market stall with no street number
+--   is not a failure case here, it is most of the region, so the store opens
+--   with geocode_confidence NONE and collections from it price from a scope
+--   fallback until she drops a pin. 1101 is EXACT and 1102 is a CENTROID with a
+--   separate depot address, because cloth is cut at the shop and collected two
+--   streets away — pricing that leg from the shop front would be wrong on every
+--   order they take.
+--
+--   ── Verification ─────────────────────────────────────────────────────────
+--
+--     GET  /vendor/stores/1102/kyc              what came back, and why
+--     POST /vendor/stores/1103/kyc              storage keys, never bytes
+--
+--   1102 is the row worth reading. Awa's first national ID (1364) was refused
+--   as too dark to read; the second (1365) was accepted. Both survive, because
+--   re-uploading supersedes rather than replaces and the sequence is the record
+--   of why her onboarding took three weeks. Her proof of address (1366) is
+--   still refused — she sent the depot lease instead of the shop's — so her KYC
+--   reads ACTION_REQUIRED with that reason attached, not a bare "incomplete"
+--   that would send her back to upload the same document again.
+--
+--   What is required depends on what the store claims to be. 1101 gave a
+--   registration number and a tax number, so it is asked for both certificates.
+--   1103 gave neither and is asked for an identity document and a proof of
+--   address, which is all a market trader has. Demanding a company's paperwork
+--   from her is how a marketplace turns away the sellers it exists for.
+--
+--   The bytes never pass through this API. Only the storage key is stored, and
+--   GET /kyc does not hand it back: a URL to somebody's passport in a JSON
+--   response is a URL in a browser cache.
+--
+--   ── Staff ────────────────────────────────────────────────────────────────
+--
+--     GET    /vendor/stores/1101/staff
+--     POST   /vendor/stores/1101/staff          invite by email
+--     DELETE /vendor/stores/1101/staff/1006
+--
+--   1371 is the shape that matters: Binta has no account here at all. The
+--   invitation is keyed on her email and waits for her to register, because the
+--   usual invitee is a relative or an assistant who has never used the
+--   platform. Her token is stored as a SHA-256 digest like every other bearer
+--   credential in this file.
+--
+--   1372 was removed, so its digest is null and its permissions are gone —
+--   otherwise a link mailed last week still opens the shop. The row stays, which
+--   is what makes "who could see this, and when" a question with an answer.
+--
+--   Permissions come from a store-only enum. There is no value a seller can
+--   send that reaches another vendor's data or the platform's: the dangerous
+--   grants are unrepresentable rather than rejected, which is the difference
+--   between a check that can be forgotten and one that cannot. Note also who is
+--   not in store_staff — Lamin and Awa. The owner is not a staff row, and the
+--   endpoint puts them at the top of the list from the vendor record.
+--
+--   ── Where the money goes ─────────────────────────────────────────────────
+--
+--     PUT /vendor/stores/1101/bank-account
+--       { ..., "password": "Password123!", "totpCode": "<if MFA is on>" }
+--
+--   The one endpoint here that asks who you are again. A bearer token says
+--   somebody held a credential an hour ago, which is not enough to redirect
+--   every future payout for a shop — so the password is re-entered, and the
+--   authenticator code as well when the account has one. Send the password
+--   alone on an MFA account and it is refused; that is a step-up that would
+--   otherwise step down, being easier to pass than the sign-in that reached it.
+--
+--   Try it on a deployment with no sujula.security.field-encryption.key and it
+--   refuses before it reads anything. That is deliberate: a system that looks
+--   like it encrypts bank details and does not is worse than one that admits it
+--   cannot. With a key set, the account number goes into the column as
+--   AES-GCM ciphertext — read the raw column and you will not find the digits.
+--
+--   The three seeded destinations hold plaintext, which reads back fine because
+--   the decrypt path passes through anything without the enc:v1: marker. That
+--   asymmetry tolerates a hand-written seed and cannot create a plaintext row
+--   through the application.
+--
+--   Nothing the API returns about a destination could be used to send money
+--   anywhere: four digits, a holder name and a currency. And the currency is
+--   the vendor's own — 1322 is XOF because Awa banks in Senegal, whatever an
+--   order was charged in.
+--
+--   1103 has no destination at all, which is right for a store nobody has
+--   verified. There is nothing to pay out to yet.
 --
 --   And one thing you cannot do: move a vendor order to DELIVERED through the
 --   API. Order 1403 is delivered only because this file wrote it that way.

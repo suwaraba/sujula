@@ -27,6 +27,34 @@ public interface VendorRepository extends JpaRepository<Vendor, Long> {
     Page<Vendor> findByStatus(PartnerStatus status, Pageable pageable);
     long countByStatus(PartnerStatus status);
 
+    /**
+     * One store, but only if this user owns it.
+     *
+     * <p>Ownership is the query, not a comparison after it. Every endpoint on
+     * the {@code /vendor/stores} surface resolves through this, so somebody
+     * else's store is not found rather than found and refused — and a store id
+     * is a small integer anyone can walk.
+     */
+    @Query("SELECT v FROM Vendor v WHERE v.id = :id AND v.user.id = :userId")
+    Optional<Vendor> findByIdAndOwnerId(@Param("id") Long id, @Param("userId") Long userId);
+
+    /**
+     * The same store with its opening hours already loaded.
+     *
+     * <p>{@code spring.jpa.open-in-view} is off, so a response that reads the
+     * hours must have fetched them inside the transaction — otherwise the first
+     * client to ask for a store detail gets a lazy-initialisation failure rather
+     * than a store.
+     */
+    @Query("SELECT v FROM Vendor v LEFT JOIN FETCH v.operatingHours "
+         + "WHERE v.id = :id AND v.user.id = :userId")
+    Optional<Vendor> findByIdAndOwnerIdWithHours(@Param("id") Long id,
+                                                 @Param("userId") Long userId);
+
+    /** Whether a slug is taken by a store other than this one. */
+    @Query("SELECT COUNT(v) > 0 FROM Vendor v WHERE v.storeSlug = :slug AND v.id <> :exceptId")
+    boolean existsByStoreSlugAndIdNot(@Param("slug") String slug, @Param("exceptId") Long exceptId);
+
 //    @Query("""
 //        SELECT v FROM Vendor v WHERE v.status = 'APPROVED' AND (
 //            LOWER(v.storeName)    LIKE LOWER(CONCAT('%', :q, '%')) OR

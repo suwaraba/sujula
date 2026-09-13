@@ -210,6 +210,13 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/track/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/invoices/*").permitAll()
 
+                        // A seller's own store: opening it, verifying it, saying
+                        // who else may work in it, and naming where the money
+                        // goes. Signed in is the outer gate only — every method
+                        // resolves the store by id AND owner in one query, and
+                        // the payout endpoint re-authenticates on top of that.
+                        .requestMatchers("/vendor/stores", "/vendor/stores/**").authenticated()
+
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to
                         // buy has not signed in yet, and these carry no private figures.

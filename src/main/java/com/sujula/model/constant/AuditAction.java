@@ -25,6 +25,21 @@ public enum AuditAction {
 
     // ── Partners ──────────────────────────────────────────────────────────────
     VENDOR_STATUS_CHANGED,
+    /** A store was opened and is waiting on its documents. */
+    VENDOR_STORE_CREATED,
+    /** Identity or business documents were submitted, or resubmitted. */
+    VENDOR_KYC_SUBMITTED,
+    /**
+     * Where a store's money goes was changed.
+     *
+     * <p>The most valuable thing an attacker inside a seller's account can
+     * change, and the one people ask about afterwards: when did it move, and
+     * from which session. Recorded with four digits of the new destination and
+     * never the number.
+     */
+    VENDOR_PAYOUT_DESTINATION_CHANGED,
+    /** Somebody was given, or refused, access to a store that is not theirs. */
+    VENDOR_STAFF_CHANGED,
 
     // ── Money ─────────────────────────────────────────────────────────────────
     PAYMENT_TRANSFER_CONFIRMED,
