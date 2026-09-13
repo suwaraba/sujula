@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -85,6 +86,133 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                     "OR p.delivery_scope = 'GLOBAL' OR LOWER(p.country) = LOWER(:deliveryCountry))";
 
     String RANK_ORDER = PROXIMITY_BUCKET_EXPR + " ASC, " + PROMOTION_RANK_EXPR + " ASC, " + SCORE_EXPR + " DESC";
+
+    // ── The filtered browse ──────────────────────────────────────────────────
+    // One query behind GET /products and GET /search. Every filter is optional
+    // and written as "(:x IS NULL OR ...)", which lets one prepared statement
+    // serve every combination rather than a query builder assembling SQL from
+    // user input.
+    //
+    // The ranking reference point is the DELIVERY location, as everywhere else
+    // in this file. A buyer in Madrid sending to Serrekunda is ranked against
+    // Serrekunda.
+
+    String FILTER_EXPR =
+            "p.active = true " +
+            "AND (:categoryId IS NULL OR p.category_id = :categoryId) " +
+            "AND (:brandId IS NULL OR p.brand_id = :brandId) " +
+            "AND (:vendorId IS NULL OR p.vendor_id = :vendorId) " +
+            "AND (:productCondition IS NULL OR p.product_condition = :productCondition) " +
+            // Price bounds are in the vendor's listing currency, which is why the
+            // service converts the buyer's bounds into it before binding them:
+            // comparing a euro bound against a dalasi column silently returns
+            // everything.
+            "AND (:minPrice IS NULL OR p.price >= :minPrice) " +
+            "AND (:maxPrice IS NULL OR p.price <= :maxPrice) " +
+            "AND (:minRating IS NULL OR COALESCE(p.rating, 0) >= :minRating) " +
+            // Backorderable stock still counts as buyable — a vendor who accepts
+            // backorders has said so, and hiding their listing under
+            // inStockOnly would be enforcing a stricter rule than they set.
+            "AND (:inStockOnly = false OR p.stock > 0 OR p.allow_backorder = true) " +
+            "AND (:query IS NULL OR :query = '' " +
+            "     OR LOWER(p.name) LIKE LOWER(CONCAT('%', :query, '%')) " +
+            "     OR LOWER(COALESCE(p.short_description, '')) LIKE LOWER(CONCAT('%', :query, '%')) " +
+            "     OR LOWER(COALESCE(p.sku, '')) LIKE LOWER(CONCAT('%', :query, '%'))) " +
+            "AND " + COUNTRY_FILTER_EXPR;
+
+    @Query(
+            value = "SELECT p.* FROM products p WHERE " + FILTER_EXPR + " " +
+                    "ORDER BY " + RANK_ORDER + ", p.rating DESC, p.created_at DESC",
+            countQuery = "SELECT COUNT(*) FROM products p WHERE " + FILTER_EXPR,
+            nativeQuery = true
+    )
+    Page<Product> browse(
+            @Param("query") String query,
+            @Param("categoryId") Long categoryId,
+            @Param("brandId") Long brandId,
+            @Param("vendorId") Long vendorId,
+            @Param("productCondition") String productCondition,
+            @Param("minPrice") java.math.BigDecimal minPrice,
+            @Param("maxPrice") java.math.BigDecimal maxPrice,
+            @Param("minRating") java.math.BigDecimal minRating,
+            @Param("inStockOnly") boolean inStockOnly,
+            @Param("deliveryCountry") String deliveryCountry,
+            @Param("deliveryLat") Double deliveryLat,
+            @Param("deliveryLng") Double deliveryLng,
+            @Param("radiusKm") Double radiusKm,
+            Pageable pageable);
+
+    // ── Facets ───────────────────────────────────────────────────────────────
+    // Counted against the same filter the results used, minus the facet's own
+    // dimension — otherwise every brand but the selected one reads as zero and
+    // the shopper cannot widen their search without clearing it first.
+
+    @Query(value = "SELECT p.brand_id, COUNT(*) FROM products p " +
+                   "WHERE " + FILTER_EXPR + " AND p.brand_id IS NOT NULL " +
+                   "GROUP BY p.brand_id ORDER BY COUNT(*) DESC",
+           nativeQuery = true)
+    List<Object[]> facetByBrand(
+            @Param("query") String query, @Param("categoryId") Long categoryId,
+            @Param("brandId") Long brandId, @Param("vendorId") Long vendorId,
+            @Param("productCondition") String productCondition,
+            @Param("minPrice") java.math.BigDecimal minPrice,
+            @Param("maxPrice") java.math.BigDecimal maxPrice,
+            @Param("minRating") java.math.BigDecimal minRating,
+            @Param("inStockOnly") boolean inStockOnly,
+            @Param("deliveryCountry") String deliveryCountry);
+
+    @Query(value = "SELECT p.category_id, COUNT(*) FROM products p " +
+                   "WHERE " + FILTER_EXPR + " AND p.category_id IS NOT NULL " +
+                   "GROUP BY p.category_id ORDER BY COUNT(*) DESC",
+           nativeQuery = true)
+    List<Object[]> facetByCategory(
+            @Param("query") String query, @Param("categoryId") Long categoryId,
+            @Param("brandId") Long brandId, @Param("vendorId") Long vendorId,
+            @Param("productCondition") String productCondition,
+            @Param("minPrice") java.math.BigDecimal minPrice,
+            @Param("maxPrice") java.math.BigDecimal maxPrice,
+            @Param("minRating") java.math.BigDecimal minRating,
+            @Param("inStockOnly") boolean inStockOnly,
+            @Param("deliveryCountry") String deliveryCountry);
+
+    @Query(value = "SELECT p.product_condition, COUNT(*) FROM products p " +
+                   "WHERE " + FILTER_EXPR + " GROUP BY p.product_condition ORDER BY COUNT(*) DESC",
+           nativeQuery = true)
+    List<Object[]> facetByCondition(
+            @Param("query") String query, @Param("categoryId") Long categoryId,
+            @Param("brandId") Long brandId, @Param("vendorId") Long vendorId,
+            @Param("productCondition") String productCondition,
+            @Param("minPrice") java.math.BigDecimal minPrice,
+            @Param("maxPrice") java.math.BigDecimal maxPrice,
+            @Param("minRating") java.math.BigDecimal minRating,
+            @Param("inStockOnly") boolean inStockOnly,
+            @Param("deliveryCountry") String deliveryCountry);
+
+    // ── Lookups ──────────────────────────────────────────────────────────────
+
+    /** A published product by its slug, which is what a public URL carries. */
+    @Query("SELECT p FROM Product p LEFT JOIN FETCH p.vendor LEFT JOIN FETCH p.category "
+         + "LEFT JOIN FETCH p.brand WHERE LOWER(p.slug) = LOWER(:slug) AND p.active = true")
+    Optional<Product> findPublishedBySlug(@Param("slug") String slug);
+
+    /**
+     * Typeahead.
+     *
+     * <p>Names only, and prefix-weighted: "sam" should surface Samsung before
+     * something merely containing "sam" in the middle. Returns names rather than
+     * entities because a suggestion list needs eight strings, not eight object
+     * graphs.
+     */
+    @Query(value = "SELECT p.name FROM products p WHERE p.active = true " +
+                   "AND LOWER(p.name) LIKE LOWER(CONCAT('%', :prefix, '%')) " +
+                   "AND " + COUNTRY_FILTER_EXPR + " " +
+                   "ORDER BY CASE WHEN LOWER(p.name) LIKE LOWER(CONCAT(:prefix, '%')) THEN 0 ELSE 1 END, " +
+                   "COALESCE(p.total_sold, 0) DESC, p.name ASC " +
+                   "LIMIT :limit",
+           nativeQuery = true)
+    List<String> suggestNames(@Param("prefix") String prefix,
+                              @Param("deliveryCountry") String deliveryCountry,
+                              @Param("limit") int limit);
 
     // ── Featured products ─────────────────────────────────────────────────────
     @Query(

@@ -1,7 +1,7 @@
 -- ============================================================================
 --  Sujula development seed
 -- ============================================================================
---  Populates all 47 tables with one coherent, related dataset. Run it by hand;
+--  Populates all 48 tables with one coherent, related dataset. Run it by hand;
 --  it is deliberately NOT auto-loaded on startup, because seed data appearing
 --  in a database by surprise is worse than typing one command, and this file
 --  deletes before it inserts.
@@ -45,6 +45,10 @@
 --      "Table 'sujula.fx_quotes' doesn't exist"
 --      — the database predates held exchange rates.
 --
+--      "Table 'sujula.product_questions' doesn't exist", or "Unknown column
+--      'product_condition'"
+--      — the database predates the public catalogue layer.
+--
 --      "Table 'sujula.notifications' doesn't exist"
 --      — the schema predates the `read` -> `is_read` fix. `read` is reserved in
 --      MySQL, so that CREATE TABLE failed, and Hibernate logged it and carried
@@ -53,7 +57,7 @@
 --  To see what is actually there:
 --
 --      SELECT table_name FROM information_schema.tables
---       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 47
+--       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 48
 --
 --  ── Conventions ────────────────────────────────────────────────────────────
 --
@@ -147,6 +151,7 @@ START TRANSACTION;
 -- Reverse foreign-key order. No FOREIGN_KEY_CHECKS=0 anywhere: if this order
 -- is wrong the database says so, which is the point.
 
+DELETE FROM product_questions      WHERE id >= 1000;
 DELETE FROM fx_quotes              WHERE id LIKE 'seed-%';
 DELETE FROM idempotency_records    WHERE id >= 1000;
 DELETE FROM delivery_contexts      WHERE id LIKE 'seed-%';
@@ -455,6 +460,15 @@ VALUES
   NULL, NULL, @NOW, @NOW);
 
 -- ── products ────────────────────────────────────────────────────────────────
+-- product_condition, not condition: CONDITION is a reserved word in MySQL. H2
+-- does not reserve it, so the obvious column name would have passed every test
+-- here and failed on the real database — the same asymmetry that hid
+-- notifications.read.
+--
+-- 1304 is OPEN_BOX and 1307 REFURBISHED so the condition filter and its facet
+-- have more than one value to return. On a marketplace where a phone costs a
+-- month's income, and where the buyer is choosing for someone else and cannot
+-- inspect it, that distinction is most of the buying decision.
 -- `price_currency` and `country` are derived from the vendor at save time by
 -- the application, never taken from a request — a seller cannot list in a
 -- currency they do not settle in. Seeded consistently with that rule.
@@ -466,36 +480,44 @@ INSERT INTO products
  (id, vendor_id, category_id, brand_id, name, slug, short_description, description,
   sku, price, compare_at_price, price_currency, stock, low_stock_threshold,
   allow_backorder, active, featured, weight_kg, dimensions, country, delivery_scope,
+  product_condition,
   latitude, longitude, rating, total_reviews, total_sold, score, last_restocked_at,
   created_at, updated_at)
 VALUES
  (1301, 1101, 1213, 1201, 'Samsung Galaxy A16', 'samsung-galaxy-a16',
   '6.7-inch screen, 5000mAh battery', 'Dual SIM, expandable storage, two-year local warranty.',
   'KOM-SGA16', 8500.00, 9750.00, 'GMD', 12, 3, 0, 1, 1, 0.195, '165x77x8 mm', 'GM', 'NATIONAL',
+  'NEW',
   13.43830000, -16.67810000, 4.50, 2, 9, 87, @NOW, @NOW, @NOW),
  (1302, 1101, 1213, 1202, 'Nokia 110 4G', 'nokia-110-4g',
   'Feature phone, torch, month-long standby', 'Keypad handset with FM radio and a removable battery.',
   'KOM-N110', 1450.00, NULL, 'GMD', 40, 10, 1, 1, 0, 0.085, '121x50x14 mm', 'GM', 'NATIONAL',
+  'NEW',
   13.43830000, -16.67810000, 4.20, 1, 3, 61, @NOW, @NOW, @NOW),
  (1303, 1101, 1215, 1203, 'Tobaski 1.8L Electric Kettle', 'tobaski-electric-kettle',
   'Stainless steel, auto shut-off', 'Boils 1.8 litres in four minutes. 240V.',
   'KOM-KET18', 1250.00, 1600.00, 'GMD', 22, 5, 0, 1, 1, 1.240, '220x160x240 mm', 'GM', 'REGIIONAL',
+  'NEW',
   13.43830000, -16.67810000, 4.70, 1, 2, 74, @NOW, @NOW, @NOW),
  (1304, 1101, 1214, NULL, 'Kombo Bluetooth Speaker', 'kombo-bluetooth-speaker',
   'Ten hours of playback', 'Splash-resistant, USB-C charging, carry strap.',
   'KOM-SPK10', 2100.00, NULL, 'GMD', 0, 4, 0, 1, 0, 0.540, '180x75x75 mm', 'GM', 'REGIIONAL',
+  'OPEN_BOX',
   13.43830000, -16.67810000, NULL, 0, 0, 40, NULL, @NOW, @NOW),
  (1305, 1102, 1216, NULL, 'Wax Print — Six Yards, Indigo', 'wax-print-six-yards-indigo',
   'Hand-finished cotton, six-yard piece', 'Printed in Ziguinchor. Colour holds through cold washing.',
   'TER-WAX-IND', 14500.00, NULL, 'XOF', 18, 4, 0, 1, 1, 0.850, '6 yards', 'SN', 'GLOBAL',
+  'NEW',
   12.56410000, -16.27190000, 4.80, 1, 6, 80, @NOW, @NOW, @NOW),
  (1306, 1102, 1216, NULL, 'Damask Bazin — Three Yards', 'damask-bazin-three-yards',
   'Heavy damask, unbleached', 'Sold in three-yard cuts. Weight and origin not recorded by the seller.',
   'TER-BAZ-3Y', 9800.00, NULL, 'XOF', 7, 2, 0, 1, 0, NULL, NULL, 'SN', 'NATIONAL',
+'NEW',
   NULL, NULL, NULL, 0, 0, 35, NULL, @NOW, @NOW),
  (1307, 1101, 1213, 1201, 'Samsung Galaxy A05 (withdrawn)', 'samsung-galaxy-a05',
   'Superseded model', 'Unpublished rather than deleted: order lines still point at it.',
   'KOM-SGA05', 6900.00, NULL, 'GMD', 0, 3, 0, 0, 0, 0.190, NULL, 'GM', 'NATIONAL',
+  'REFURBISHED',
   13.43830000, -16.67810000, NULL, 0, 4, 10, NULL, @NOW, @NOW);
 
 -- ── reviews ─────────────────────────────────────────────────────────────────
@@ -1159,6 +1181,59 @@ VALUES
  ('seed-fx-expired', NULL, 'GMD', 'USD', 0.01400000, 1000.0000, 14.0000,
   '2026-09-12 00:00:00.000000', '2026-09-12 07:00:00.000000', @LAPSED, NULL);
 
+-- ── product_questions ───────────────────────────────────────────────────────
+-- What a shopper asked about a listing, and what the seller said.
+--
+-- These matter more here than on most marketplaces. Oliver in London cannot
+-- pick the phone up, and Aminata — who will actually use it — is not in the
+-- conversation at all. "Does the charger have a UK plug" is not idle curiosity;
+-- it is the only way to find out.
+--
+-- Visibility is a consequence of moderation, never of the row existing. A
+-- question with approved_at NULL is not merely hidden by a service that
+-- remembers to filter — the query does not return it. All four states are here
+-- because a client has to render each differently.
+
+INSERT INTO product_questions
+ (id, product_id, asked_by_user_id, question, answer,
+  answered_by_user_id, answered_at, approved_at, approved_by_user_id,
+  rejected_reason, rejected_at, created_at)
+VALUES
+ -- Approved and answered: what a shopper came for, and what sorts first.
+ (1900, 1301, 1005,
+  'Does this come with a charger, and is it a UK or two-pin plug?',
+  'It ships with a two-pin European charger. We include a UK adapter free on request — put a note on the order.',
+  1002, '2026-09-10 14:20:00.000000', '2026-09-10 09:05:00.000000', 1001,
+  NULL, NULL, '2026-09-10 08:40:00.000000'),
+
+ -- Approved, not yet answered. Visible, because the question itself tells the
+ -- next shopper that somebody else wondered the same thing.
+ (1901, 1301, 1004,
+  'Is the 256GB version available in black, or only the 128GB?',
+  NULL, NULL, NULL, '2026-09-11 07:30:00.000000', 1001,
+  NULL, NULL, '2026-09-11 07:12:00.000000'),
+
+ -- Waiting for a moderator. GET /products/1301/questions must not return this.
+ (1902, 1301, 1006,
+  'Can you hold one for me until Friday? I get paid then.',
+  NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, @NOW),
+
+ -- Refused, with the reason kept for the person who asked. This is the case the
+ -- moderation exists for: a phone number posted on somebody else's shopfront.
+ (1903, 1305, 1009,
+  'Message me on +2203100009, I can get you this cheaper elsewhere.',
+  NULL, NULL, NULL, NULL, NULL,
+  'Contact details and off-platform selling are not allowed in questions.',
+  '2026-09-11 10:00:00.000000', '2026-09-11 09:45:00.000000'),
+
+ -- A second product, so the listing page is not the only one with any.
+ (1904, 1305, 1005,
+  'Is the indigo colourfast? I am sending this as a gift and cannot return it easily.',
+  'Yes — cold wash, separate for the first two washes. It holds.',
+  1003, '2026-09-09 16:00:00.000000', '2026-09-09 12:00:00.000000', 1001,
+  NULL, NULL, '2026-09-09 11:30:00.000000');
+
 COMMIT;
 
 -- ── What you now have ───────────────────────────────────────────────────────
@@ -1416,6 +1491,55 @@ COMMIT;
 --   None of these read the database. They are configuration under
 --   sujula.reference.*, so changing what this deployment supports is a property
 --   change rather than a migration.
+--
+--   ── Browsing as the buyer this marketplace is for ────────────────────────
+--
+--   Oliver is in London. The phone is going to Aminata in Serrekunda. Those are
+--   two different places and the catalogue has to treat them as two different
+--   questions:
+--
+--     GET /products?deliverableTo=seed-ctx-aminata-home
+--
+--   ranks against Serrekunda — Aminata's confirmed pin — while the prices come
+--   back in whatever Oliver's browser and IP say, because he is the one paying.
+--   Change the delivery context and the ranking moves; the currency does not.
+--   Change nothing but call from a different country and the currency moves;
+--   the ranking does not. That is C1, and it is testable from the shell.
+--
+--   Without a context, give the destination directly:
+--
+--     GET /products?deliveryLat=13.4383&deliveryLng=-16.6781&deliveryCountry=GM&currency=GBP
+--
+--   The response echoes back which location it used, under `delivery` — so you
+--   can see at a glance that the catalogue ranked against the recipient.
+--
+--   ── The filters ──────────────────────────────────────────────────────────
+--
+--     GET /products?condition=REFURBISHED     1307 only
+--     GET /products?condition=OPEN_BOX        1304 only
+--     GET /products?inStockOnly=true          drops 1304 and 1307, which have none
+--     GET /products?minRating=4.5             1301 and 1305
+--     GET /products?store=kombo-electronics   one seller's shelf
+--     GET /categories/phones                  the attribute schema, derived from
+--                                             what is actually in the category
+--     GET /search?q=wax                       full text, with facets
+--     GET /search/suggest?q=gal               typeahead; two characters minimum
+--     GET /brands                             only brands with stock behind them
+--
+--   ── Questions ────────────────────────────────────────────────────────────
+--
+--     GET /products/1301/questions
+--
+--   returns two: the answered one first, then the unanswered but approved one.
+--   It does NOT return 1902, which is waiting for a moderator, or 1903, which
+--   was refused for posting a phone number on somebody else's shopfront. That
+--   is the point of the design — a question is invisible until somebody
+--   approved it, and the query is what enforces it rather than a service that
+--   remembers to filter.
+--
+--     POST /products/1301/questions   {"question":"..."}   signed in
+--
+--   returns 202 and PENDING_REVIEW. It does not appear on the listing.
 --
 --   And one thing you cannot do: move a vendor order to DELIVERED through the
 --   API. Order 1403 is delivered only because this file wrote it that way.

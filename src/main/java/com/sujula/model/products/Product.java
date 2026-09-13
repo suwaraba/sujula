@@ -7,6 +7,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import com.sujula.model.Review;
 import com.sujula.model.constant.DeliveryScope;
+import com.sujula.model.constant.ProductCondition;
 import com.sujula.model.user.Vendor;
 
 import java.math.BigDecimal;
@@ -92,6 +93,27 @@ public class Product {
     @Column(nullable = false, length = 10)
     @Builder.Default
     private DeliveryScope deliveryScope = DeliveryScope.REGIIONAL;
+
+    /**
+     * New, refurbished, used.
+     *
+     * <p>A column rather than a line in the description, because it is a filter
+     * buyers actually use and because a diaspora buyer choosing a gift for
+     * someone at home cannot pick the item up and look at it. What the listing
+     * says is all they have.
+     *
+     * <p>Defaults to NEW: the overwhelming majority of listings, and the
+     * assumption a buyer makes when nothing says otherwise — so a vendor who
+     * forgets to set it has not accidentally advertised used goods as new by
+     * leaving it null and having the filter skip them.
+     */
+    @Enumerated(EnumType.STRING)
+    // product_condition, not condition: CONDITION is a reserved word in MySQL,
+    // so the generated DDL would fail there — and pass on H2, which does not
+    // reserve it. That asymmetry is how a schema bug reaches production green.
+    @Column(name = "product_condition", length = 20, nullable = false)
+    @Builder.Default
+    private ProductCondition condition = ProductCondition.NEW;
 
     @Column(precision = 4, scale = 2)  
     @Builder.Default

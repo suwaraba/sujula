@@ -158,6 +158,23 @@ public class SecurityConfig {
                         .requestMatchers("/currencies", "/currencies/**",
                                          "/countries", "/locales", "/config/public").permitAll()
 
+                        // ── The public catalogue ─────────────────────────────
+                        // Browsing precedes signing in, always. A shopper
+                        // comparing phones for a relative at home has no reason
+                        // to have an account yet, and a catalogue that demands
+                        // one is a catalogue nobody reaches.
+                        //
+                        // Asking a question is the exception: it writes public
+                        // text onto a seller's shopfront, which without an
+                        // account behind it is a spam channel with no cost to
+                        // the sender.
+                        .requestMatchers(HttpMethod.POST, "/products/*/questions").authenticated()
+                        .requestMatchers(HttpMethod.GET,
+                                "/categories", "/categories/**",
+                                "/products", "/products/**",
+                                "/stores/**", "/brands",
+                                "/search", "/search/**").permitAll()
+
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to
                         // buy has not signed in yet, and these carry no private figures.
