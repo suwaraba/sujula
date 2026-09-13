@@ -210,6 +210,24 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/track/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/invoices/*").permitAll()
 
+                        // The recipient's own parcel. Open on purpose and the
+                        // clearest case of C5 on the platform: the person the
+                        // goods are for may have no account, no app and no
+                        // email, and she is the only one who knows whether she
+                        // will be at home on Thursday. Two credentials rather
+                        // than a session — the unguessable tracking code in the
+                        // path reads a page that carries a first name and a
+                        // town, and a six-digit code in the body authorises the
+                        // three changes. The POSTs are open because requiring a
+                        // sign-in here would hand the decision back to whoever
+                        // has an account, which is exactly the wrong person.
+                        .requestMatchers(HttpMethod.GET, "/parcels/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/parcels/*/request-code",
+                                                          "/parcels/*/choose-pickup-point",
+                                                          "/parcels/*/reschedule",
+                                                          "/parcels/*/authorise-safe-drop")
+                                .permitAll()
+
                         // A seller's own store: opening it, verifying it, saying
                         // who else may work in it, and naming where the money
                         // goes. Signed in is the outer gate only — every method

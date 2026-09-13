@@ -60,4 +60,25 @@ public interface EmailService {
     void sendRecipientReleaseCode(String toEmail, String buyerName, String recipientName,
                                   String orderNumber, String code,
                                   java.time.LocalDateTime expiresAt);
+
+    /**
+     * The code that lets the recipient change something about her own parcel.
+     *
+     * <p>Deliberately not the delivery code, and the message says so in as many
+     * words. The delivery code is what she reads to the driver at the door; this
+     * one is what she types on the tracking page to send the parcel to a counter
+     * instead, or to ask for a different day. Somebody who confused the two would
+     * either be unable to collect or would type the delivery code into a web page,
+     * and a delivery code typed into a web page is one somebody can be talked into
+     * giving away.
+     *
+     * <p>Goes to the person who paid, for the same reason the release code does:
+     * she may have no account, no app and no email, and he has all three.
+     *
+     * @param recipientName her first name, so the buyer knows which parcel
+     * @param trackingCode  what her link says, so he can tell her which one
+     */
+    void sendParcelAccessCode(String toEmail, String buyerName, String recipientName,
+                              String trackingCode, String code,
+                              java.time.LocalDateTime expiresAt);
 }

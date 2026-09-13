@@ -164,7 +164,46 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                 shipment.getDestinationStreet(), shipment.getDestinationCity(),
                 shipment.getDestinationCountry(),
                 shipment.getDestinationLatitude(), shipment.getDestinationLongitude(),
-                null);
+                standingInstructions(shipment));
+    }
+
+    /**
+     * What the recipient has asked for, in the words she used.
+     *
+     * <p>Read from the shipment's derived directives, which {@code
+     * RecipientDirectives} recomputes from the instruction record. The driver
+     * has to see these or they mean nothing: a safe-drop authorisation nobody
+     * shows the driver is a permission that changes only what the database
+     * thinks.
+     */
+    private static String standingInstructions(Shipment shipment) {
+        List<String> lines = new ArrayList<>();
+        if (shipment.getRequestedPickupPoint() != null) {
+            lines.add("She has asked for it to go to " + shipment.getRequestedPickupPoint().getName()
+                    + ", " + shipment.getRequestedPickupPoint().getCity()
+                    + " instead of the door.");
+        }
+        if (shipment.getRequestedWindowFrom() != null) {
+            lines.add("She has asked for delivery between " + shipment.getRequestedWindowFrom()
+                    + " and " + shipment.getRequestedWindowUntil() + ".");
+        }
+        if (shipment.isSafeDropAuthorised()) {
+            // Spelled out rather than reduced to a flag, because this is the one
+            // instruction that replaces her standing at the door with a record.
+            String where = shipment.getSafeDropLocation();
+            String who = shipment.getSafeDropPerson();
+            StringBuilder authorised = new StringBuilder("She has authorised you to leave it");
+            if (who != null && !who.isBlank()) {
+                authorised.append(" with ").append(who);
+            }
+            if (where != null && !where.isBlank()) {
+                authorised.append(who != null && !who.isBlank() ? " at " : " at ").append(where);
+            }
+            authorised.append(" without a code. Photograph it where you leave it — that photograph "
+                    + "is the only proof there will be.");
+            lines.add(authorised.toString());
+        }
+        return lines.isEmpty() ? null : String.join(" ", lines);
     }
 
     /**
@@ -204,8 +243,14 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
             case DRIVER_ASSIGNED -> "Go to the shop and mark yourself arrived.";
             case AT_ORIGIN -> "Ask the seller for the collection code and collect the parcel.";
             case IN_TRANSIT -> "Take it to the next stop and record the handover there.";
-            case OUT_FOR_DELIVERY -> "Ask the recipient for their code, take a photograph, and "
-                    + "record the delivery.";
+            case OUT_FOR_DELIVERY -> shipment.getRequestedPickupPoint() != null
+                    ? "She has asked for it to go to " + shipment.getRequestedPickupPoint().getName()
+                      + " instead. Take it there and record the deposit."
+                    : shipment.isSafeDropAuthorised()
+                    ? "She has authorised you to leave it without a code. Take a photograph where "
+                      + "you leave it and record the delivery."
+                    : "Ask the recipient for their code, take a photograph, and record the "
+                      + "delivery.";
             case ATTEMPT_FAILED -> "Try again after " + shipment.getNextAttemptAfter()
                     + ", or hand it back if it cannot be delivered.";
             default -> null;
@@ -295,6 +340,25 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     }
 
     /**
+     * Whether this delivery is standing on an authorisation instead of a code.
+     *
+     * <p>The narrow exception C4 tolerates, and only because the evidence is
+     * replaced rather than dropped. Normally the proof that the right person got
+     * the parcel is that they read out six digits; when the recipient has
+     * authorised a safe drop, the proof is her authorisation — recorded against
+     * the parcel, at a time, with the words she used and the id of the code she
+     * held when she said it — plus the photograph and the position below.
+     *
+     * <p>Narrow on purpose: a driver who presents a code takes the ordinary
+     * path even when a safe drop is authorised, because a code that was actually
+     * read out is better evidence than a standing permission.
+     */
+    private static boolean isSafeDrop(Shipment shipment, DriverRequests.Handover request) {
+        return shipment.isSafeDropAuthorised()
+                && (request.cleanedCode() == null || request.cleanedCode().isBlank());
+    }
+
+    /**
      * The shape every handover shares.
      *
      * <p>Find the code, check it, burn it, build the event with its proof, and
@@ -317,7 +381,18 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
             return replayOf(already.get(), shipment);
         }
 
-        HandoverCode code = burnCode(shipment, leg, codeType, request.cleanedCode());
+        boolean safeDrop = type == CustodyEventType.RELEASED && isSafeDrop(shipment, request);
+        if (!safeDrop && (request.cleanedCode() == null || request.cleanedCode().isBlank())) {
+            // The check the DTO no longer makes. Every handover but an
+            // authorised safe drop carries a code, and a missing one is the
+            // whole of C4 going quietly missing.
+            throw new BadRequestException(
+                    "The code is required — it is the proof this handover happened. Ask them to "
+                            + "read out the six digits.");
+        }
+        HandoverCode code = safeDrop
+                ? null
+                : burnCode(shipment, leg, codeType, request.cleanedCode());
 
         Double expectedLat = againstDestination
                 ? shipment.getDestinationLatitude() : shipment.getOriginLatitude();
@@ -331,6 +406,23 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
 
         BigDecimal distance = Geofence.metresBetween(
                 request.lat(), request.lng(), expectedLat, expectedLng);
+        boolean corroborated = Geofence.isWithin(distance, request.accuracy(),
+                Geofence.DEFAULT_RADIUS_M);
+
+        if (safeDrop && !corroborated) {
+            // Everywhere else a position that does not match is recorded and
+            // flagged, because the parcel may genuinely have changed hands and
+            // the code proves it did. Here there is no code, so the position is
+            // the only thing corroborating that the driver was at the address
+            // the recipient authorised — and a safe drop nowhere near it is a
+            // parcel left somewhere nobody agreed to.
+            throw new BadRequestException(distance == null
+                    ? "A safe drop needs your position. She authorised leaving it at a particular "
+                      + "place, and without a position there is nothing to show you were there."
+                    : "You are " + distance.longValue() + "m from the delivery address. A safe "
+                      + "drop can only be recorded at the place she authorised — ask her for the "
+                      + "delivery code instead, or record a failed attempt.");
+        }
 
         CustodyEvent event = chain.append(shipment, CustodyEvent.builder()
                 .type(type)
@@ -341,11 +433,14 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                 .latitude(request.lat()).longitude(request.lng())
                 .accuracyMetres(request.accuracy())
                 .metresFromExpected(distance)
-                .withinGeofence(Geofence.isWithin(distance, request.accuracy(),
-                        Geofence.DEFAULT_RADIUS_M))
+                .withinGeofence(corroborated)
                 .photoUrl(request.photoUrl())
                 .signatureUrl(request.signatureUrl())
-                .note(request.note())
+                // Written into the chain rather than inferred later. Months on,
+                // "why is there no code against this delivery" has to have an
+                // answer in the row itself.
+                .reasonCode(safeDrop ? "SAFE_DROP" : null)
+                .note(safeDrop ? safeDropNote(shipment, request.note()) : request.note())
                 .occurredAt(when(request.capturedAt()))
                 .capturedOffline(request.capturedAt() != null)
                 .clientEventId(request.clientEventId())
@@ -361,12 +456,30 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                     type, shipment.getReference(), distance);
         }
 
+        String outcome = safeDrop
+                ? "Left as she authorised. Recorded against her instruction, with your photograph."
+                : success;
         return new DriverResponses.CustodyRecorded(event.getId(), type, shipmentId,
                 shipment.getStatus(), event.getOccurredAt(),
                 event.isWithinGeofence(), distance, false,
-                event.isWithinGeofence() ? success
-                        : success + " Your position does not match where this was expected, so it "
+                event.isWithinGeofence() ? outcome
+                        : outcome + " Your position does not match where this was expected, so it "
                                 + "has been flagged for somebody to look at.");
+    }
+
+    /** The authorisation, copied into the event so the chain carries its own justification. */
+    private static String safeDropNote(Shipment shipment, String driverNote) {
+        StringBuilder note = new StringBuilder("Safe drop authorised by the recipient:");
+        if (shipment.getSafeDropPerson() != null && !shipment.getSafeDropPerson().isBlank()) {
+            note.append(" leave with ").append(shipment.getSafeDropPerson()).append('.');
+        }
+        if (shipment.getSafeDropLocation() != null && !shipment.getSafeDropLocation().isBlank()) {
+            note.append(" leave at ").append(shipment.getSafeDropLocation()).append('.');
+        }
+        if (driverNote != null && !driverNote.isBlank()) {
+            note.append(' ').append(driverNote);
+        }
+        return note.toString();
     }
 
     /**

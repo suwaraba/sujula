@@ -146,7 +146,18 @@ public final class DriverRequests {
      * same, and only its sufficiency differs by link.
      */
     public record Handover(
-            @NotBlank(message = "The code is required — it is the proof this happened")
+            /**
+             * The code the receiving party read out.
+             *
+             * <p>Required for every handover, and the service says so rather
+             * than the annotation — because there is exactly one case where
+             * there is nobody to read it out. A recipient who has authorised a
+             * safe drop is not at the door by arrangement, and her recorded
+             * authorisation stands in for the code she cannot give. Leaving the
+             * check here would have made that case impossible to express at all;
+             * leaving it out entirely would have made a missing code a shrug.
+             * So it is checked where the parcel is known.
+             */
             @Pattern(regexp = "\\d{4,8}", message = "A handover code is 4 to 8 digits")
             String code,
 

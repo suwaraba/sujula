@@ -145,9 +145,13 @@ SET @NOW = '2026-09-12 09:00:00.000000';
 --   @SOON    an open challenge, still answerable
 --   @FUTURE  a live session, and a download link that has not lapsed
 --   @LAPSED  a session past its refresh window, which must be refused
+--   @TOMORROW / @TOMORROW_LATE  a delivery window a recipient asked for, which
+--                the reschedule rule must still accept as being in the future
 SET @SOON   = CURRENT_TIMESTAMP + INTERVAL '30' MINUTE;
 SET @FUTURE = CURRENT_TIMESTAMP + INTERVAL '30' DAY;
 SET @LAPSED = CURRENT_TIMESTAMP - INTERVAL '7' DAY;
+SET @TOMORROW      = CURRENT_TIMESTAMP + INTERVAL '1' DAY;
+SET @TOMORROW_LATE = CURRENT_TIMESTAMP + INTERVAL '1' DAY + INTERVAL '4' HOUR;
 
 START TRANSACTION;
 
@@ -177,6 +181,8 @@ DELETE FROM product_translations    WHERE id >= 1000;
 -- first, as everywhere else here.
 DELETE FROM handover_codes          WHERE id >= 1000;
 DELETE FROM custody_events          WHERE id >= 1000;
+DELETE FROM recipient_instructions  WHERE id >= 1000;
+DELETE FROM parcel_access_codes     WHERE id >= 1000;
 DELETE FROM shipment_legs           WHERE id >= 1000;
 DELETE FROM shipments               WHERE id >= 1000;
 DELETE FROM vendor_ledger_entries   WHERE id >= 1000;
@@ -1846,7 +1852,7 @@ INSERT INTO proof_of_delivery (id, delivery_id, image_url, signature_url, latitu
 -- would have stranded it.
 
 INSERT INTO shipments
- (id, version, reference, vendor_order_id, status,
+ (id, version, reference, tracking_code, vendor_order_id, status,
   recipient_name, recipient_phone, destination_street, destination_city, destination_country,
   destination_latitude, destination_longitude,
   origin_latitude, origin_longitude, origin_address,
@@ -1854,11 +1860,13 @@ INSERT INTO shipments
   failed_attempts, next_attempt_after,
   collected_at, delivered_at, returned_at, cancelled_at, created_at, updated_at,
   held_at_pickup_point_id, shelf_code, stored_at, storage_deadline,
-  pickup_commission, pickup_commission_currency)
+  pickup_commission, pickup_commission_currency,
+  requested_pickup_point_id, requested_window_from, requested_window_until,
+  safe_drop_authorised, safe_drop_location, safe_drop_person)
 VALUES
  -- Order 1403: collected and delivered, and the reason vendor_order 1504's
  -- escrow could be released at all.
- (1900, 0, 'SHP-SEED-0001', 1504, 'DELIVERED',
+ (1900, 0, 'SHP-SEED-0001', 'PARC7K3M9QXB2VDH', 1504, 'DELIVERED',
   'Aminata Ceesay', '+2203100004', 'Westfield Junction, Unit 3', 'Serekunda', 'GM',
   13.44290000, -16.67760000,
   13.45300000, -16.67500000, '14 Kairaba Avenue, Serekunda',
@@ -1869,28 +1877,37 @@ VALUES
   -- NULL because it is no longer on the shelf, and the shelf code and the
   -- commission stay: they are the record of where it sat and what handling it
   -- was worth, which is what an earnings statement next month is built from.
-  NULL, 'B-417', @NOW, @NOW, 25.00, 'GMD'),
+  NULL, 'B-417', @NOW, @NOW, 25.00, 'GMD',
+  NULL, NULL, NULL, FALSE, NULL, NULL),
 
  -- Order 1404: the diaspora parcel. Fatou paid in Madrid; Isatou is waiting in
  -- Serrekunda and has no account.
- (1901, 0, 'SHP-SEED-0002', 1505, 'OUT_FOR_DELIVERY',
+ (1901, 0, 'SHP-SEED-0002', 'PARCQ4T8NHRW6JZY', 1505, 'OUT_FOR_DELIVERY',
   'Isatou Ceesay', '+2203100077', '12 Kairaba Avenue', 'Serrekunda', 'GM',
   13.43840000, -16.67810000,
   13.45300000, -16.67500000, '14 Kairaba Avenue, Serekunda',
   1, 380.00, 'GMD',
   0, NULL,
   @NOW, NULL, NULL, NULL, @NOW, @NOW,
-  NULL, NULL, NULL, NULL, NULL, NULL),
+  NULL, NULL, NULL, NULL, NULL, NULL,
+  -- What Isatou asked for, and the row that says so is 1940 below. These six
+  -- columns are derived: RecipientDirectives recomputes them from the
+  -- instruction record every time one is written, exactly as the status column
+  -- is recomputed from the custody chain. Nothing sets them directly, which is
+  -- why a safe-drop permission cannot exist here without a row saying who gave
+  -- it, when, and holding which code.
+  NULL, @TOMORROW, @TOMORROW_LATE, TRUE, 'with the pharmacy next door', 'Ndey'),
 
  -- Order 1401's Banjul slice: packed, offered, and nobody has answered yet.
- (1902, 0, 'SHP-SEED-0003', 1501, 'DRIVER_OFFERED',
+ (1902, 0, 'SHP-SEED-0003', 'PARCV2B9KXFM3QTD', 1501, 'DRIVER_OFFERED',
   'Oliver Bennett', '+447700900005', '221B Baker Street, Flat 2', 'London', 'GB',
   51.52370000, -0.15850000,
   13.45300000, -16.67500000, '14 Kairaba Avenue, Serekunda',
   2, 209.09, 'GMD',
   0, NULL,
   NULL, NULL, NULL, NULL, @NOW, @NOW,
-  NULL, NULL, NULL, NULL, NULL, NULL),
+  NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, FALSE, NULL, NULL),
 
  -- On the shelf at Westfield right now, waiting for somebody to collect it.
  -- This is the row the counter's screen is built from, and what makes
@@ -1899,14 +1916,15 @@ VALUES
  -- Its deadline is in the future, so returning it is refused: somebody may be
  -- travelling to collect, and sending it back early takes a decision that is
  -- not the counter's to take.
- (1903, 0, 'SHP-SEED-0004', 1502, 'AT_PICKUP_POINT',
+ (1903, 0, 'SHP-SEED-0004', 'PARCH6RJ4WY8NPQC', 1502, 'AT_PICKUP_POINT',
   'Binta Faal', '+2203100010', 'Bakau New Town', 'Bakau', 'GM',
   13.47810000, -16.68200000,
   13.45300000, -16.67500000, 'Teranga Mobile, Dakar',
   1, 96.43, 'GMD',
   0, NULL,
   @NOW, NULL, NULL, NULL, @NOW, @NOW,
-  1096, 'A-118', @NOW, @FUTURE, 25.00, 'GMD');
+  1096, 'A-118', @NOW, @FUTURE, 25.00, 'GMD',
+  NULL, NULL, NULL, FALSE, NULL, NULL);
 
 -- Legs are what a driver accepts, not shipments. The driver who can reach a shop
 -- on Kairaba Avenue is frequently not the one who covers the street a parcel is
@@ -2080,6 +2098,70 @@ INSERT INTO handover_codes (id, delivery_id, vendor_order_id, shipment_id, leg_i
 -- Neither code is written on the parcel label. The label carries a signed QR
 -- that resolves the address for whoever scans it; the code is read aloud to the
 -- driver. A code printed on the box it protects protects nothing.
+
+-- ── recipient_instructions ──────────────────────────────────────────────────
+-- What Isatou asked for about her own parcel, and the proof she was the one
+-- asking. She has no account: no row in users, no password, no session. What
+-- she has is a link her sister forwarded and six digits her sister read to her
+-- down the telephone from Madrid — which is the case this marketplace exists to
+-- serve, and the reason this table exists at all.
+--
+-- Append-only, like custody_events. 1940 is superseded rather than edited: she
+-- first said to leave it with Ndey at the pharmacy, then said next door was
+-- closed on Fridays and gave a window instead. A driver who set off on the
+-- first instruction has to be able to show it was the instruction at the time,
+-- which a mutable column cannot show.
+--
+-- verified_by_code_id points at parcel_access_codes and nothing reads it to
+-- authorise anything. It is evidence after the fact, which is the only kind
+-- that survives the code being rotated.
+
+INSERT INTO recipient_instructions
+ (id, shipment_id, type, pickup_point_id, window_from, window_until,
+  safe_drop_location, safe_drop_person,
+  verified_by_code_id, verified_at, superseded_at, summary, created_at)
+VALUES
+ -- Withdrawn by 1941. The words survive because "the parcel was left behind the
+ -- pharmacy" needs an answer to "who said it could be".
+ (1940, 1901, 'AUTHORISE_SAFE_DROP', NULL, NULL, NULL,
+  'at the pharmacy next door', 'Ndey',
+  1950, @NOW, @NOW, 'Leave with Ndey at the pharmacy next door', @NOW),
+
+ -- In force. Note that shipments.1901 carries BOTH the window from this row and
+ -- a safe-drop authorisation from 1942 — two instructions of different kinds,
+ -- each superseding only its own kind.
+ (1941, 1901, 'RESCHEDULE', NULL, @TOMORROW, @TOMORROW_LATE,
+  NULL, NULL,
+  1950, @NOW, NULL, 'Deliver between tomorrow morning and early afternoon', @NOW),
+
+ -- She thought better of it once the window was set: Ndey is there in the
+ -- mornings. This is the row shipments.1901.safe_drop_* is derived from.
+ (1942, 1901, 'AUTHORISE_SAFE_DROP', NULL, NULL, NULL,
+  'with the pharmacy next door', 'Ndey',
+  1950, @NOW, NULL, 'Leave with Ndey at the pharmacy next door', @NOW);
+
+-- ── parcel_access_codes ─────────────────────────────────────────────────────
+-- The six digits that let her give those instructions. NOT the delivery code:
+-- 1737 in handover_codes is what she reads to the driver at the door, and this
+-- is what she types on the tracking page. Keeping them separate is the point —
+-- a delivery code typed into a web page is a delivery code somebody can be
+-- talked into giving away, and a page that displayed one would be worse still.
+--
+-- sent_to is stored already masked. Support reading this row needs to know
+-- whether Fatou got it; the address in full is on the order for anyone who
+-- genuinely needs it.
+--
+-- 1950 is deliberately expired, so entering it is refused and asking for a new
+-- one is the answer the page gives. 1951 shows the other failure: five wrong
+-- guesses, invalidated, and the message that sends somebody to ask for another
+-- rather than to wait.
+
+INSERT INTO parcel_access_codes
+ (id, version, shipment_id, code, failed_attempts, invalidated_at, expires_at,
+  last_used_at, instructions_given, sent_to, created_at)
+VALUES
+ (1950, 0, 1901, '628104', 0, NULL, @LAPSED, @NOW, 3, 'f•••u@example.es', @NOW),
+ (1951, 0, 1901, '317905', 5, @NOW,  @FUTURE, NULL, 0, 'f•••u@example.es', @NOW);
 
 -- ── delivery_routes ─────────────────────────────────────────────────────────
 -- A driver's run for one day. delivery_ids and optimized_order are TEXT lists,

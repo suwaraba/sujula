@@ -165,13 +165,22 @@ class DriverRoutingTest {
     }
 
     @Test
-    void aHandoverWithNoCodeNeverReachesTheService() throws Exception {
+    void aHandoverWithNoCodeIsNowTheServicesQuestionRatherThanTheBindersOne() throws Exception {
+        // The check moved rather than went away. There is exactly one handover
+        // with nobody to read a code out — a delivery to a recipient who has
+        // authorised a safe drop — and whether that is the case depends on the
+        // parcel, which the binder cannot see. So the controller lets a codeless
+        // body through and DriverCustodyService refuses it unless an
+        // authorisation stands in for the code. The refusal itself is asserted
+        // in DriverCustodyServiceTest, against a real shipment.
+        when(custody.collect(eq(950L), eq(11L), any())).thenReturn(recorded());
+
         mvc.perform(post("/driver/shipments/11/collect")
                         .with(authentication(driverAuth())).with(csrf())
                         .contentType("application/json").content("{\"lat\":13.4,\"lng\":-16.6}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk());
 
-        verify(custody, never()).collect(any(), any(), any());
+        verify(custody).collect(eq(950L), eq(11L), any());
     }
 
     @Test

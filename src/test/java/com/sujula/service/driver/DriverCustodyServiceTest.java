@@ -31,6 +31,7 @@ import com.sujula.model.delivery.Driver;
 import com.sujula.model.delivery.HandoverCode;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.VendorOrder;
+import com.sujula.model.shipment.CustodyEvent;
 import com.sujula.model.shipment.Shipment;
 import com.sujula.model.shipment.ShipmentLeg;
 import com.sujula.model.user.User;
@@ -47,6 +48,7 @@ import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.EmailService;
 import com.sujula.service.driver.impl.DriverCustodyServiceImpl;
 import com.sujula.service.shipment.CustodyChain;
+import com.sujula.service.shipment.RecipientDirectives;
 
 import jakarta.persistence.EntityManager;
 
@@ -73,7 +75,7 @@ import static org.mockito.Mockito.verify;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
-@Import({DriverCustodyServiceImpl.class, CustodyChain.class})
+@Import({DriverCustodyServiceImpl.class, CustodyChain.class, RecipientDirectives.class})
 class DriverCustodyServiceTest {
 
     @Autowired private DriverCustodyServiceImpl custody;
@@ -87,6 +89,7 @@ class DriverCustodyServiceTest {
     @Autowired private VendorRepository vendors;
     @Autowired private UserRepository users;
     @Autowired private EntityManager entityManager;
+    @Autowired private RecipientDirectives recipientDirectives;
 
     @MockitoBean private EmailService email;
 
@@ -350,6 +353,108 @@ class DriverCustodyServiceTest {
         assertFalse(done.attestedByPosition());
         assertTrue(done.message().contains("flagged"), done.message());
         assertEquals(ShipmentStatus.DELIVERED, done.shipmentStatus());
+    }
+
+    // ── Safe drop: the one delivery with no code ─────────────────────────────
+
+    @Test
+    void aDeliveryWithNoCodeAndNoAuthorisationIsRefused() {
+        collectIt();
+        code(HandoverCodeType.RECIPIENT_RELEASE, "222222");
+
+        // The check the DTO stopped making when safe drops became expressible.
+        // A missing code with nothing standing in for it is the whole of C4
+        // going quietly missing.
+        BadRequestException refused = assertThrows(BadRequestException.class,
+                () -> custody.deliver(driverUser.getId(), shipment.getId(),
+                        handover(null, DEST_LAT, DEST_LNG, "https://m.invalid/p.jpg")));
+        assertTrue(refused.getMessage().contains("proof"), refused.getMessage());
+    }
+
+    @Test
+    void aDeliveryStandingOnHerAuthorisationCarriesItInTheChain() {
+        collectIt();
+        authoriseSafeDrop("with the pharmacy next door", "Ndey");
+
+        DriverResponses.CustodyRecorded done = custody.deliver(driverUser.getId(),
+                shipment.getId(), handover(null, DEST_LAT, DEST_LNG, "https://m.invalid/p.jpg"));
+        entityManager.flush();
+
+        assertEquals(ShipmentStatus.DELIVERED, done.shipmentStatus());
+        CustodyEvent released = events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId())
+                .stream().filter(e -> e.getType() == CustodyEventType.RELEASED)
+                .findFirst().orElseThrow();
+
+        // Months later, "why is there no code against this delivery" has to
+        // have an answer in the row itself.
+        assertEquals("SAFE_DROP", released.getReasonCode());
+        assertNull(released.getHandoverCodeId());
+        assertTrue(released.getNote().contains("Ndey"));
+        assertTrue(released.getNote().contains("pharmacy next door"));
+        assertNotNull(released.getPhotoUrl());
+    }
+
+    @Test
+    void aSafeDropNowhereNearTheAddressIsRefusedRatherThanFlagged() {
+        collectIt();
+        authoriseSafeDrop("behind the shop", null);
+
+        // Everywhere else a position that does not match is recorded and
+        // flagged, because the code proves the parcel changed hands. Here there
+        // is no code, so the position is the only thing corroborating that the
+        // driver was at the place she authorised.
+        BadRequestException refused = assertThrows(BadRequestException.class,
+                () -> custody.deliver(driverUser.getId(), shipment.getId(),
+                        handover(null, 13.4549, -16.5790, "https://m.invalid/p.jpg")));
+        assertTrue(refused.getMessage().contains("safe"), refused.getMessage());
+
+        assertTrue(events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).stream()
+                .noneMatch(e -> e.getType() == CustodyEventType.RELEASED));
+    }
+
+    @Test
+    void aCodeThatWasActuallyReadOutBeatsAStandingPermission() {
+        collectIt();
+        authoriseSafeDrop("behind the shop", null);
+        code(HandoverCodeType.RECIPIENT_RELEASE, "222222");
+
+        custody.deliver(driverUser.getId(), shipment.getId(),
+                handover("222222", DEST_LAT, DEST_LNG, "https://m.invalid/p.jpg"));
+        entityManager.flush();
+
+        CustodyEvent released = events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId())
+                .stream().filter(e -> e.getType() == CustodyEventType.RELEASED)
+                .findFirst().orElseThrow();
+        // She was in after all. A code somebody read out is better evidence
+        // than a permission given hours earlier, so it takes the ordinary path.
+        assertNull(released.getReasonCode());
+        assertNotNull(released.getHandoverCodeId());
+    }
+
+    @Test
+    void theDriverIsToldWhatSheAskedForOrItMeansNothing() {
+        collectIt();
+        authoriseSafeDrop("with the pharmacy next door", "Ndey");
+
+        DriverResponses.ShipmentDetail detail =
+                custody.shipment(driverUser.getId(), shipment.getId());
+
+        assertNotNull(detail.destination().instructions());
+        assertTrue(detail.destination().instructions().contains("Ndey"));
+        assertTrue(detail.destination().instructions().contains("photograph"));
+        assertTrue(detail.whatToDoNext().contains("without a code"), detail.whatToDoNext());
+    }
+
+    /** Records the authorisation the way the recipient surface does. */
+    private void authoriseSafeDrop(String where, String who) {
+        recipientDirectives.record(shipment, com.sujula.model.shipment.RecipientInstruction.builder()
+                .type(com.sujula.model.constant.RecipientInstructionType.AUTHORISE_SAFE_DROP)
+                .safeDropLocation(where).safeDropPerson(who)
+                .verifiedByCodeId(1L).verifiedAt(LocalDateTime.now())
+                .summary("Leave with " + who + " at " + where)
+                .build());
+        entityManager.flush();
+        entityManager.refresh(shipment);
     }
 
     // ── The recipient's code goes to the buyer ───────────────────────────────

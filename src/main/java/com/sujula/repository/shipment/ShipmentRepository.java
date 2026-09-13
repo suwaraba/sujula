@@ -23,6 +23,19 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
     Optional<Shipment> findByVendorOrderId(Long vendorOrderId);
 
     /**
+     * The parcel a recipient's link names.
+     *
+     * <p>By tracking code rather than by id, and that is the whole access model
+     * on that surface: the code is unguessable, possession of it is the
+     * credential, and what it opens is bounded to what is safe for whoever ends
+     * up holding a forwarded message. A miss is not-found rather than forbidden,
+     * so nothing here confirms that a guessed code belongs to a live parcel.
+     */
+    Optional<Shipment> findByTrackingCode(String trackingCode);
+
+    boolean existsByTrackingCode(String trackingCode);
+
+    /**
      * A shipment this driver is actually on.
      *
      * <p>The driver goes into the query through the legs rather than being

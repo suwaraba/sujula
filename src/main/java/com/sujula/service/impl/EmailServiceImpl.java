@@ -335,4 +335,26 @@ public class EmailServiceImpl implements EmailService {
                 + "parcel.\n\n"
                 + "The Sujula Team");
     }
+
+    @Override
+    public void sendParcelAccessCode(String toEmail, String buyerName, String recipientName,
+                                     String trackingCode, String code,
+                                     java.time.LocalDateTime expiresAt) {
+        send(toEmail,
+                "Code to change the delivery of parcel " + trackingCode,
+                "Hi " + (buyerName == null ? "there" : buyerName) + ",\n\n"
+                + (recipientName == null ? "The person" : recipientName)
+                + " asked to change something about the parcel you sent"
+                + " (tracking " + trackingCode + ").\n\n"
+                + "CODE: " + code + "\n\n"
+                + "Read these six digits to them. They will type them on the tracking page to "
+                + "send the parcel to a collection point instead, to ask for a different day, or "
+                + "to say it may be left with somebody.\n\n"
+                + "THIS IS NOT THE COLLECTION CODE. The collection code is the one the driver "
+                + "asks for at the door. This one only works on the tracking page, and it stops "
+                + "working on " + expiresAt + ".\n\n"
+                + "If nobody asked for this, ignore it — nothing changes unless the code is "
+                + "entered, and it expires shortly.\n\n"
+                + "The Sujula Team");
+    }
 }

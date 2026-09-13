@@ -81,6 +81,27 @@ public class Shipment {
     @Setter
     private String reference;
 
+    /**
+     * What the person waiting for the parcel quotes, and the only credential
+     * the recipient surface accepts.
+     *
+     * <p>Separate from {@link #reference} because the two are shown to different
+     * people. The reference is what a driver and a support agent say to each
+     * other and appears on the label; this goes to somebody with no account, no
+     * app and no way to log in, and possession of it is what lets her choose a
+     * counter or authorise a safe drop. So it is unguessable, and what it
+     * unlocks is bounded to what is safe for whoever ends up holding it.
+     *
+     * <p>Also separate from the order's tracking code, which covers the whole
+     * order: a buyer in Madrid paying for three sellers' goods creates three
+     * parcels that arrive on three different days, and the decisions on this
+     * surface — this counter, that afternoon, leave it with Ndey — are decisions
+     * about one box.
+     */
+    @Column(unique = true, length = 24)
+    @Setter
+    private String trackingCode;
+
     /** The slice this parcel holds. One box, one seller, one release code. */
     @JsonIgnore
     @OneToOne(fetch = FetchType.LAZY, optional = false)
@@ -260,6 +281,43 @@ public class Shipment {
                 && storageDeadline.isBefore(now);
     }
 
+    // ── What the recipient has asked for ─────────────────────────────────────
+    //
+    // Derived, like the status above, and for the same reason. The instructions
+    // are rows in recipient_instructions; these three are the summary a driver's
+    // screen reads, recomputed from those rows by RecipientDirectives whenever
+    // one is added. Nothing else may set them, so they cannot come to disagree
+    // with the record that justifies them.
+
+    /** The counter she asked for, if she asked for one. */
+    @JsonIgnore
+    @jakarta.persistence.ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "requested_pickup_point_id")
+    private com.sujula.model.delivery.PickupPoint requestedPickupPoint;
+
+    /** Not before this, if she asked for a different day. */
+    private LocalDateTime requestedWindowFrom;
+
+    /** And not after this. */
+    private LocalDateTime requestedWindowUntil;
+
+    /**
+     * Whether the driver may hand it to somebody else, or leave it somewhere.
+     *
+     * <p>The one derived field that changes what counts as proof of delivery,
+     * which is why it has no setter at all and why the row behind it keeps the
+     * words she used.
+     */
+    @Column(nullable = false)
+    @Builder.Default
+    private boolean safeDropAuthorised = false;
+
+    @Column(length = 300)
+    private String safeDropLocation;
+
+    @Column(length = 120)
+    private String safeDropPerson;
+
     // ── Timestamps, each one a consequence of an event ───────────────────────
 
     private LocalDateTime collectedAt;
@@ -294,6 +352,59 @@ public class Shipment {
         this.deliveredAt = deliveredAt;
         this.returnedAt = returnedAt;
     }
+
+    /**
+     * The other derived door, and the only way these five fields change.
+     *
+     * <p>Same shape as {@link #applyDerivedState} and for the same reason:
+     * {@code RecipientDirectives} recomputes all of them from the whole
+     * instruction record rather than patching one, so withdrawing an
+     * authorisation is a re-derivation that clears it rather than a setter
+     * somebody has to remember to call.
+     */
+    public void applyDerivedDirectives(com.sujula.model.delivery.PickupPoint requestedPickupPoint,
+                                       LocalDateTime windowFrom, LocalDateTime windowUntil,
+                                       boolean safeDropAuthorised, String safeDropLocation,
+                                       String safeDropPerson) {
+        this.requestedPickupPoint = requestedPickupPoint;
+        this.requestedWindowFrom = windowFrom;
+        this.requestedWindowUntil = windowUntil;
+        this.safeDropAuthorised = safeDropAuthorised;
+        this.safeDropLocation = safeDropLocation;
+        this.safeDropPerson = safeDropPerson;
+    }
+
+    /**
+     * Gives every parcel a tracking code, whoever created it and however.
+     *
+     * <p>A lifecycle callback rather than a line in whatever service makes
+     * shipments, because there will be more than one such service and the one
+     * that forgets is the one that ships. A parcel with no tracking code is a
+     * parcel the person waiting for it cannot reach at all — no page, no code,
+     * no way to choose a counter — and that failure is silent: everything else
+     * about the shipment works perfectly.
+     *
+     * <p>Sixteen characters from an alphabet with no I, O, 0, 1, L or U in it,
+     * the same one the order's code uses. It gets read aloud down a telephone
+     * line between Madrid and Serrekunda, and a zero that somebody hears as an
+     * O is a code that does not work.
+     */
+    @jakarta.persistence.PrePersist
+    void assignTrackingCode() {
+        if (trackingCode != null && !trackingCode.isBlank()) {
+            return;
+        }
+        StringBuilder generated = new StringBuilder(TRACKING_CODE_LENGTH);
+        for (int i = 0; i < TRACKING_CODE_LENGTH; i++) {
+            generated.append(TRACKING_ALPHABET.charAt(
+                    TRACKING_RANDOM.nextInt(TRACKING_ALPHABET.length())));
+        }
+        this.trackingCode = generated.toString();
+    }
+
+    private static final java.security.SecureRandom TRACKING_RANDOM = new java.security.SecureRandom();
+    private static final String TRACKING_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
+    private static final int TRACKING_CODE_LENGTH = 16;
 
     /** Whether somebody on this platform is holding the goods right now. */
     public boolean isCustodyActive() {
