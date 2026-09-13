@@ -138,6 +138,46 @@ public class VendorOrder {
     @Embedded
     private FxSnapshot fx;
 
+    /**
+     * When the buyer said they had received this seller's goods.
+     *
+     * <p>Optional and early. Money is held until delivery is proven, and proof
+     * normally comes from the custody chain — a code handed over, a signature, a
+     * photograph. This is the buyer short-circuiting that: they have the parcel,
+     * they say so, and the seller is paid without waiting on the paperwork.
+     *
+     * <p>Per vendor, because a basket from two sellers arrives as two parcels on
+     * two days. Confirming one must not pay the other.
+     */
+    private LocalDateTime receiptConfirmedAt;
+
+    /**
+     * When this slice's funds became releasable to the vendor.
+     *
+     * <p>Set by receipt confirmation or by proven delivery, never by the vendor
+     * and never by time alone. It is the difference between "the goods arrived"
+     * and "we assume they did".
+     */
+    private LocalDateTime escrowReleasedAt;
+
+    /** Whether the buyer has confirmed they have these goods. */
+    public boolean isReceiptConfirmed() {
+        return receiptConfirmedAt != null;
+    }
+
+    /**
+     * Whether this slice can still be stopped without anything being recalled.
+     *
+     * <p>Pre-dispatch: nothing has left the seller, so cancelling costs a
+     * restock and nothing else. Once it has shipped, stopping it is a return,
+     * which is a different conversation with different money in it.
+     */
+    public boolean isPreDispatch() {
+        return status == com.sujula.model.constant.VendorOrderStatus.PENDING
+                || status == com.sujula.model.constant.VendorOrderStatus.CONFIRMED
+                || status == com.sujula.model.constant.VendorOrderStatus.PROCESSING;
+    }
+
     /** Vendor-scoped coupon applied to this slice, if any. Snapshot survives coupon deletion. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "coupon_id")

@@ -35,4 +35,15 @@ public interface ReviewRepository extends JpaRepository<Review, Long> {
     @Query("SELECT r.rating, COUNT(r) FROM Review r WHERE r.product.id = :productId "
          + "GROUP BY r.rating ORDER BY r.rating DESC")
     List<Object[]> ratingHistogram(@Param("productId") Long productId);
+
+    /**
+     * Which products this reviewer has already reviewed.
+     *
+     * <p>Ids only, and only theirs. The buyer's order page needs to know which
+     * lines still offer a "write a review" button, and answering that by
+     * loading every review on the platform and filtering in Java is a table scan
+     * per page view.
+     */
+    @Query("SELECT r.product.id FROM Review r WHERE r.user.id = :userId AND r.product IS NOT NULL")
+    List<Long> findProductIdsReviewedBy(@Param("userId") Long userId);
 }

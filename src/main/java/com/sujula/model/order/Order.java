@@ -60,6 +60,23 @@ public class Order {
     @Column(unique = true, nullable = false)
     private String orderNumber;
 
+    /**
+     * The code the recipient tracks the parcel with.
+     *
+     * <p>Separate from {@link #orderNumber} and unguessable, because the two are
+     * shown to different people. The order number appears on invoices and in the
+     * buyer's account; this goes in an SMS to somebody who has no account, no
+     * app and no way to log in — the sister in Serrekunda who did not sign up for
+     * anything.
+     *
+     * <p>Anyone holding it can read the tracking page, which is exactly the
+     * point and exactly why the page carries no name, no address, no phone
+     * number and no prices. Possession is the only credential, so what it unlocks
+     * has to be safe for whoever ends up with it.
+     */
+    @Column(unique = true, length = 24)
+    private String trackingCode;
+
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "customer_id")          // nullable=true for guest checkout
@@ -516,6 +533,14 @@ public class Order {
 
 	public void setShippingLongitude(Double shippingLongitude) {
 		this.shippingLongitude = shippingLongitude;
+	}
+
+	public String getTrackingCode() {
+		return trackingCode;
+	}
+
+	public void setTrackingCode(String trackingCode) {
+		this.trackingCode = trackingCode;
 	}
 
 	public com.sujula.model.Address getShippingAddress() {

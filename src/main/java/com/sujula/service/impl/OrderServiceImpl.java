@@ -61,6 +61,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Objects;
@@ -147,6 +148,7 @@ public class OrderServiceImpl implements OrderService {
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
+                .trackingCode(newTrackingCode())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
                 .deliveryMode(DeliveryMode.HOME_DELIVERY)
@@ -220,6 +222,7 @@ public class OrderServiceImpl implements OrderService {
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
+                .trackingCode(newTrackingCode())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
                 .deliveryMode(mode)
@@ -269,6 +272,7 @@ public class OrderServiceImpl implements OrderService {
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
+                .trackingCode(newTrackingCode())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
                 .deliveryMode(DeliveryMode.HOME_DELIVERY)
@@ -340,6 +344,7 @@ public class OrderServiceImpl implements OrderService {
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
+                .trackingCode(newTrackingCode())
                 .guestName(request.getGuestName())
                 .guestEmail(request.getGuestEmail().toLowerCase().trim())
                 .guestPhone(request.getGuestPhone())
@@ -1353,8 +1358,32 @@ public class OrderServiceImpl implements OrderService {
         return address;
     }
 
+    private static final SecureRandom TRACKING_RANDOM = new SecureRandom();
+    private static final String TRACKING_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
+    private static final int TRACKING_CODE_LENGTH = 16;
+
     private static String newOrderNumber() {
         return "SJL-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    }
+
+    /**
+     * The code that lets somebody with no account follow their parcel.
+     *
+     * <p>Distinct from the order number on purpose. The order number is printed
+     * on invoices, quoted in support mail and guessable by anyone who has seen
+     * two of them; this is a bearer credential handed to a recipient over SMS,
+     * and the only thing standing between it and a stranger is that it cannot be
+     * arrived at by counting. So: {@link SecureRandom}, and eighty bits of it.
+     *
+     * <p>The alphabet omits I, L, O, U and every digit that looks like a letter,
+     * because this gets read aloud down a phone line as often as it gets tapped.
+     */
+    private static String newTrackingCode() {
+        StringBuilder code = new StringBuilder(TRACKING_CODE_LENGTH);
+        for (int i = 0; i < TRACKING_CODE_LENGTH; i++) {
+            code.append(TRACKING_ALPHABET.charAt(TRACKING_RANDOM.nextInt(TRACKING_ALPHABET.length())));
+        }
+        return code.toString();
     }
 
     private static String orderLevelCouponCode(CheckoutResult result) {

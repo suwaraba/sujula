@@ -190,6 +190,26 @@ public class SecurityConfig {
                         .requestMatchers("/carts", "/carts/**").permitAll()
                         .requestMatchers("/checkout", "/checkout/**").authenticated()
 
+                        // A buyer's own orders. Every method resolves the order
+                        // by id AND buyer in one query, so authentication here is
+                        // the outer gate rather than the whole check.
+                        .requestMatchers("/orders", "/orders/**").authenticated()
+                        // The two surfaces that serve somebody with no account.
+                        //
+                        // Tracking: the recipient has a phone number and an SMS,
+                        // and nothing else — no account to authenticate, no email
+                        // to click a link in. The code is the credential, and the
+                        // page is built to be worth nothing to a stranger holding
+                        // it: a city, parcel counts, and fixed phrases.
+                        //
+                        // Invoices: the token is an HMAC over one order id and an
+                        // expiry, minted only after ownership was proven on
+                        // /orders/{id}/invoice. Open, because an invoice
+                        // legitimately travels — to the recipient, to a bank, to
+                        // whoever is reimbursing the buyer.
+                        .requestMatchers(HttpMethod.GET, "/track/*").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/invoices/*").permitAll()
+
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to
                         // buy has not signed in yet, and these carry no private figures.

@@ -43,6 +43,36 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
         LocalDateTime getPlacedAt();
     }
 
+    /**
+     * One order, but only if it is this buyer's.
+     *
+     * <p>Ownership is the query. Loading by id and comparing the customer
+     * afterwards is the shape that eventually ships with the comparison missing,
+     * and an order carries an address, a phone number and what somebody spent.
+     */
+    @Query("SELECT o FROM Order o WHERE o.id = :id AND o.customer.id = :customerId")
+    Optional<Order> findByIdAndCustomerId(@Param("id") Long id, @Param("customerId") Long customerId);
+
+    /** The buyer's own orders, newest first, optionally narrowed by status. */
+    @Query(value = "SELECT o FROM Order o WHERE o.customer.id = :customerId "
+                 + "AND (:status IS NULL OR o.status = :status) ORDER BY o.createdAt DESC",
+           countQuery = "SELECT COUNT(o) FROM Order o WHERE o.customer.id = :customerId "
+                      + "AND (:status IS NULL OR o.status = :status)")
+    Page<Order> findForBuyer(@Param("customerId") Long customerId,
+                             @Param("status") OrderStatus status, Pageable pageable);
+
+    /**
+     * The order behind a public tracking code.
+     *
+     * <p>No ownership check, deliberately: the code is the credential, and the
+     * person holding it is a recipient who has no account to be checked against.
+     * What protects this is that the code is unguessable and the page it serves
+     * carries nothing worth stealing.
+     */
+    Optional<Order> findByTrackingCode(String trackingCode);
+
+    boolean existsByTrackingCode(String trackingCode);
+
     Optional<Order> findByOrderNumber(String orderNumber);
 
     Page<Order> findByStatus(OrderStatus status, Pageable pageable);

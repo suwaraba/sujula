@@ -675,7 +675,7 @@ INSERT INTO cart_coupons (id, cart_id, coupon_id, vendor_id, vendor_key, applied
 -- 1403  Aminata, GMD, single vendor, delivered and paid in person.
 
 INSERT INTO orders
- (id, order_number, customer_id, guest_name, guest_email, guest_phone, guest_session_id,
+ (id, order_number, tracking_code, customer_id, guest_name, guest_email, guest_phone, guest_session_id,
   status, subtotal, shipping_cost, tax_amount, discount, total, currency,
   coupon_id, coupon_code, payment_status, payment_method, paid_at,
   delivery_mode, pickup_point_id,
@@ -688,7 +688,7 @@ INSERT INTO orders
   loyalty_points_earned, loyalty_points_redeemed, loyalty_discount,
   gift_card_code, gift_card_discount, created_at, updated_at)
 VALUES
- (1401, 'SJL-SEED-0001', 1005, NULL, NULL, NULL, NULL,
+ (1401, 'SJL-SEED-0001', 'K7MPQ4RTVX2ND9YH', 1005, NULL, NULL, NULL, NULL,
   'CONFIRMED', 139.56, 4.13, 0.00, 13.96, 129.73, 'GBP',
   1080, 'TERANGA10', 'PAID', 'CARD', @NOW,
   'HOME_DELIVERY', NULL,
@@ -701,7 +701,7 @@ VALUES
   129, 0, 0.00,
   NULL, 0.00, @NOW, @NOW),
 
- (1402, 'SJL-SEED-0002', NULL, 'Binta Faal', 'binta.faal@example.gm', '+2203100010', 'c4d9e7a1-2f60-4b13-9a55-7e81d0c3b46f',
+ (1402, 'SJL-SEED-0002', 'B3WQHJ7FNXR5MTCD', NULL, 'Binta Faal', 'binta.faal@example.gm', '+2203100010', 'c4d9e7a1-2f60-4b13-9a55-7e81d0c3b46f',
   'PENDING', 2900.00, 150.00, 0.00, 0.00, 3050.00, 'GMD',
   NULL, NULL, 'PENDING', 'PAY_ON_DELIVERY', NULL,
   'HOME_DELIVERY', NULL,
@@ -714,7 +714,7 @@ VALUES
   0, 0, 0.00,
   NULL, 0.00, @NOW, @NOW),
 
- (1403, 'SJL-SEED-0003', 1004, NULL, NULL, NULL, NULL,
+ (1403, 'SJL-SEED-0003', 'Z9DKP2VMHT6RXQFB', 1004, NULL, NULL, NULL, NULL,
   'DELIVERED', 2500.00, 110.00, 0.00, 0.00, 2610.00, 'GMD',
   NULL, NULL, 'PAID', 'CASH_IN_STORE', @NOW,
   'PICKUP_POINT', 1096,
@@ -793,28 +793,29 @@ INSERT INTO vendor_orders
  (id, order_id, vendor_id, status, native_currency,
   subtotal_native, discount_native, total_native,
   commission_rate, commission_native, delivery_native, payout_native,
-  subtotal, discount, total, coupon_id, coupon_code, cancelled_at, created_at, updated_at,
+  subtotal, discount, total, coupon_id, coupon_code, cancelled_at,
+  receipt_confirmed_at, escrow_released_at, created_at, updated_at,
   fx_native_currency, fx_display_currency, fx_rate, fx_rate_at, fx_source, fx_quote_id)
 VALUES
  (1501, 1401, 1101, 'SHIPPED', 'GMD',
   11000.00, 1100.00, 9900.00,
   10.00, 990.00, 209.09, 8910.00,
-  121.00, 12.10, 108.90, NULL, NULL, NULL, @NOW, @NOW,
+  121.00, 12.10, 108.90, NULL, NULL, NULL, NULL, NULL, @NOW, @NOW,
   'GMD', 'GBP', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL),
  (1502, 1401, 1102, 'CONFIRMED', 'XOF',
   14500.00, 1450.00, 13050.00,
   12.50, 1631.25, 1429.69, 11418.75,
-  18.56, 1.86, 16.70, NULL, NULL, NULL, @NOW, @NOW,
+  18.56, 1.86, 16.70, NULL, NULL, NULL, NULL, NULL, @NOW, @NOW,
   'XOF', 'GBP', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL),
  (1503, 1402, 1101, 'PENDING', 'GMD',
   2900.00, 0.00, 2900.00,
   10.00, 290.00, 150.00, 2610.00,
-  2900.00, 0.00, 2900.00, NULL, NULL, NULL, @NOW, @NOW,
+  2900.00, 0.00, 2900.00, NULL, NULL, NULL, NULL, NULL, @NOW, @NOW,
   'GMD', 'GMD', 1.00000000, @NOW, 'IDENTITY', NULL),
  (1504, 1403, 1101, 'DELIVERED', 'GMD',
   2500.00, 0.00, 2500.00,
   10.00, 250.00, 110.00, 2250.00,
-  2500.00, 0.00, 2500.00, NULL, NULL, NULL, @NOW, @NOW,
+  2500.00, 0.00, 2500.00, NULL, NULL, NULL, @NOW, @NOW, @NOW, @NOW,
   'GMD', 'GMD', 1.00000000, @NOW, 'IDENTITY', NULL);
 
 -- ── order_items ─────────────────────────────────────────────────────────────
@@ -875,6 +876,38 @@ INSERT INTO coupon_usages (id, coupon_id, user_id, order_id, used_at) VALUES
  (1421, 1080, 1004, NULL, @NOW),
  (1422, 1082, 1004, NULL, @NOW);
 
+-- ── refund_requests ─────────────────────────────────────────────────────────
+-- What a buyer's cancellation actually produces. A refund is attached to ONE
+-- vendor_order, never to the order, because one seller pulling out of a
+-- multivendor basket does not refund the rest of it — 1450 below takes back
+-- Dakar Mobile's 16.70 GBP and leaves Banjul Electronics' 108.90 alone.
+--
+-- The status is REQUESTED, not COMPLETED, and that is the point: money leaving
+-- the platform is the one action no later API call can undo, so an
+-- administrator decides. Nothing in the buyer surface can move it further.
+--
+-- The fx_* columns are copied from the slice rather than looked up again. By
+-- the time a refund settles the published rate has moved, and re-deriving it
+-- would make what the buyer is given back and what the vendor is not paid stop
+-- agreeing — 13050 XOF is 16.70 GBP at the rate this order was placed at and at
+-- no other.
+
+INSERT INTO refund_requests
+ (id, reference, order_id, vendor_order_id, requested_by_user_id, status,
+  amount, currency, amount_native,
+  fx_native_currency, fx_display_currency, fx_rate, fx_rate_at, fx_source, fx_quote_id,
+  reason, decided_by_user_id, decided_at, decision_note, payment_id, completed_at, created_at)
+VALUES
+ (1450, 'RFN-SEED-0001', 1401, 1502, 1005, 'REQUESTED',
+  16.70, 'GBP', 13050.00,
+  'XOF', 'GBP', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL,
+  'Found the same phone locally.', NULL, NULL, NULL, NULL, NULL, @NOW);
+
+-- 1502 is left CONFIRMED above rather than CANCELLED on purpose: this is the
+-- state between a buyer asking and an administrator answering, which is where
+-- most refunds in a real queue actually sit. An admin surface that only ever
+-- sees already-cancelled slices has never been tested against it.
+
 -- ── deliveries ──────────────────────────────────────────────────────────────
 -- Keyed to an order ITEM, not an order: each product in a multivendor basket
 -- travels on its own. Seven tables model this module and no service or
@@ -918,7 +951,21 @@ INSERT INTO delivery_tracking (id, delivery_id, status, description, latitude, l
  (1714, 1700, 'AT_PICKUP_POINT',  'Dropped at Westfield Junction',     13.44290000, -16.67760000, 1007, @NOW),
  (1715, 1700, 'DELIVERED',        'Handed to the buyer, code verified',13.44290000, -16.67760000, 1008, @NOW),
  (1716, 1701, 'ASSIGNED',         'Assigned for the outbound leg',     13.43830000, -16.67810000, 1001, @NOW),
- (1717, 1701, 'IN_TRANSIT',       'With the international courier',    13.43830000, -16.67810000, 1007, @NOW);
+ (1717, 1701, 'IN_TRANSIT',       'With the international courier',    13.43830000, -16.67810000, 1007, @NOW),
+ (1718, 1700, 'DELIVERED',        'Receipt confirmed by the buyer',    NULL,        NULL,         1004, @NOW);
+
+-- 1718 is what POST /orders/{id}/vendor-orders/{voId}/confirm-receipt writes,
+-- and it is why that endpoint is not just a status flip: the buyer saying the
+-- goods arrived is itself a link in the custody chain, recorded in their name
+-- like every other handover. 1715 is the driver's account of the same moment
+-- and 1718 is the recipient's; the row that releases the money is the second
+-- one. It carries no coordinates because a buyer confirming from a phone in
+-- another country is not evidence of where the parcel is.
+--
+-- Note what these descriptions contain. A driver types free text into this
+-- column — 1712 names Ebrima — so GET /track/{code} never publishes it: the
+-- public page substitutes a fixed phrase per status, and that substitution is
+-- the only thing standing between a driver's note and a stranger with an SMS.
 
 -- ── proof_of_delivery ───────────────────────────────────────────────────────
 
@@ -1707,6 +1754,77 @@ COMMIT;
 --   half a kilometre and costs 4.13; move the delivery context further away or
 --   add a heavier product and it rises. Collecting from the vendor is zero,
 --   because nothing is delivered.
+--
+--   ── The buyer's own orders ───────────────────────────────────────────────
+--
+--     GET  /orders                                       Oliver sees 1401
+--     GET  /orders/1401                                  grouped by seller
+--     GET  /orders/1401/tracking                          one timeline each
+--     GET  /orders/1401/invoice                           a signed, expiring link
+--
+--   Sign in as Oliver and 1401 is his; ask for it as Aminata and it is a 404
+--   rather than a 403, because "forbidden" confirms the order exists.
+--
+--   Order 1401 is the shape this marketplace has, in one row: paid in GBP from
+--   London, two sellers settling in GMD and XOF, delivering to a UK address.
+--   The detail response groups it by seller and each group totals on its own.
+--
+--   ── Cancelling ───────────────────────────────────────────────────────────
+--
+--     POST /orders/1401/cancel                            refused
+--     POST /orders/1401/vendor-orders/1502/cancel         allowed
+--
+--   The first is refused and names Lamin's store: slice 1501 is SHIPPED, and
+--   stopping an order whose goods are already with a courier is a return rather
+--   than a cancellation. The second is allowed because 1502 is still CONFIRMED,
+--   and it leaves 1501 exactly where it was — that is C3, and it is worth
+--   checking rather than assuming.
+--
+--   What comes back is a refund REQUEST, not a refund: 16.70 GBP against slice
+--   1502 alone, waiting on an administrator. Money leaving the platform is the
+--   one action no later API call can undo, so nothing in the buyer surface
+--   completes it.
+--
+--   Row 1450 is that request, seeded before you make the call — which makes the
+--   cancel above a test of something else as well. Ask twice and there is still
+--   one row: a buyer who taps cancel, sees nothing happen on a slow connection
+--   and taps again must not end up with two refunds queued against the same
+--   goods, one of which an administrator approves after the other has paid.
+--
+--   Note what 1450 carries: the slice's own rate, copied rather than looked up
+--   again. 13050 XOF is 16.70 GBP at the rate this order was placed at and at
+--   no other, and a refund priced at today's rate would hand the buyer a
+--   different number from the one the vendor is not being paid.
+--
+--   ── Receipt and escrow ───────────────────────────────────────────────────
+--
+--     POST /orders/1403/vendor-orders/1504/confirm-receipt
+--
+--   Slice 1504 is already confirmed and released in this file, so the call
+--   answers idempotently. What it writes when it does fire is row 1718 in
+--   delivery_tracking: the buyer's own statement that the goods arrived,
+--   recorded in their name, next to the driver's account of the same moment in
+--   1715. The status is the consequence of that row rather than the input to
+--   it — which is the whole difference between a custody chain and a status
+--   field somebody can set.
+--
+--   ── The page for somebody with no account ────────────────────────────────
+--
+--     GET /track/K7MPQ4RTVX2ND9YH      order 1401
+--     GET /track/B3WQHJ7FNXR5MTCD      order 1402, the guest order
+--     GET /track/Z9DKP2VMHT6RXQFB      order 1403
+--
+--   No token, no account, no sign-in. This is the sister in Serrekunda with a
+--   text message and nothing else, and the codes are sixteen characters from a
+--   thirty-symbol alphabet because possession of one is the only credential.
+--
+--   Compare it against GET /orders/1401/tracking, which is the same parcels for
+--   the person who paid. The public page has no name, no street, no phone
+--   number, no price and no order number — and its event descriptions are fixed
+--   phrases, not the driver's free text. Row 1712 says "Assigned to Ebrima
+--   Bojang"; the public page says "A driver has been assigned." That
+--   substitution is the only thing between a driver's notes and a stranger who
+--   was forwarded the SMS.
 --
 --   And one thing you cannot do: move a vendor order to DELIVERED through the
 --   API. Order 1403 is delivered only because this file wrote it that way.
