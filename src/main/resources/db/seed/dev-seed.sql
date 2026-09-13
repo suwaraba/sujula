@@ -1,7 +1,7 @@
 -- ============================================================================
 --  Sujula development seed
 -- ============================================================================
---  Populates all 48 tables with one coherent, related dataset. Run it by hand;
+--  Populates all 50 tables with one coherent, related dataset. Run it by hand;
 --  it is deliberately NOT auto-loaded on startup, because seed data appearing
 --  in a database by surprise is worse than typing one command, and this file
 --  deletes before it inserts.
@@ -49,6 +49,10 @@
 --      'product_condition'"
 --      — the database predates the public catalogue layer.
 --
+--      "Table 'sujula.cart_quotes' doesn't exist", or "Unknown column
+--      'token'" / "'delivery_context_id'" on carts
+--      — the database predates addressable carts and held quotes.
+--
 --      "Table 'sujula.notifications' doesn't exist"
 --      — the schema predates the `read` -> `is_read` fix. `read` is reserved in
 --      MySQL, so that CREATE TABLE failed, and Hibernate logged it and carried
@@ -57,7 +61,7 @@
 --  To see what is actually there:
 --
 --      SELECT table_name FROM information_schema.tables
---       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 48
+--       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 50
 --
 --  ── Conventions ────────────────────────────────────────────────────────────
 --
@@ -151,6 +155,8 @@ START TRANSACTION;
 -- Reverse foreign-key order. No FOREIGN_KEY_CHECKS=0 anywhere: if this order
 -- is wrong the database says so, which is the point.
 
+DELETE FROM cart_quote_lines       WHERE id >= 1000;
+DELETE FROM cart_quotes            WHERE id LIKE 'seed-%';
 DELETE FROM product_questions      WHERE id >= 1000;
 DELETE FROM fx_quotes              WHERE id LIKE 'seed-%';
 DELETE FROM idempotency_records    WHERE id >= 1000;
@@ -390,9 +396,24 @@ INSERT INTO audit_logs (id, action, actor_user_id, actor_email, actor_name, targ
 -- 1070 belongs to a signed-in buyer and never expires. 1071 is a guest cart,
 -- identified by the HttpOnly cookie the server issued, with a TTL.
 
-INSERT INTO carts (id, user_id, session_id, display_currency, expires_at, created_at, updated_at) VALUES
- (1070, 1004, NULL, 'GMD', NULL, @NOW, @NOW),
- (1071, NULL, 'a7f3c1e2-9b84-4d55-8e10-2c6f7b0d91aa', 'GBP', '2026-09-19 09:00:00.000000', @NOW, @NOW);
+-- `token` is how /carts/{token} addresses a basket, and for a guest it is the
+-- whole of their claim to it: a cart holds a destination, a list of what
+-- somebody is buying and for whom, and what they are about to spend. Real ones
+-- are 256 bits of base64url; the readable ones here exist so the DELETE block
+-- can find them.
+--
+-- `delivery_context_id` is where the goods go, and it is deliberately separate
+-- from `display_currency`. Cart 1071 is the case this marketplace exists for:
+-- priced in sterling because the payer holds a UK card, delivering to
+-- Serrekunda because that is where the parcel is going. Neither field may be
+-- derived from the other.
+
+INSERT INTO carts (id, user_id, session_id, token, display_currency, delivery_context_id,
+                   expires_at, created_at, updated_at) VALUES
+ (1070, 1004, NULL, 'seed-cart-aminata', 'GMD', 'seed-ctx-aminata-home',
+  NULL, @NOW, @NOW),
+ (1071, NULL, 'a7f3c1e2-9b84-4d55-8e10-2c6f7b0d91aa', 'seed-cart-guest-gbp', 'GBP',
+  'seed-ctx-aminata-home', '2026-09-19 09:00:00.000000', @NOW, @NOW);
 
 -- ── coupons ─────────────────────────────────────────────────────────────────
 -- Checkout honours these and applies vendor-scoped ones only to that vendor's
@@ -1234,6 +1255,86 @@ VALUES
   1003, '2026-09-09 16:00:00.000000', '2026-09-09 12:00:00.000000', 1001,
   NULL, NULL, '2026-09-09 11:30:00.000000');
 
+-- ── cart_quotes and cart_quote_lines ────────────────────────────────────────
+-- A priced cart, held still long enough to be paid for.
+--
+-- Between seeing a total and finishing a card form a shopper spends a minute or
+-- two, and in that time the exchange rate, the listed price and the stock all
+-- move independently. A checkout that re-priced from the live catalogue would
+-- show one figure and take another — which is the most corrosive thing a
+-- marketplace can do to someone who has just sent a month's income to a country
+-- they are not in.
+--
+-- Each line records the rate it was quoted at, so "you were charged this because
+-- the phone is 8500 dalasi and the rate was 0.011" is answerable from one row.
+
+INSERT INTO cart_quotes
+ (id, cart_id, user_id, cart_fingerprint, display_currency, delivery_context_id,
+  delivery_mode, pickup_point_id, subtotal, discount, shipping, tax, total,
+  complete, created_at, expires_at, consumed_order_id, consumed_at)
+VALUES
+ -- Live and payable: the guest cart, in sterling, going to Serrekunda.
+ ('seed-quote-live', 1071, NULL,
+  '53ce845d43342eb1f2095345bb29048b3db34fed0389d130ca5056223875b857',
+  'GBP', 'seed-ctx-aminata-home', 'HOME_DELIVERY', NULL,
+  93.50, 0.00, 4.13, 0.00, 97.63, TRUE, @NOW, @SOON, NULL, NULL),
+
+ -- Already spent on order 1401. Kept rather than deleted: months from now this
+ -- is the evidence of what the buyer actually agreed to.
+ ('seed-quote-consumed', 1070, 1004,
+  '9c4517988c88c4fafbd8405a895549829f4531292b7677a036b32553054832b7',
+  'GMD', 'seed-ctx-aminata-home', 'PICKUP_POINT', 1096,
+  2500.00, 0.00, 110.00, 0.00, 2610.00, TRUE,
+  '2026-09-12 08:30:00.000000', @FUTURE, 1403, '2026-09-12 08:35:00.000000'),
+
+ -- Past its window. POST /checkout with it is a 404, not a 410: an expired
+ -- bearer credential and one that never existed should look the same.
+ ('seed-quote-expired', 1071, NULL,
+  '53ce845d43342eb1f2095345bb29048b3db34fed0389d130ca5056223875b857',
+  'GBP', 'seed-ctx-aminata-home', 'HOME_DELIVERY', NULL,
+  93.50, 0.00, 4.13, 0.00, 97.63, TRUE,
+  '2026-09-12 07:00:00.000000', @LAPSED, NULL, NULL),
+
+ -- Unpriceable: one vendor's currency had no rate. It exists so a client can
+ -- show what is wrong, and checkout refuses it — a total that silently omitted
+ -- a vendor's goods would undercharge and the platform would owe the difference.
+ ('seed-quote-incomplete', 1071, NULL,
+  '0feca479f6af39a1826b9a72484c956aba1d9280f68c87a0573003ecdb5c82c8',
+  'SEK', 'seed-ctx-aminata-home', 'HOME_DELIVERY', NULL,
+  0.00, 0.00, 0.00, 0.00, 0.00, FALSE, @NOW, @SOON, NULL, NULL);
+
+INSERT INTO cart_quote_lines
+ (id, quote_id, product_id, variant_id, vendor_id, quantity,
+  listing_currency, unit_price_native, line_total_native, unit_price, line_total,
+  delivery_cost, distance_km, billable_weight_kg, deliverable, issue,
+  fx_native_currency, fx_display_currency, fx_rate, fx_rate_at, fx_source, fx_quote_id)
+VALUES
+ -- 8500 GMD x 0.011 = 93.50 GBP, which is what the quote's subtotal says. A
+ -- stored rate that does not reproduce the stored amount is decoration.
+ (1950, 'seed-quote-live', 1301, 1350, 1101, 1,
+  'GMD', 8500.00, 8500.00, 93.50, 93.50,
+  4.13, 0.500, 0.195, TRUE, NULL,
+  'GMD', 'GBP', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL),
+
+ -- Same currency both sides, so IDENTITY rather than a null: "no conversion
+ -- applied" is a fact, not an absence.
+ (1951, 'seed-quote-consumed', 1303, NULL, 1101, 2,
+  'GMD', 1250.00, 2500.00, 1250.00, 2500.00,
+  110.00, 0.500, 2.480, TRUE, NULL,
+  'GMD', 'GMD', 1.00000000, '2026-09-12 08:30:00.000000', 'IDENTITY', NULL),
+
+ (1952, 'seed-quote-expired', 1301, 1350, 1101, 1,
+  'GMD', 8500.00, 8500.00, 93.50, 93.50,
+  4.13, 0.500, 0.195, TRUE, NULL,
+  'GMD', 'GBP', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL),
+
+ -- No rate into SEK, so no converted figures and no snapshot. Recording a rate
+ -- here would be a fiction that looked like evidence.
+ (1953, 'seed-quote-incomplete', 1301, 1350, 1101, 1,
+  'GMD', 8500.00, 8500.00, NULL, NULL,
+  0.00, NULL, 0.195, TRUE, 'No exchange rate from GMD to SEK.',
+  NULL, NULL, NULL, NULL, NULL, NULL);
+
 COMMIT;
 
 -- ── What you now have ───────────────────────────────────────────────────────
@@ -1540,6 +1641,72 @@ COMMIT;
 --     POST /products/1301/questions   {"question":"..."}   signed in
 --
 --   returns 202 and PENDING_REVIEW. It does not appear on the listing.
+--
+--   ── The basket, and the two things it holds separately ───────────────────
+--
+--     GET /carts/seed-cart-guest-gbp
+--
+--   comes back grouped by store, each group with its own shipping and each line
+--   with its own delivery leg — because a multivendor basket has no single
+--   origin, and two sellers in two towns ship two parcels.
+--
+--   That cart is priced in GBP and delivers to Serrekunda. Those are two fields
+--   because they are two questions, and the endpoints that set them are two
+--   endpoints for the same reason:
+--
+--     PUT /carts/{token}/delivery-context   moves the parcel; re-prices shipping
+--     PUT /carts/{token}/currency           moves the prices; touches no delivery
+--
+--   Change one and watch the other stay put. That is C1 on the basket.
+--
+--   ── Quotes ───────────────────────────────────────────────────────────────
+--
+--     POST /carts/seed-cart-guest-gbp/quote
+--
+--   prices the cart and holds the figures for fifteen minutes, freezing the rate
+--   each line was converted at. Checkout is given the quote's id and reconciles
+--   against it: if the price moved, nothing is charged and the buyer is asked to
+--   re-quote.
+--
+--   Four are seeded, one per state a client has to handle:
+--
+--     seed-quote-live         payable now
+--     seed-quote-consumed     already spent on order 1403, and kept — months
+--                             from now this is the evidence of what the buyer
+--                             agreed to
+--     seed-quote-expired      past its window; POST /checkout with it is a 404,
+--                             not a 410
+--     seed-quote-incomplete   one vendor's currency had no rate. It exists so a
+--                             client can show what is wrong, and checkout
+--                             refuses it: a total that silently dropped a
+--                             vendor's goods would undercharge and the platform
+--                             would owe the difference
+--
+--   Check the arithmetic yourself: 8500 GMD x 0.011 = 93.50 GBP, which is what
+--   seed-quote-live's subtotal says. A stored rate that does not reproduce the
+--   stored amount is decoration rather than evidence.
+--
+--   ── Checkout ─────────────────────────────────────────────────────────────
+--
+--     POST /checkout   {"quoteId":"...","addressId":1050,"paymentMethod":"CARD"}
+--       Idempotency-Key: <a new value per attempt>
+--
+--   validates, reserves stock, creates the order and its per-vendor sub-orders,
+--   and opens a payment intent — in that order. Send the same key twice and the
+--   second call is answered from the first rather than placing a second order,
+--   which on a mobile network is a certainty rather than a risk.
+--
+--   The response carries the sub-orders, not just the order. That is the shape
+--   the thing actually has: one payment, several slices that ship, cancel,
+--   refund and pay out independently. A client rendering one order with one
+--   status will eventually be wrong about half of it.
+--
+--   ── Delivery price ───────────────────────────────────────────────────────
+--
+--   Distance and weight, independently. Cart 1071's line is 0.195 kg travelling
+--   half a kilometre and costs 4.13; move the delivery context further away or
+--   add a heavier product and it rises. Collecting from the vendor is zero,
+--   because nothing is delivered.
 --
 --   And one thing you cannot do: move a vendor order to DELIVERED through the
 --   API. Order 1403 is delivered only because this file wrote it that way.

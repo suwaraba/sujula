@@ -43,6 +43,21 @@ public class Cart {
     @Column(unique = true, length = 36)
     private String sessionId;
 
+    /**
+     * The public handle, and for a guest the whole of their claim to this cart.
+     *
+     * <p>{@code /carts/{token}} is addressed by this rather than by the numeric
+     * id, which would let anyone read the next shopper's basket by adding one.
+     * The cart holds names, a delivery destination and what somebody is about to
+     * spend — enumerable is not an option.
+     *
+     * <p>Distinct from {@code sessionId}, which is the cookie the browser keeps.
+     * A shopper who moves from a phone to a laptop has a new cookie and the same
+     * cart if they carry the token; the two answer different questions.
+     */
+    @Column(unique = true, length = 64)
+    private String token;
+
     @OneToMany(mappedBy = "cart", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @Builder.Default
     private List<CartItem> items = new ArrayList<>();
@@ -62,6 +77,24 @@ public class Cart {
     @OneToMany(mappedBy = "cart", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @Builder.Default
     private List<CartCoupon> appliedCoupons = new ArrayList<>();
+
+    /**
+     * Where the goods in this cart are going.
+     *
+     * <p>The id of a delivery context, and the reason shipping can be priced at
+     * all: delivery costs depend on the distance a parcel travels and the weight
+     * it carries, neither of which is knowable until somebody says where it is
+     * going.
+     *
+     * <p>Deliberately independent of {@link #displayCurrency}. A buyer in Madrid
+     * sending to Serrekunda sets this to Serrekunda and keeps paying in euro —
+     * the two fields answer different questions and nothing here may derive one
+     * from the other.
+     *
+     * <p>Null until the shopper says, which is most of a browsing session.
+     */
+    @Column(length = 64)
+    private String deliveryContextId;
 
     /** TTL for guest carts. Null for user carts, which never expire. */
     private LocalDateTime expiresAt;

@@ -109,7 +109,8 @@ public class SecurityConfig {
                         .ignoringRequestMatchers("/api/payments/callback", "/auth/**", "/me/**",
                                                  "/geo/**", "/delivery/**", "/delivery-contexts",
                                                  "/delivery-contexts/**",
-                                                 "/currencies", "/currencies/**"))
+                                                 "/currencies", "/currencies/**",
+                                                 "/carts", "/carts/**", "/checkout", "/checkout/**"))
                 .authorizeHttpRequests(auth -> {
                     if (docsEnabled) {
                         auth.requestMatchers(
@@ -174,6 +175,20 @@ public class SecurityConfig {
                                 "/products", "/products/**",
                                 "/stores/**", "/brands",
                                 "/search", "/search/**").permitAll()
+
+                        // ── Basket and checkout ──────────────────────────────
+                        // Filling a basket is open to guests: on this
+                        // marketplace most baskets are filled before anybody
+                        // signs in, and a cart that demanded a login first is a
+                        // cart most people never fill. The token is the
+                        // credential, and a cart bound to an account is readable
+                        // only by that account.
+                        //
+                        // Paying is not open. An order needs an owner — the
+                        // refund, the status poll and the retry all resolve
+                        // through it.
+                        .requestMatchers("/carts", "/carts/**").permitAll()
+                        .requestMatchers("/checkout", "/checkout/**").authenticated()
 
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to

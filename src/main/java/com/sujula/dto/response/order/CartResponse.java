@@ -50,7 +50,30 @@ public class CartResponse {
 
     private BigDecimal subtotal;
     private BigDecimal discount;
+
+    /**
+     * Sum of the per-line delivery legs, in the display currency.
+     *
+     * <p>Zero until the shopper says where the goods are going. Delivery is
+     * priced from the distance a parcel travels and the weight it carries, and
+     * neither is knowable before there is a destination — so an unpriced cart
+     * shows no shipping rather than a guess.
+     */
+    private BigDecimal shipping;
+
     private BigDecimal total;
+
+    /**
+     * The delivery context this cart is priced against.
+     *
+     * <p>Echoed back so a client can show "delivering to Serrekunda" and so the
+     * separation from {@code displayCurrency} is visible in the payload: they
+     * are two fields because they answer two questions.
+     */
+    private String deliveryContextId;
+
+    /** False when some line cannot reach the destination. */
+    private Boolean deliverable;
 
     private int itemCount;
     private int lineCount;
@@ -96,7 +119,20 @@ public class CartResponse {
         // The same amounts in the cart's display currency
         private BigDecimal subtotal;
         private BigDecimal discount;
+
+        /**
+         * What it costs to get this seller's goods to the destination.
+         *
+         * <p>Per group because that is how it is incurred: a multivendor basket
+         * has no single origin, and two sellers in two towns ship two parcels.
+         * Null until the cart has somewhere to deliver to.
+         */
+        private BigDecimal shipping;
+
         private BigDecimal total;
+
+        /** False when something from this seller cannot reach the destination. */
+        private Boolean deliverable;
 
         /** Vendor-scoped coupon applied to this group, if any. */
         private String vendorCouponCode;
@@ -150,6 +186,26 @@ public class CartResponse {
          * moved the price since this line was added.
          */
         private BigDecimal previousUnitPriceNative;
+
+        /**
+         * This line's own delivery leg, in the display currency.
+         *
+         * <p>Priced per product rather than apportioned from an order total,
+         * because each travels its own distance carrying its own weight.
+         */
+        private BigDecimal deliveryCost;
+
+        /** How far this product travels to the destination. */
+        private BigDecimal distanceKm;
+
+        /**
+         * Whether this specific product can reach the destination.
+         *
+         * <p>Per line, because on a multivendor cart the answer differs between
+         * lines and a shopper needs to know which item is the problem — not
+         * merely that "the cart" cannot be delivered.
+         */
+        private Boolean deliverable;
 
         /** True when this line can be checked out as-is. */
         private boolean purchasable;

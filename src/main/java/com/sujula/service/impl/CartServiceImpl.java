@@ -29,7 +29,14 @@ import com.sujula.service.CartService;
 import com.sujula.service.ExchangeRateService;
 import com.sujula.service.cart.CartOwner;
 import com.sujula.service.cart.CartProvisioner;
+import com.sujula.model.constant.DeliveryScope;
+import com.sujula.model.delivery.DeliveryContext;
+import com.sujula.service.delivery.DeliveryDestination;
+import com.sujula.service.delivery.DeliveryItem;
+import com.sujula.service.delivery.DeliveryQuote;
+import com.sujula.service.DeliveryPricingService;
 import com.sujula.service.cart.RateTable;
+import com.sujula.service.delivery.DeliveryContextService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +51,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -88,6 +96,8 @@ public class CartServiceImpl implements CartService {
     private final CouponUsageRepository couponUsageRepository;
     private final ExchangeRateService exchangeRateService;
     private final CartProvisioner cartProvisioner;
+    private final DeliveryPricingService deliveryPricingService;
+    private final DeliveryContextService deliveryContexts;
 
     @Value("${sujula.cart.guest-ttl-days:7}")
     private int guestTtlDays;
@@ -820,10 +830,20 @@ public class CartServiceImpl implements CartService {
 
         applyDiscounts(cart, groups, rates);
 
+        // Delivery last, and only when there is somewhere to deliver to. A
+        // parcel's price comes from how far it travels and what it weighs, so
+        // before a destination exists there is nothing to compute — and a
+        // guessed figure that later moves is worse than an absent one.
+        applyDeliveryPricing(cart, groups, currency);
+
         boolean totalsComplete = groups.stream().allMatch(VendorGroup::isConvertible);
 
         BigDecimal subtotal = sum(groups, VendorGroup::getSubtotal);
         BigDecimal discount = sum(groups, VendorGroup::getDiscount);
+        BigDecimal shipping = sum(groups, group ->
+                group.getShipping() == null ? BigDecimal.ZERO : group.getShipping());
+        boolean deliverable = groups.stream()
+                .allMatch(group -> group.getDeliverable() == null || group.getDeliverable());
 
         return CartResponse.builder()
                 .cartId(cart.getId())
@@ -835,13 +855,137 @@ public class CartServiceImpl implements CartService {
                 .vendors(groups)
                 .subtotal(subtotal)
                 .discount(discount)
-                .total(subtotal.subtract(discount))
+                .shipping(shipping)
+                .total(subtotal.subtract(discount).add(shipping))
+                .deliveryContextId(cart.getDeliveryContextId())
+                .deliverable(cart.getDeliveryContextId() == null ? null : deliverable)
                 .itemCount(cart.getItems().stream().mapToInt(CartItem::getQuantity).sum())
                 .lineCount(cart.getItems().size())
                 .platformCouponCode(cart.platformCoupon()
                         .map(cc -> cc.getCoupon().getCode()).orElse(null))
                 .issues(cartIssues.isEmpty() ? null : cartIssues)
                 .build();
+    }
+
+    /**
+     * Prices each line's delivery leg and folds the result into its group.
+     *
+     * <p>Per product, not per order. A multivendor basket has no single origin:
+     * two lines can leave from two towns, weigh different amounts and ship under
+     * different scopes, so each is quoted on its own distance and weight. The
+     * group's shipping is the sum of its lines, and the cart's is the sum of the
+     * groups — which is what makes per-vendor payout and per-line cancellation
+     * able to account for delivery later on.
+     *
+     * <p>Does nothing without a delivery context. Shipping is a function of where
+     * the goods are going, and before a shopper says, the honest answer is no
+     * figure rather than a placeholder that changes under them.
+     *
+     * <p>Best effort: a delivery quote that cannot be produced leaves the cart
+     * priced without shipping and readable rather than failing the whole read.
+     * Checkout is where an unpriceable delivery has to stop things.
+     */
+    private void applyDeliveryPricing(Cart cart, List<VendorGroup> groups, String currency) {
+        if (cart.getDeliveryContextId() == null || cart.getDeliveryContextId().isBlank()) {
+            return;
+        }
+
+        DeliveryContext destination;
+        try {
+            Long userId = cart.getUser() != null ? cart.getUser().getId() : null;
+            destination = deliveryContexts.require(cart.getDeliveryContextId(), userId);
+        } catch (RuntimeException e) {
+            // The context expired or was never valid. The cart still reads; the
+            // shopper is asked for a destination again.
+            log.info("[Cart] Delivery context {} is no longer usable: {}",
+                    cart.getDeliveryContextId(), e.getMessage());
+            return;
+        }
+
+        DeliveryDestination to = new DeliveryDestination(
+                destination.getLatitude(), destination.getLongitude(),
+                destination.getAddressLine(), destination.getCity(), destination.getState(),
+                destination.getPostalCode(), destination.getCountryCode());
+
+        // Flattened in the same order the legs come back in, so a leg can be
+        // matched to the line that produced it by position.
+        List<CartItem> lines = new ArrayList<>();
+        Map<Long, CartItem> byItemId = new LinkedHashMap<>();
+        for (CartItem item : cart.getItems()) {
+            if (item.getProduct() != null) {
+                lines.add(item);
+                byItemId.put(item.getId(), item);
+            }
+        }
+        if (lines.isEmpty()) {
+            return;
+        }
+
+        DeliveryQuote quote;
+        try {
+            quote = deliveryPricingService.quote(
+                    lines.stream()
+                            .map(item -> DeliveryItem.of(item.getProduct(), item.getQuantity()))
+                            .toList(),
+                    to, destination.getMode(), currency);
+        } catch (RuntimeException e) {
+            log.info("[Cart] Could not price delivery for cart {}: {}", cart.getId(), e.getMessage());
+            return;
+        }
+
+        Map<Long, BigDecimal> costByItem = new HashMap<>();
+        Map<Long, BigDecimal> distanceByItem = new HashMap<>();
+        for (int i = 0; i < lines.size() && i < quote.legs().size(); i++) {
+            DeliveryQuote.DeliveryLeg leg = quote.legs().get(i);
+            costByItem.put(lines.get(i).getId(), leg.cost());
+            distanceByItem.put(lines.get(i).getId(), leg.distanceKm());
+        }
+
+        for (VendorGroup group : groups) {
+            BigDecimal groupShipping = BigDecimal.ZERO;
+            boolean groupDeliverable = true;
+
+            for (CartResponse.CartItemResponse line : group.getItems()) {
+                BigDecimal cost = costByItem.get(line.getItemId());
+                line.setDeliveryCost(cost);
+                line.setDistanceKm(distanceByItem.get(line.getItemId()));
+
+                CartItem item = byItemId.get(line.getItemId());
+                boolean reachable = item == null || reaches(item, destination);
+                line.setDeliverable(reachable);
+                if (!reachable) {
+                    groupDeliverable = false;
+                }
+                if (cost != null) {
+                    groupShipping = groupShipping.add(cost);
+                }
+            }
+
+            group.setShipping(groupShipping);
+            group.setDeliverable(groupDeliverable);
+            if (group.getTotal() != null) {
+                group.setTotal(group.getTotal().add(groupShipping));
+            }
+        }
+    }
+
+    /**
+     * Whether this product can reach the destination at all.
+     *
+     * <p>Scope rather than distance: a listing marked regional is one the seller
+     * will not send across a border, however short the journey. Answered per line
+     * because a shopper needs to know which item is the problem.
+     */
+    private static boolean reaches(CartItem item, DeliveryContext destination) {
+        Product product = item.getProduct();
+        if (product == null || product.getDeliveryScope() == null) {
+            return true;
+        }
+        if (product.getDeliveryScope() == DeliveryScope.GLOBAL) {
+            return true;
+        }
+        String to = destination.getCountryCode();
+        return to == null || to.equalsIgnoreCase(product.getCountry());
     }
 
     private List<VendorGroup> buildVendorGroups(Cart cart, RateTable rates,
