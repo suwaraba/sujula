@@ -88,4 +88,37 @@ public interface HandoverCodeRepository extends JpaRepository<HandoverCode, Long
          + "AND h.codeType = com.sujula.model.constant.HandoverCodeType.VENDOR_RELEASE "
          + "AND h.used = FALSE AND h.invalidatedAt IS NULL")
     List<HandoverCode> findLiveReleaseCodes(@Param("vendorOrderId") Long vendorOrderId);
+
+    // ── Shipment codes ───────────────────────────────────────────────────────
+
+    /**
+     * The codes that would open this handover right now.
+     *
+     * <p>Used, invalidated and expired are all filtered in the query rather than
+     * afterwards, because a check after the fact is the one that ships missing —
+     * and here the thing it would let through is a parcel.
+     *
+     * <p>Returns a list rather than one row on purpose: there should be a single
+     * live code, but "should" is not a guarantee across two concurrent issues,
+     * and a caller that silently took the first would let the other keep working.
+     */
+    @Query("SELECT h FROM HandoverCode h WHERE h.shipment.id = :shipmentId "
+         + "AND h.codeType = :codeType AND h.used = FALSE AND h.invalidatedAt IS NULL "
+         + "AND h.expiresAt > :now ORDER BY h.createdAt DESC")
+    List<HandoverCode> findLiveForShipment(@Param("shipmentId") Long shipmentId,
+                                           @Param("codeType") HandoverCodeType codeType,
+                                           @Param("now") LocalDateTime now);
+
+    /**
+     * How many codes of a kind have been issued for a parcel lately.
+     *
+     * <p>What the rate limit on asking for a recipient's code reads. Counts the
+     * rows rather than a counter, so nothing that forgets to increment can reset
+     * it — and so a driver cannot get the buyer emailed repeatedly.
+     */
+    @Query("SELECT COUNT(h) FROM HandoverCode h WHERE h.shipment.id = :shipmentId "
+         + "AND h.codeType = :codeType AND h.createdAt > :since")
+    long countForShipmentSince(@Param("shipmentId") Long shipmentId,
+                               @Param("codeType") HandoverCodeType codeType,
+                               @Param("since") LocalDateTime since);
 }

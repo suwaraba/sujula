@@ -44,4 +44,20 @@ public interface EmailService {
     void sendDriverDeliveryAssignedEmail(String toEmail, String fullName, String trackingNumber, BigDecimal earningAmount);
 
     void sendDriverDeliveryRemovedEmail(String toEmail, String fullName, String trackingNumber);
+
+    /**
+     * Sends the recipient's collection code to the person who paid.
+     *
+     * <p>To the buyer, not the recipient, and deliberately. The person receiving
+     * the parcel may have no account, no app and no email — she is the sister in
+     * Serrekunda, and she did not sign up for anything (C5). The person who paid
+     * has all three, and passing on a number is exactly what somebody sending
+     * money home already does.
+     *
+     * @param recipientName who the parcel is for, so the buyer knows which one
+     * @param code          the six digits the recipient reads to the driver
+     */
+    void sendRecipientReleaseCode(String toEmail, String buyerName, String recipientName,
+                                  String orderNumber, String code,
+                                  java.time.LocalDateTime expiresAt);
 }

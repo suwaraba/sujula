@@ -313,4 +313,26 @@ public class EmailServiceImpl implements EmailService {
         if (atIdx <= 0) return "***";
         return email.charAt(0) + "***" + email.substring(atIdx);
     }
+
+    @Async
+    @Override
+    public void sendRecipientReleaseCode(String toEmail, String buyerName, String recipientName,
+                                         String orderNumber, String code,
+                                         java.time.LocalDateTime expiresAt) {
+        send(toEmail,
+                "Collection code for order " + orderNumber,
+                "Hi " + (buyerName == null ? "there" : buyerName) + ",\n\n"
+                + "Your parcel for " + (recipientName == null ? "the recipient" : recipientName)
+                + " is out for delivery.\n\n"
+                + "COLLECTION CODE: " + code + "\n\n"
+                + "Pass this code to them. The driver will ask for it and cannot hand the parcel "
+                + "over without it — it is what proves the right person received it.\n\n"
+                + "They do not need an account, an app or an email of their own. They only need "
+                + "to read these six digits to the driver.\n\n"
+                + "The code stops working on " + expiresAt + ". If the delivery is missed, ask for "
+                + "a new one rather than reusing this.\n\n"
+                + "Do not post this code anywhere public. Anyone who has it can collect the "
+                + "parcel.\n\n"
+                + "The Sujula Team");
+    }
 }

@@ -172,6 +172,13 @@ DELETE FROM product_translations    WHERE id >= 1000;
 -- before either of them.
 -- The ledger references vendor_orders, payouts and users, so it clears before
 -- any of them.
+-- Custody events reference shipments and legs; legs reference shipments and
+-- drivers; handover codes now reference legs as well as deliveries. Children
+-- first, as everywhere else here.
+DELETE FROM handover_codes          WHERE id >= 1000;
+DELETE FROM custody_events          WHERE id >= 1000;
+DELETE FROM shipment_legs           WHERE id >= 1000;
+DELETE FROM shipments               WHERE id >= 1000;
 DELETE FROM vendor_ledger_entries   WHERE id >= 1000;
 DELETE FROM product_view_stats      WHERE id >= 1000;
 DELETE FROM refund_requests         WHERE id >= 1000;
@@ -191,7 +198,6 @@ DELETE FROM phone_verifications    WHERE id >= 1000;
 DELETE FROM oauth_accounts         WHERE id >= 1000;
 DELETE FROM mfa_recovery_codes     WHERE id >= 1000;
 DELETE FROM user_sessions          WHERE id >= 1000;
-DELETE FROM handover_codes         WHERE id >= 1000;
 DELETE FROM delivery_tracking      WHERE id >= 1000;
 DELETE FROM proof_of_delivery      WHERE id >= 1000;
 DELETE FROM deliveries             WHERE id >= 1000;
@@ -511,16 +517,39 @@ VALUES
 -- Modelled in full, with no service or controller behind it. `max_weight` is
 -- in kilograms and is what a dispatcher would match a parcel against.
 
+-- A driver holds goods worth more than they earn in a month and turns up at
+-- buyers' families' homes, which is why an application is reviewed rather than
+-- accepted. The KYC columns are what somebody reviews.
+--
+-- acceptance_score is derived from the offer counters beside it rather than
+-- nudged: 41 of 46 is 89.13%, and recomputing from the counts gives the same
+-- number back. A score that could drift from the offers behind it would be a
+-- number a driver is judged by and nobody can check.
+--
+-- online_since is null and available is 1, which is the ordinary state of a row
+-- written by a seed rather than by somebody tapping "go online".
+
 INSERT INTO drivers
  (id, user_id, phone, country_code, zone, license_number, vehicle_type, vehicle_model,
   vehicle_plate, vehicle_color, max_weight, available, status, commission_rate,
   current_latitude, current_longitude, last_location_at, total_deliveries,
-  total_earnings, total_ratings, average_rating, avatar_url, admin_note, created_at, updated_at)
+  total_earnings, total_ratings, average_rating, avatar_url, admin_note,
+  id_document_number, id_document_type, id_document_url, license_document_url,
+  license_expires_on, next_of_kin_name, next_of_kin_phone,
+  kyc_submitted_at, kyc_reviewed_at, kyc_rejection_reason,
+  acceptance_score, offers_received, offers_accepted, offers_declined,
+  online_since, created_at, updated_at)
 VALUES
  (1090, 1007, '+2203100007', 'GM', 'Kombo North', 'GM-DL-771204', 'MOTOR', 'Haojue HJ125',
   'BJL 4417 C', 'Red', 25, 1, 'APPROVED', 12.00,
   13.44120000, -16.67030000, @NOW, 37,
-  9250.00, 31, 4.70, NULL, NULL, @NOW, @NOW);
+  9250.00, 31, 4.70, NULL, NULL,
+  'GM-ID-4471203', 'NATIONAL_ID', 'https://media.example.invalid/kyc/drv-1090-id.jpg',
+  'https://media.example.invalid/kyc/drv-1090-licence.jpg',
+  '2028-03-31', 'Mariama Touray', '+2203100017',
+  '2026-08-02 09:15:00.000000', '2026-08-03 11:40:00.000000', NULL,
+  89.13, 46, 41, 5,
+  NULL, @NOW, @NOW);
 
 -- ── notifications ───────────────────────────────────────────────────────────
 -- The column is `is_read`, not `read`: `read` is reserved in MySQL and the
@@ -1756,9 +1785,182 @@ INSERT INTO proof_of_delivery (id, delivery_id, image_url, signature_url, latitu
  (1720, 1700, 'https://media.example.invalid/pod/dlv-0000001.jpg', NULL,
   13.44290000, -16.67760000, 'Photographed at the counter with the buyer present.', @NOW, @NOW);
 
+-- ── shipments, shipment_legs, custody_events ────────────────────────────────
+-- The custody chain, and the point of the whole delivery module.
+--
+-- A shipment is ONE PARCEL, which is one vendor order: a seller packs their
+-- whole slice into one box and hands over one release code. Keying it to an
+-- order line instead would give a two-line slice two parcels with one code
+-- between them.
+--
+-- STATUS IS NEVER WRITTEN BY ANYTHING BUT THE CHAIN. Shipment has no status
+-- setter; CustodyChain derives it from the custody_events below every time one
+-- is appended. The values in the status column here are what that derivation
+-- produces for these events — not an independent claim. Change an event and the
+-- status is wrong until the chain is re-derived, which is exactly the property
+-- worth having: the events are the truth and the column is a cache of them.
+--
+-- Read the three shipments as three points on that chain:
+--
+--   1900  DELIVERED       collected, then released at the door. The full chain,
+--                         with a photograph on the last link.
+--   1901  OUT_FOR_DELIVERY collected and moving. One event, and the status that
+--                         follows from it.
+--   1902  DRIVER_OFFERED  no events at all. The status comes from the leg being
+--                         offered and unanswered, which is what "nothing has
+--                         happened yet" derives to.
+--
+-- metres_from_expected and within_geofence are kept on every event rather than
+-- checked and discarded. A delivery at 12 metres and one at 4,300 both happened;
+-- only one is worth anything in a dispute, and the chain says which. 1901's
+-- collection is the far one, deliberately: it was recorded and flagged rather
+-- than refused, because the parcel may genuinely have changed hands and refusing
+-- would have stranded it.
+
+INSERT INTO shipments
+ (id, version, reference, vendor_order_id, status,
+  recipient_name, recipient_phone, destination_street, destination_city, destination_country,
+  destination_latitude, destination_longitude,
+  origin_latitude, origin_longitude, origin_address,
+  parcel_count, delivery_fee, fee_currency,
+  failed_attempts, next_attempt_after,
+  collected_at, delivered_at, returned_at, cancelled_at, created_at, updated_at)
+VALUES
+ -- Order 1403: collected and delivered, and the reason vendor_order 1504's
+ -- escrow could be released at all.
+ (1900, 0, 'SHP-SEED-0001', 1504, 'DELIVERED',
+  'Aminata Ceesay', '+2203100004', 'Westfield Junction, Unit 3', 'Serekunda', 'GM',
+  13.44290000, -16.67760000,
+  13.45300000, -16.67500000, '14 Kairaba Avenue, Serekunda',
+  1, 110.00, 'GMD',
+  0, NULL,
+  @NOW, @NOW, NULL, NULL, @NOW, @NOW),
+
+ -- Order 1404: the diaspora parcel. Fatou paid in Madrid; Isatou is waiting in
+ -- Serrekunda and has no account.
+ (1901, 0, 'SHP-SEED-0002', 1505, 'OUT_FOR_DELIVERY',
+  'Isatou Ceesay', '+2203100077', '12 Kairaba Avenue', 'Serrekunda', 'GM',
+  13.43840000, -16.67810000,
+  13.45300000, -16.67500000, '14 Kairaba Avenue, Serekunda',
+  1, 380.00, 'GMD',
+  0, NULL,
+  @NOW, NULL, NULL, NULL, @NOW, @NOW),
+
+ -- Order 1401's Banjul slice: packed, offered, and nobody has answered yet.
+ (1902, 0, 'SHP-SEED-0003', 1501, 'DRIVER_OFFERED',
+  'Oliver Bennett', '+447700900005', '221B Baker Street, Flat 2', 'London', 'GB',
+  51.52370000, -0.15850000,
+  13.45300000, -16.67500000, '14 Kairaba Avenue, Serekunda',
+  2, 209.09, 'GMD',
+  0, NULL,
+  NULL, NULL, NULL, NULL, @NOW, @NOW);
+
+-- Legs are what a driver accepts, not shipments. The driver who can reach a shop
+-- on Kairaba Avenue is frequently not the one who covers the street a parcel is
+-- going to, so a journey is a list of hops with one person accountable for each.
+--
+-- 1912 carries an offer_expires_at in the past on purpose: it is the lapsed
+-- offer, which the queue must not show and the accept endpoint must refuse. An
+-- offer nobody declined holds a parcel out of circulation, which is worse for
+-- the person waiting than one somebody turned down.
+
+INSERT INTO shipment_legs
+ (id, version, shipment_id, sequence, leg_type, assignment_status, driver_id,
+  offered_at, offer_expires_at, accepted_at, declined_at, started_at, completed_at,
+  decline_reason,
+  origin_latitude, origin_longitude, origin_label,
+  destination_latitude, destination_longitude, destination_label,
+  origin_pickup_point_id, destination_pickup_point_id,
+  distance_km, earning, earning_currency, created_at, updated_at)
+VALUES
+ (1910, 0, 1900, 1, 'ORIGIN_TO_PICKUP', 'COMPLETED', 1090,
+  @NOW, NULL, @NOW, NULL, @NOW, @NOW, NULL,
+  13.45300000, -16.67500000, 'Kombo Electronics, Kairaba Avenue',
+  13.44290000, -16.67760000, 'Westfield Junction',
+  NULL, 1096,
+  1.800, 110.00, 'GMD', @NOW, @NOW),
+
+ (1911, 0, 1901, 1, 'ORIGIN_TO_RECIPIENT', 'IN_PROGRESS', 1090,
+  @NOW, NULL, @NOW, NULL, @NOW, NULL, NULL,
+  13.45300000, -16.67500000, 'Kombo Electronics, Kairaba Avenue',
+  13.43840000, -16.67810000, 'Serrekunda',
+  NULL, NULL,
+  1.640, 380.00, 'GMD', @NOW, @NOW),
+
+ -- Offered and lapsed. Not held against the driver: nobody answered, which is
+ -- different from somebody saying no.
+ (1912, 0, 1902, 1, 'ORIGIN_TO_PICKUP', 'OFFERED', 1090,
+  @LAPSED, @LAPSED, NULL, NULL, NULL, NULL, NULL,
+  13.45300000, -16.67500000, 'Kombo Electronics, Kairaba Avenue',
+  13.44290000, -16.67760000, 'Westfield Junction',
+  NULL, 1096,
+  1.800, 209.09, 'GMD', @NOW, @NOW);
+
+-- The chain itself. Append-only: a correction is a new event, because "the
+-- driver said they delivered it and then said they had not" is a fact worth
+-- keeping rather than a mistake to erase.
+--
+-- Two clocks on every row. occurred_at is the driver's phone and recorded_at is
+-- when the server heard; they differ by hours for something captured with no
+-- signal, which is Tuesday here. 1923 is that case — captured_offline is 1 and
+-- its client_event_id is what stops a re-upload recording it twice.
+--
+-- code_presented is kept even though the code is spent by the time it lands. It
+-- is a record of what was read out, not a credential, and a disputed handover
+-- months later is exactly when somebody needs it.
+
+INSERT INTO custody_events
+ (id, shipment_id, leg_id, type, recorded_by_user_id, counterparty_user_id,
+  code_presented, handover_code_id,
+  latitude, longitude, accuracy_metres, metres_from_expected, within_geofence,
+  photo_url, signature_url, reason_code, note,
+  occurred_at, captured_offline, client_event_id, recorded_at)
+VALUES
+ -- 1900: the full chain, start to finish.
+ (1920, 1900, 1910, 'ARRIVED_AT_ORIGIN', 1007, NULL,
+  NULL, NULL,
+  13.45301000, -16.67498000, 8.00, 2.34, 1,
+  NULL, NULL, NULL, 'At the shop',
+  @NOW, 0, 'seed-evt-1920', @NOW),
+ (1921, 1900, 1910, 'COLLECTED', 1007, NULL,
+  '418302', 1730,
+  13.45299000, -16.67501000, 9.00, 1.62, 1,
+  NULL, NULL, NULL, NULL,
+  @NOW, 0, 'seed-evt-1921', @NOW),
+ -- The last link, and the only one that releases the seller's money. It carries
+ -- the most: a code, a position at the counter, and a photograph.
+ (1922, 1900, 1910, 'RELEASED', 1008, NULL,
+  '234861', 1732,
+  13.44291000, -16.67759000, 6.00, 1.42, 1,
+  'https://media.example.invalid/pod/shp-0001.jpg', NULL, NULL,
+  'Collected at the counter by the buyer',
+  @NOW, 0, 'seed-evt-1922', @NOW),
+
+ -- 1901: one event, captured with no signal, and the status that follows.
+ -- 4.3km from the shop: recorded and flagged rather than refused, because the
+ -- parcel may genuinely have changed hands and refusing would strand it.
+ (1923, 1901, 1911, 'COLLECTED', 1007, NULL,
+  '871460', 1736,
+  13.49000000, -16.65000000, 240.00, 4310.55, 0,
+  NULL, NULL, NULL, 'Signal was gone in the compound; uploaded on the road',
+  @NOW, 1, 'seed-evt-1923', @NOW);
+
+-- 1902 has no events at all, and that is the point of it: its DRIVER_OFFERED
+-- status is derived from the leg being offered rather than from anything having
+-- happened to the parcel. "Nothing yet" is a state the chain has to produce
+-- correctly, and it is the state most shipments are in at any moment.
+
 -- ── handover_codes ──────────────────────────────────────────────────────────
 -- The short code the receiving party reads out. `version` is an optimistic
--- lock, so two people cannot burn the same code concurrently.
+-- lock, so two people cannot burn the same code concurrently, and
+-- `failed_attempts` is what burns a code somebody is guessing at: six digits is
+-- a hundred thousand tries to a determined person and three to somebody who
+-- misheard.
+--
+-- Written after the shipments above because these now point at legs. Exactly one
+-- owner is set on each row - a delivery, a vendor order, or a shipment - since a
+-- code belonging to none would authorise nothing and one belonging to several
+-- would authorise several different handovers.
 
 -- VENDOR_RELEASE is the one type that hangs off a vendor order rather than a
 -- delivery, which is why delivery_id is nullable: a seller packs one parcel for
@@ -1767,18 +1969,28 @@ INSERT INTO proof_of_delivery (id, delivery_id, image_url, signature_url, latitu
 --
 -- 1735 and 1736 are the same slice. 1735 was read out over a bad line, so the
 -- seller reissued: it carries invalidated_at and no longer opens anything, and
--- 1736 is the live one. Reissuing replaces rather than edits, so a code that
--- leaked is dead AND the fact that it was reissued survives - a seller
--- reissuing constantly is worth being able to see.
+-- 1736 is the one the driver actually presented - which is why it is now spent
+-- rather than live. Reissuing replaces rather than edits, so a code that leaked
+-- is dead AND the fact that it was reissued survives; a seller reissuing
+-- constantly is worth being able to see.
+--
+-- 1737 is the recipient's, and the only code on this platform presented by
+-- somebody with no account. It is shipment-scoped rather than delivery-scoped,
+-- which is the third kind of owner: a delivery, a vendor order, or a parcel.
 
-INSERT INTO handover_codes (id, delivery_id, vendor_order_id, code, code_type, used, used_at, used_by_user_id, expires_at, invalidated_at, version, created_at) VALUES
- (1730, 1700, NULL, '418302', 'VENDOR_TO_DRIVER',    1, @NOW, 1007, '2026-09-12 18:00:00.000000', NULL, 1, @NOW),
- (1731, 1700, NULL, '905177', 'DRIVER_TO_PICKUP',    1, @NOW, 1008, '2026-09-12 18:00:00.000000', NULL, 1, @NOW),
- (1732, 1700, NULL, '234861', 'PICKUP_TO_CUSTOMER',  1, @NOW, 1004, '2026-09-12 20:00:00.000000', NULL, 1, @NOW),
- (1733, 1701, NULL, '660419', 'VENDOR_TO_DRIVER',    1, @NOW, 1007, '2026-09-13 18:00:00.000000', NULL, 1, @NOW),
- (1734, 1701, NULL, '773025', 'DRIVER_TO_CUSTOMER',  0, NULL, NULL, '2026-09-20 18:00:00.000000', NULL, 0, @NOW),
- (1735, NULL, 1505, '304912', 'VENDOR_RELEASE',      0, NULL, NULL, '2026-09-16 12:00:00.000000', @NOW,  0, @NOW),
- (1736, NULL, 1505, '871460', 'VENDOR_RELEASE',      0, NULL, NULL, '2026-09-16 12:00:00.000000', NULL, 0, @NOW);
+INSERT INTO handover_codes (id, delivery_id, vendor_order_id, shipment_id, leg_id, code, code_type, used, used_at, used_by_user_id, expires_at, invalidated_at, failed_attempts, version, created_at) VALUES
+ (1730, 1700, NULL, NULL, NULL, '418302', 'VENDOR_TO_DRIVER',    1, @NOW, 1007, '2026-09-12 18:00:00.000000', NULL, 0, 1, @NOW),
+ (1731, 1700, NULL, NULL, NULL, '905177', 'DRIVER_TO_PICKUP',    1, @NOW, 1008, '2026-09-12 18:00:00.000000', NULL, 0, 1, @NOW),
+ (1732, 1700, NULL, NULL, NULL, '234861', 'PICKUP_TO_CUSTOMER',  1, @NOW, 1004, '2026-09-12 20:00:00.000000', NULL, 0, 1, @NOW),
+ (1733, 1701, NULL, NULL, NULL, '660419', 'VENDOR_TO_DRIVER',    1, @NOW, 1007, '2026-09-13 18:00:00.000000', NULL, 0, 1, @NOW),
+ (1734, 1701, NULL, NULL, NULL, '773025', 'DRIVER_TO_CUSTOMER',  0, NULL, NULL, '2026-09-20 18:00:00.000000', NULL, 0, 0, @NOW),
+ (1735, NULL, 1505, NULL, NULL, '304912', 'VENDOR_RELEASE',      0, NULL, NULL, '2026-09-16 12:00:00.000000', @NOW,  0, 0, @NOW),
+ (1736, NULL, 1505, NULL, NULL, '871460', 'VENDOR_RELEASE',      1, @NOW, 1007, '2026-09-16 12:00:00.000000', NULL, 0, 0, @NOW),
+ -- The recipient's code for the diaspora parcel. It went to Fatou in Madrid by
+ -- email, and she passes it to Isatou the way anybody passes on a Western Union
+ -- reference. Isatou needs no account, no app and no email of her own (C5) —
+ -- only to read six digits to the driver at the door.
+ (1737, NULL, NULL, 1901, 1911, '540913', 'RECIPIENT_RELEASE', 0, NULL, NULL, '2026-09-16 12:00:00.000000', NULL, 0, 0, @NOW);
 
 -- Two rows for one slice, and vendor_orders.release_code_issue_count says 1
 -- rather than 2 - which is the disagreement to expect, because the count is a
@@ -2289,6 +2501,51 @@ COMMIT;
 --                                       never where the payer was, and a
 --                                       country with only a handful of orders
 --                                       is left out entirely.
+--
+--   ── The custody chain ───────────────────────────────────────────────────
+--
+--     GET /driver/assignments           as Ebrima. Leg 1911 is his and in
+--                                       progress; 1912 is an offer that lapsed
+--                                       and is deliberately NOT in the list —
+--                                       a driver shown a dead offer will tap it
+--                                       and read the refusal as a broken app.
+--     POST /driver/assignments/1912/accept
+--                                       refused, and says the offer went back
+--                                       to the pool rather than blaming him.
+--     GET /driver/shipments/1901        he is carrying this one, so the
+--                                       destination block is there: Isatou's
+--                                       name, her street and her number.
+--     GET /driver/shipments/1900        he handed this one over. The
+--                                       destination block is ABSENT, not
+--                                       blank — a driver who delivered a parcel
+--                                       yesterday has no reason to still hold
+--                                       somebody's front door.
+--     POST /driver/shipments/1901/request-recipient-code
+--                                       emails Fatou in Madrid, who passes the
+--                                       six digits to her sister. Isatou needs
+--                                       no account, no app and no email of her
+--                                       own. The driver never sees the code:
+--                                       one who could read it could mark a
+--                                       parcel delivered without meeting
+--                                       anybody.
+--     POST /driver/shipments/1901/deliver
+--                                       needs her code (540913), a position and
+--                                       a photograph. This is the link somebody
+--                                       would forge if any one of them were
+--                                       enough alone.
+--     POST /driver/shipments/1902/collect
+--                                       refused: nobody has accepted that leg,
+--                                       so the parcel is not his to move.
+--
+--   The three shipments are three points on the chain. 1900 is finished, 1901
+--   is moving, and 1902 has no events at all — its DRIVER_OFFERED status comes
+--   from the leg rather than from anything having happened, which is the state
+--   most parcels are in at any moment.
+--
+--   Look at event 1923: collected 4.3km from the shop, with within_geofence
+--   false. It was recorded and flagged rather than refused. The parcel may
+--   genuinely have changed hands, and refusing would have stranded it — but the
+--   chain says plainly that the position does not corroborate the handover.
 --
 --   ── Signing in without signing in ───────────────────────────────────────
 --

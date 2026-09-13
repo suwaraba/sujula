@@ -256,6 +256,18 @@ public class SecurityConfig {
                         // bank-ready statement, and the destinations a shop
                         // ships to. An unguarded route here hands a competitor a
                         // shop's whole trading position.
+                        // The driver's app. Authenticated is the outer gate only
+                        // — the driver is resolved from the session and goes
+                        // into every query, so a path variable cannot open
+                        // another driver's parcel.
+                        //
+                        // What is behind this rule is the sharpest data on the
+                        // platform: recipients' home addresses and phone
+                        // numbers, and where a driver has been all day. Both
+                        // belong to people who never agreed to be visible to
+                        // anyone but the person bringing their parcel.
+                        .requestMatchers("/driver", "/driver/**").authenticated()
+
                         .requestMatchers("/vendor/analytics/**", "/vendor/balance",
                                          "/vendor/transactions", "/vendor/payouts",
                                          "/vendor/payouts/**", "/vendor/statements/**")
