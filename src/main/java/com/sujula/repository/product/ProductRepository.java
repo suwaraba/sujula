@@ -49,7 +49,16 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     // ── Proximity-ranked browse queries ──────────────────────────────────────
     // Every query below is a native query (MySQL — no PostGIS/spatial extension
-    // available) that great-circle-distances each product from (userLat, userLng)
+    // available) that great-circle-distances each product from the DELIVERY
+    // point — where the parcel is going, never where the person paying is.
+    //
+    // The distinction is the whole ranking. A buyer in Madrid sending a phone to
+    // Serrekunda wants the stock that is two miles from their sister, not the
+    // stock that is two miles from them and cannot reach her. These parameters
+    // were once named userLat/userLng, which invited exactly that mistake:
+    // a client reads "user" and sends the browser's own position.
+    //
+    // Distances are measured from (deliveryLat, deliveryLng)
     // using the Haversine formula. Products within `radiusKm` sort ahead of
     // everything else (bucket 0 vs 1); within a bucket, products on promotion
     // (compareAtPrice > price) sort first, then by `score` descending. Distance,
@@ -58,11 +67,11 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     String DISTANCE_KM_EXPR =
             "(6371 * acos(least(1.0, greatest(-1.0, " +
-                    "cos(radians(:userLat)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians(:userLng)) " +
-                    "+ sin(radians(:userLat)) * sin(radians(p.latitude))))))";
+                    "cos(radians(:deliveryLat)) * cos(radians(p.latitude)) * cos(radians(p.longitude) - radians(:deliveryLng)) " +
+                    "+ sin(radians(:deliveryLat)) * sin(radians(p.latitude))))))";
 
     String PROXIMITY_BUCKET_EXPR =
-            "(CASE WHEN :userLat IS NOT NULL AND :userLng IS NOT NULL " +
+            "(CASE WHEN :deliveryLat IS NOT NULL AND :deliveryLng IS NOT NULL " +
                     "AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL " +
                     "AND " + DISTANCE_KM_EXPR + " <= :radiusKm THEN 0 ELSE 1 END)";
 
@@ -91,8 +100,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     Page<Product> findFeaturedProducts(
             @Param("featured") Boolean featured,
             @Param("deliveryCountry") String deliveryCountry,
-            @Param("userLat") Double userLat,
-            @Param("userLng") Double userLng,
+            @Param("deliveryLat") Double deliveryLat,
+            @Param("deliveryLng") Double deliveryLng,
             @Param("radiusKm") Double radiusKm,
             Pageable pageable);
 
@@ -107,8 +116,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     )
     Page<Product> findNewArrivalsProducts(
             @Param("deliveryCountry") String deliveryCountry,
-            @Param("userLat") Double userLat,
-            @Param("userLng") Double userLng,
+            @Param("deliveryLat") Double deliveryLat,
+            @Param("deliveryLng") Double deliveryLng,
             @Param("radiusKm") Double radiusKm,
             Pageable pageable);
 
@@ -123,8 +132,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     )
     Page<Product> findBestSellersProducts(
             @Param("deliveryCountry") String deliveryCountry,
-            @Param("userLat") Double userLat,
-            @Param("userLng") Double userLng,
+            @Param("deliveryLat") Double deliveryLat,
+            @Param("deliveryLng") Double deliveryLng,
             @Param("radiusKm") Double radiusKm,
             Pageable pageable);
 
@@ -140,8 +149,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     Page<Product> findByCategoryProducts(
             @Param("categoryId") Long categoryId,
             @Param("deliveryCountry") String deliveryCountry,
-            @Param("userLat") Double userLat,
-            @Param("userLng") Double userLng,
+            @Param("deliveryLat") Double deliveryLat,
+            @Param("deliveryLng") Double deliveryLng,
             @Param("radiusKm") Double radiusKm,
             Pageable pageable);
 
@@ -160,8 +169,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
             @Param("categoryId") Long categoryId,
             @Param("excludeProductId") Long excludeProductId,
             @Param("deliveryCountry") String deliveryCountry,
-            @Param("userLat") Double userLat,
-            @Param("userLng") Double userLng,
+            @Param("deliveryLat") Double deliveryLat,
+            @Param("deliveryLng") Double deliveryLng,
             @Param("radiusKm") Double radiusKm,
             Pageable pageable);
 
@@ -185,8 +194,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     Page<Product> searchNearUser(
             @Param("query") String query,
             @Param("deliveryCountry") String deliveryCountry,
-            @Param("userLat") Double userLat,
-            @Param("userLng") Double userLng,
+            @Param("deliveryLat") Double deliveryLat,
+            @Param("deliveryLng") Double deliveryLng,
             @Param("radiusKm") Double radiusKm,
             Pageable pageable);
 }

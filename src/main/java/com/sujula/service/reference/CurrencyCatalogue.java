@@ -88,6 +88,21 @@ public class CurrencyCatalogue {
                 properties.getBaseCurrency(), properties.getBaseCountry());
     }
 
+    /**
+     * A catalogue built and indexed in one step, for callers outside Spring's
+     * lifecycle.
+     *
+     * <p>{@link #index()} is package-private because it is a {@code @PostConstruct}
+     * hook rather than something a caller should be choosing when to run. This
+     * factory exists so that not being inside a container does not require
+     * widening that.
+     */
+    public static CurrencyCatalogue of(ReferenceDataProperties properties) {
+        CurrencyCatalogue catalogue = new CurrencyCatalogue(properties);
+        catalogue.index();
+        return catalogue;
+    }
+
     public List<ReferenceDataProperties.Currency> all() {
         return List.copyOf(byCode.values());
     }

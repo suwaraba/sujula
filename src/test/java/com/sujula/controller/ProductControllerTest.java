@@ -83,7 +83,7 @@ class ProductControllerTest {
         // ranks the whole catalogue as if the shopper were somewhere else.
         BadRequestException error = assertThrows(BadRequestException.class,
                 () -> controller.search("kettle", null, null, 900.0, 0.0, 0, 20));
-        assertTrue(error.getMessage().contains("userLat"));
+        assertTrue(error.getMessage().contains("deliveryLat"));
 
         assertThrows(BadRequestException.class,
                 () -> controller.search("kettle", null, null, 0.0, -181.0, 0, 20));

@@ -12,17 +12,17 @@ import java.util.List;
 
 public interface ProductService {
 
-    Page<ProductCardResponse> findFeaturedProducts(Boolean featured, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
+    Page<ProductCardResponse> findFeaturedProducts(Boolean featured, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable);
 
-    Page<ProductCardResponse> findNewArrivalsProducts(String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
+    Page<ProductCardResponse> findNewArrivalsProducts(String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable);
 
-    Page<ProductCardResponse> findBestSellersProducts(String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
+    Page<ProductCardResponse> findBestSellersProducts(String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable);
 
-    Page<ProductCardResponse> findByCategoryProducts(Long categoryId, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
+    Page<ProductCardResponse> findByCategoryProducts(Long categoryId, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable);
 
-    Page<ProductCardResponse> findSimilarProducts(Long productId, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
+    Page<ProductCardResponse> findSimilarProducts(Long productId, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable);
 
-    Page<ProductCardResponse> searchNearUser(String query, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable);
+    Page<ProductCardResponse> searchNearUser(String query, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable);
 
     /**
      * Full detail for one product, whether or not it is published. For the

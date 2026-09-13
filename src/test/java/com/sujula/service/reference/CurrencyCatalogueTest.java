@@ -143,8 +143,7 @@ class CurrencyCatalogueTest {
         sparse.getCurrencies().add(new ReferenceDataProperties.Currency(
                 "  ", "Nothing", "?", 2, true, true));
 
-        CurrencyCatalogue built = new CurrencyCatalogue(sparse);
-        built.index();
+        CurrencyCatalogue built = CurrencyCatalogue.of(sparse);
 
         assertFalse(built.isSupported("  "));
         assertEquals(sparse.getCurrencies().size() - 1, built.all().size());

@@ -76,13 +76,13 @@ public class ProductController {
     public ResponseEntity<PagedResponse<ProductCardResponse>> featured(
             @RequestParam(required = false) String deliveryCountry,
             @RequestParam(required = false) String currency,
-            @RequestParam(required = false) Double userLat,
-            @RequestParam(required = false) Double userLng,
+            @RequestParam(required = false) Double deliveryLat,
+            @RequestParam(required = false) Double deliveryLng,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ResponseEntity.ok(PagedResponse.of(productService.findFeaturedProducts(
                 Boolean.TRUE, deliveryCountry, currency,
-                validCoordinate(userLat, 90, "userLat"), validCoordinate(userLng, 180, "userLng"),
+                validCoordinate(deliveryLat, 90, "deliveryLat"), validCoordinate(deliveryLng, 180, "deliveryLng"),
                 pageOf(page, size))));
     }
 
@@ -90,13 +90,13 @@ public class ProductController {
     public ResponseEntity<PagedResponse<ProductCardResponse>> newArrivals(
             @RequestParam(required = false) String deliveryCountry,
             @RequestParam(required = false) String currency,
-            @RequestParam(required = false) Double userLat,
-            @RequestParam(required = false) Double userLng,
+            @RequestParam(required = false) Double deliveryLat,
+            @RequestParam(required = false) Double deliveryLng,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ResponseEntity.ok(PagedResponse.of(productService.findNewArrivalsProducts(
                 deliveryCountry, currency,
-                validCoordinate(userLat, 90, "userLat"), validCoordinate(userLng, 180, "userLng"),
+                validCoordinate(deliveryLat, 90, "deliveryLat"), validCoordinate(deliveryLng, 180, "deliveryLng"),
                 pageOf(page, size))));
     }
 
@@ -104,13 +104,13 @@ public class ProductController {
     public ResponseEntity<PagedResponse<ProductCardResponse>> bestSellers(
             @RequestParam(required = false) String deliveryCountry,
             @RequestParam(required = false) String currency,
-            @RequestParam(required = false) Double userLat,
-            @RequestParam(required = false) Double userLng,
+            @RequestParam(required = false) Double deliveryLat,
+            @RequestParam(required = false) Double deliveryLng,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ResponseEntity.ok(PagedResponse.of(productService.findBestSellersProducts(
                 deliveryCountry, currency,
-                validCoordinate(userLat, 90, "userLat"), validCoordinate(userLng, 180, "userLng"),
+                validCoordinate(deliveryLat, 90, "deliveryLat"), validCoordinate(deliveryLng, 180, "deliveryLng"),
                 pageOf(page, size))));
     }
 
@@ -119,13 +119,13 @@ public class ProductController {
             @PathVariable Long categoryId,
             @RequestParam(required = false) String deliveryCountry,
             @RequestParam(required = false) String currency,
-            @RequestParam(required = false) Double userLat,
-            @RequestParam(required = false) Double userLng,
+            @RequestParam(required = false) Double deliveryLat,
+            @RequestParam(required = false) Double deliveryLng,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ResponseEntity.ok(PagedResponse.of(productService.findByCategoryProducts(
                 categoryId, deliveryCountry, currency,
-                validCoordinate(userLat, 90, "userLat"), validCoordinate(userLng, 180, "userLng"),
+                validCoordinate(deliveryLat, 90, "deliveryLat"), validCoordinate(deliveryLng, 180, "deliveryLng"),
                 pageOf(page, size))));
     }
 
@@ -135,13 +135,13 @@ public class ProductController {
             @RequestParam(name = "q", required = false) String query,
             @RequestParam(required = false) String deliveryCountry,
             @RequestParam(required = false) String currency,
-            @RequestParam(required = false) Double userLat,
-            @RequestParam(required = false) Double userLng,
+            @RequestParam(required = false) Double deliveryLat,
+            @RequestParam(required = false) Double deliveryLng,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ResponseEntity.ok(PagedResponse.of(productService.searchNearUser(
                 trimToNull(query), deliveryCountry, currency,
-                validCoordinate(userLat, 90, "userLat"), validCoordinate(userLng, 180, "userLng"),
+                validCoordinate(deliveryLat, 90, "deliveryLat"), validCoordinate(deliveryLng, 180, "deliveryLng"),
                 pageOf(page, size))));
     }
 
@@ -150,13 +150,13 @@ public class ProductController {
             @PathVariable Long productId,
             @RequestParam(required = false) String deliveryCountry,
             @RequestParam(required = false) String currency,
-            @RequestParam(required = false) Double userLat,
-            @RequestParam(required = false) Double userLng,
+            @RequestParam(required = false) Double deliveryLat,
+            @RequestParam(required = false) Double deliveryLng,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size) {
         return ResponseEntity.ok(PagedResponse.of(productService.findSimilarProducts(
                 productId, deliveryCountry, currency,
-                validCoordinate(userLat, 90, "userLat"), validCoordinate(userLng, 180, "userLng"),
+                validCoordinate(deliveryLat, 90, "deliveryLat"), validCoordinate(deliveryLng, 180, "deliveryLng"),
                 pageOf(page, size))));
     }
 

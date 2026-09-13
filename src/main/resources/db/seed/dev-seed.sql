@@ -1181,8 +1181,16 @@ COMMIT;
 --                                       two slices, each priced only in that
 --                                       vendor's own currency. Neither response
 --                                       contains GBP, London, or Oliver.
---     GET /api/products/search?q=wax&userLat=51.52&userLng=-0.16&currency=GBP
---                                       location-ranked, converted prices.
+--     GET /api/products/search?q=wax&deliveryLat=13.4383&deliveryLng=-16.6781
+--         &deliveryCountry=GM&currency=GBP
+--                                       Oliver is in London and the wax print is
+--                                       going to Serrekunda. The coordinates are
+--                                       the RECIPIENT's — ranking is by what can
+--                                       reach her — and the currency is the
+--                                       PAYER's, because he holds a UK card.
+--                                       Passing London's coordinates here would
+--                                       rank the catalogue against a place the
+--                                       parcel is never going.
 --     GET /api/admin/orders/1401        the buyer's side of the same order.
 --
 --   ── Signing in without signing in ───────────────────────────────────────

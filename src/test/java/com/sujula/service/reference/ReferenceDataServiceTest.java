@@ -21,8 +21,7 @@ class ReferenceDataServiceTest {
     @BeforeEach
     void setUp() {
         properties = new ReferenceDataProperties();
-        CurrencyCatalogue catalogue = new CurrencyCatalogue(properties);
-        catalogue.index();
+        CurrencyCatalogue catalogue = CurrencyCatalogue.of(properties);
         service = new ReferenceDataService(properties, catalogue);
     }
 

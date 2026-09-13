@@ -52,8 +52,7 @@ class FxQuoteServiceTest {
         quotes = mock(FxQuoteRepository.class);
         UserRepository users = mock(UserRepository.class);
         properties = new ReferenceDataProperties();
-        CurrencyCatalogue catalogue = new CurrencyCatalogue(properties);
-        catalogue.index();
+        CurrencyCatalogue catalogue = CurrencyCatalogue.of(properties);
 
         User owner = new User();
         owner.setId(OWNER);
