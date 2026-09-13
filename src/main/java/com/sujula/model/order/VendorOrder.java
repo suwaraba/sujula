@@ -6,6 +6,7 @@ import com.sujula.model.constant.VendorOrderStatus;
 import com.sujula.model.products.Coupon;
 import com.sujula.model.user.Vendor;
 
+import com.sujula.model.money.FxSnapshot;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -115,6 +116,27 @@ public class VendorOrder {
     /** What the vendor is owed: {@code totalNative - commissionNative}. */
     @Column(precision = 12, scale = 2)
     private BigDecimal payoutNative;
+
+    /**
+     * The rate every {@code *Native} figure above was converted at, and when
+     * that rate was taken.
+     *
+     * <p>This slice is where the rate belongs, not the order: an order spanning
+     * two vendors in two listing currencies was priced at two rates, and a single
+     * order-level rate could only ever record one of them. One vendor, one
+     * currency pair, one rate.
+     *
+     * <p>Without it the frozen amounts above are unexplainable. They are the
+     * right numbers — but a vendor asking why their payout was what it was gets
+     * only the figure back, and nobody can reconstruct the arithmetic once the
+     * rate table has moved on, which it does daily.
+     *
+     * <p>Null when this vendor's lines spanned more than one listing currency,
+     * the same case in which the native totals are null: there is no single rate
+     * to record because there was no single conversion.
+     */
+    @Embedded
+    private FxSnapshot fx;
 
     /** Vendor-scoped coupon applied to this slice, if any. Snapshot survives coupon deletion. */
     @ManyToOne(fetch = FetchType.LAZY)

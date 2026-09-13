@@ -45,6 +45,16 @@ public class VendorOrderDetailResponse {
 
     private BigDecimal payout;
 
+    /**
+     * How the buyer's currency became this vendor's, and when.
+     *
+     * <p>Present only when a conversion actually happened. Every figure above is
+     * in the vendor's own currency and was converted from what the buyer paid;
+     * without this the vendor can see what they are owed but not why it is that
+     * number, and once the rate table has moved on nobody can reconstruct it.
+     */
+    private Fx fx;
+
     private String couponCode;
 
     private List<Line> lines;
@@ -52,6 +62,22 @@ public class VendorOrderDetailResponse {
     private LocalDateTime placedAt;
     private LocalDateTime updatedAt;
     private LocalDateTime cancelledAt;
+
+    /** The rate a payout was struck at, as the vendor sees it. */
+    @Data
+    @Builder
+    public static class Fx {
+        /** What the buyer was charged in. */
+        private String paidIn;
+        /** This vendor's own currency — what the figures above are in. */
+        private String settledIn;
+        /** Units of paidIn per one unit of settledIn. */
+        private BigDecimal rate;
+        /** When the rate was published — not when the order was placed. */
+        private LocalDateTime rateAt;
+        /** Where the rate came from: a published rate, or one held for the buyer. */
+        private String source;
+    }
 
     /** One product to pick, priced as the vendor listed it. */
     @Data

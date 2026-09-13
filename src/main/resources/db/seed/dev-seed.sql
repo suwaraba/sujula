@@ -646,7 +646,7 @@ INSERT INTO orders
   gift_card_code, gift_card_discount, created_at, updated_at)
 VALUES
  (1401, 'SJL-SEED-0001', 1005, NULL, NULL, NULL, NULL,
-  'CONFIRMED', 179.87, 4.13, 0.00, 17.99, 166.01, 'GBP',
+  'CONFIRMED', 139.56, 4.13, 0.00, 13.96, 129.73, 'GBP',
   1080, 'TERANGA10', 'PAID', 'CARD', @NOW,
   'HOME_DELIVERY', NULL,
   'Oliver Bennett', '+447700900005', '221B Baker Street', 'Flat 2',
@@ -655,7 +655,7 @@ VALUES
   'Oliver Bennett', '221B Baker Street', 'London', 'Greater London', 'NW1 6XE', 'GB',
   'Leave with the porter if out.', 'Two vendors, two settlement currencies.', 'Ring the bell twice.', 0,
   NULL, NULL,
-  166, 0, 0.00,
+  129, 0, 0.00,
   NULL, 0.00, @NOW, @NOW),
 
  (1402, 'SJL-SEED-0002', NULL, 'Binta Faal', 'binta.faal@example.gm', '+2203100010', 'c4d9e7a1-2f60-4b13-9a55-7e81d0c3b46f',
@@ -704,7 +704,7 @@ INSERT INTO payments
   confirmed_by_user_id, collection_reference, failure_reason, note,
   paid_at, refunded_at, cancelled_at, version, created_at, updated_at)
 VALUES
- (1600, 1401, 'PAY-SEED0000000', 'CARD', 'PAID', 166.01, 0.00, 'GBP',
+ (1600, 1401, 'PAY-SEED0000000', 'CARD', 'PAID', 129.73, 0.00, 'GBP',
   'MOCK-8F2A41C7B9D34E60A5B1', NULL, NULL, '{"gateway":"mock","status":"succeeded"}', NULL,
   NULL, 'MOCK-8F2A41C7B9D34E60A5B1', NULL, 'Settled synchronously by mock',
   @NOW, NULL, NULL, 1, @NOW, @NOW),
@@ -732,28 +732,47 @@ VALUES
 -- refused, correctly, and the delivery module that should confirm it has no
 -- endpoints. 1503 is DELIVERED only because this file writes it directly.
 
+-- fx_* is the rate each slice's native figures were converted at, and when that
+-- rate was published. Without it the frozen amounts are the right numbers that
+-- nobody can explain: the rate table moves daily, so a payout questioned next
+-- month cannot be re-derived from anything still on the system.
+--
+-- Check it: 9900.00 GMD x 0.011 = 108.90 GBP, which is what 1501's `total` says.
+-- 13050.00 XOF x 0.00128 = 16.70, which is 1502's. The stored rate has to
+-- reproduce the stored amounts or it is decoration rather than evidence.
+--
+-- IDENTITY on 1503 and 1504 is deliberate rather than lazy: those were sold in
+-- dalasi to a buyer shopping in dalasi, and recording "no conversion applied" as
+-- a fact is not the same as leaving the columns null, which would be
+-- indistinguishable from nobody having written anything down.
+
 INSERT INTO vendor_orders
  (id, order_id, vendor_id, status, native_currency,
   subtotal_native, discount_native, total_native,
   commission_rate, commission_native, delivery_native, payout_native,
-  subtotal, discount, total, coupon_id, coupon_code, cancelled_at, created_at, updated_at)
+  subtotal, discount, total, coupon_id, coupon_code, cancelled_at, created_at, updated_at,
+  fx_native_currency, fx_display_currency, fx_rate, fx_rate_at, fx_source, fx_quote_id)
 VALUES
  (1501, 1401, 1101, 'SHIPPED', 'GMD',
   11000.00, 1100.00, 9900.00,
   10.00, 990.00, 209.09, 8910.00,
-  121.00, 12.10, 108.90, NULL, NULL, NULL, @NOW, @NOW),
+  121.00, 12.10, 108.90, NULL, NULL, NULL, @NOW, @NOW,
+  'GMD', 'GBP', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL),
  (1502, 1401, 1102, 'CONFIRMED', 'XOF',
   14500.00, 1450.00, 13050.00,
-  12.50, 1631.25, 1953.13, 11418.75,
-  58.87, 5.89, 52.98, NULL, NULL, NULL, @NOW, @NOW),
+  12.50, 1631.25, 1429.69, 11418.75,
+  18.56, 1.86, 16.70, NULL, NULL, NULL, @NOW, @NOW,
+  'XOF', 'GBP', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL),
  (1503, 1402, 1101, 'PENDING', 'GMD',
   2900.00, 0.00, 2900.00,
   10.00, 290.00, 150.00, 2610.00,
-  2900.00, 0.00, 2900.00, NULL, NULL, NULL, @NOW, @NOW),
+  2900.00, 0.00, 2900.00, NULL, NULL, NULL, @NOW, @NOW,
+  'GMD', 'GMD', 1.00000000, @NOW, 'IDENTITY', NULL),
  (1504, 1403, 1101, 'DELIVERED', 'GMD',
   2500.00, 0.00, 2500.00,
   10.00, 250.00, 110.00, 2250.00,
-  2500.00, 0.00, 2500.00, NULL, NULL, NULL, @NOW, @NOW);
+  2500.00, 0.00, 2500.00, NULL, NULL, NULL, @NOW, @NOW,
+  'GMD', 'GMD', 1.00000000, @NOW, 'IDENTITY', NULL);
 
 -- ── order_items ─────────────────────────────────────────────────────────────
 -- `unit_price` / `total_price` are in the vendor's listing currency and are
@@ -1132,7 +1151,7 @@ VALUES
 
  -- Already spent on an order. Kept rather than deleted: months from now this is
  -- the evidence of what rate a buyer was actually promised.
- ('seed-fx-consumed', 1005, 'GMD', 'GBP', 0.01100000, 15092.0000, 166.0100,
+ ('seed-fx-consumed', 1005, 'GMD', 'GBP', 0.01100000, 11793.6400, 129.7300,
   '2026-09-12 00:00:00.000000', '2026-09-12 08:40:00.000000', @FUTURE, @NOW),
 
  -- Past its window. GET /currencies/quote/seed-fx-expired is a 404, not a 410:

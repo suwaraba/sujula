@@ -21,6 +21,7 @@ import com.sujula.model.order.Order;
 import com.sujula.model.order.OrderItem;
 import com.sujula.model.order.OrderStatusHistory;
 import com.sujula.model.order.VendorOrder;
+import com.sujula.model.money.FxSnapshot;
 import com.sujula.model.products.Coupon;
 import com.sujula.model.products.CouponUsage;
 import com.sujula.model.products.Product;
@@ -48,6 +49,7 @@ import com.sujula.service.NotificationService;
 import com.sujula.service.OrderService;
 import com.sujula.service.cart.CartOwner;
 import com.sujula.service.cart.RateTable;
+import com.sujula.service.reference.CurrencyCatalogue;
 import com.sujula.service.delivery.DeliveryDestination;
 import com.sujula.service.delivery.DeliveryQuote;
 import lombok.RequiredArgsConstructor;
@@ -122,6 +124,7 @@ public class OrderServiceImpl implements OrderService {
     private final DeliveryPricingService deliveryPricingService;
     private final EmailService emailService;
     private final NotificationService notificationService;
+    private final CurrencyCatalogue currencyCatalogue;
 
     /** Fallback when a vendor or coupon has no currency recorded. */
     @Value("${sujula.cart.default-currency:GMD}")
@@ -590,6 +593,8 @@ public class OrderServiceImpl implements OrderService {
         Coupon platformCoupon = findCouponByCode(quote.getPlatformCouponCode());
         List<VendorOrder> vendorOrders = new ArrayList<>();
 
+        LocalDateTime pricedAt = LocalDateTime.now();
+
         for (CartResponse.VendorGroup group : quote.getVendors()) {
             Vendor vendor = vendorRepository.findById(group.getVendorId())
                     .orElseThrow(() -> new ResourceNotFoundException("Vendor", group.getVendorId()));
@@ -613,6 +618,14 @@ public class OrderServiceImpl implements OrderService {
             vendorOrders.add(VendorOrder.builder()
                     .vendor(vendor)
                     .status(VendorOrderStatus.PENDING)
+                    // The rate this group was actually priced at, taken from the
+                    // quote rather than looked up again. A second lookup can
+                    // return a different number — the table refreshes daily and
+                    // a checkout can straddle that — and a slice recording a rate
+                    // its own amounts were not converted at is worse than one
+                    // recording nothing at all.
+                    .fx(snapshotOf(group.getNativeCurrency(), quote.getDisplayCurrency(),
+                                   exchangeRate, pricedAt))
                     .nativeCurrency(group.getNativeCurrency())
                     .subtotalNative(subtotalNative)
                     .discountNative(discountNative)
@@ -742,7 +755,12 @@ public class OrderServiceImpl implements OrderService {
         currencies.remove(target);
         Map<String, BigDecimal> rates = currencies.isEmpty()
                 ? Map.of() : exchangeRateService.getLatestRates(target, currencies);
-        RateTable rateTable = new RateTable(target, rates);
+        // Built with the moment it was read and the target currency's real
+        // scale. The first is frozen onto every vendor slice so a converted
+        // figure stays explicable once the table has moved; the second stops a
+        // CFA total coming out with centimes on it.
+        RateTable rateTable = new RateTable(target, rates,
+                currencyCatalogue.minorUnits(target), LocalDateTime.now());
 
         Map<Long, List<Resolved>> byVendor = resolved.stream()
                 .collect(Collectors.groupingBy(r -> r.vendor().getId(), LinkedHashMap::new, Collectors.toList()));
@@ -867,6 +885,7 @@ public class OrderServiceImpl implements OrderService {
         result.discount = grandDiscount;
         result.total = grandSubtotal.subtract(grandDiscount);
         result.currency = target;
+        result.rateTable = rateTable;
         result.platformCoupon = platformCoupon;
         result.vendorOrders = vendorOrders;
         return result;
@@ -969,7 +988,7 @@ public class OrderServiceImpl implements OrderService {
         result.shipping = shipping;
         result.total = result.total.add(shipping);
 
-        freezeVendorSettlement(result.vendorOrders);
+        freezeVendorSettlement(result.vendorOrders, result.rateTable);
     }
 
     /**
@@ -987,7 +1006,18 @@ public class OrderServiceImpl implements OrderService {
      * Runs after delivery pricing, since the legs do not exist before then.
      */
     static void freezeVendorSettlement(List<VendorOrder> vendorOrders) {
+        freezeVendorSettlement(vendorOrders, null);
+    }
+
+    /**
+     * @param rateTable the rates this order was priced from, so each slice can
+     *                  record the one it used. Null only in the older call path,
+     *                  which leaves the snapshot unrecorded rather than inventing
+     *                  a rate nobody actually converted at.
+     */
+    static void freezeVendorSettlement(List<VendorOrder> vendorOrders, RateTable rateTable) {
         for (VendorOrder vendorOrder : vendorOrders) {
+            recordFxSnapshot(vendorOrder, rateTable);
             BigDecimal deliveryDisplay = vendorOrder.getItems().stream()
                     .map(OrderItem::getDeliveryCost)
                     .filter(Objects::nonNull)
@@ -1024,6 +1054,66 @@ public class OrderServiceImpl implements OrderService {
             // keeps it. The vendor is paid for the goods.
             vendorOrder.setPayoutNative(totalNative.subtract(commission));
         }
+    }
+
+    /**
+     * Writes onto the slice the rate its native figures were converted at.
+     *
+     * <p>This is what makes the frozen amounts defensible. Without it they are
+     * the right numbers and nobody can say why: the rate table moves daily, so a
+     * payout questioned next month cannot be re-derived from anything still on
+     * the system.
+     *
+     * <p>Nothing is recorded when this vendor's lines spanned more than one
+     * listing currency — the same case in which the native totals are null.
+     * There was no single conversion, so there is no single rate, and writing
+     * one would be a fiction that looked like evidence.
+     */
+    /**
+     * A snapshot from a rate already known to be the one used.
+     *
+     * <p>Separate from {@link #recordFxSnapshot} because the two checkout paths
+     * come by their rate differently — the cart quote carries a per-vendor rate
+     * on the group, the explicit-item path has a whole table — and the thing
+     * worth sharing is what a snapshot means, not how the rate was obtained.
+     */
+    private static FxSnapshot snapshotOf(String nativeCurrency, String displayCurrency,
+                                         BigDecimal rate, LocalDateTime pricedAt) {
+        if (nativeCurrency == null || displayCurrency == null) {
+            return null;
+        }
+        if (nativeCurrency.equalsIgnoreCase(displayCurrency)) {
+            return FxSnapshot.identity(nativeCurrency, pricedAt);
+        }
+        if (rate == null || rate.signum() <= 0) {
+            // Priced across currencies with no usable rate. Recording nothing is
+            // honest; recording a zero or a one would read as evidence.
+            return null;
+        }
+        return FxSnapshot.published(nativeCurrency, displayCurrency, rate, pricedAt);
+    }
+
+    private static void recordFxSnapshot(VendorOrder vendorOrder, RateTable rateTable) {
+        String nativeCurrency = vendorOrder.getNativeCurrency();
+        if (rateTable == null || nativeCurrency == null) {
+            return;
+        }
+
+        LocalDateTime takenAt = rateTable.takenAt();
+        if (nativeCurrency.equalsIgnoreCase(rateTable.target())) {
+            // Same currency both sides. Recorded rather than skipped, so that
+            // "no conversion applied" is a positive fact rather than an absence
+            // indistinguishable from nobody having written it down.
+            vendorOrder.setFx(FxSnapshot.identity(nativeCurrency, takenAt));
+            return;
+        }
+
+        BigDecimal rate = rateTable.rateFor(nativeCurrency);
+        if (rate == null) {
+            return;   // priced without a rate; the order will have failed already
+        }
+        vendorOrder.setFx(FxSnapshot.published(
+                nativeCurrency, rateTable.target(), rate, takenAt));
     }
 
     /**
@@ -1070,6 +1160,17 @@ public class OrderServiceImpl implements OrderService {
         String currency;
         Coupon platformCoupon;
         List<VendorOrder> vendorOrders;
+
+        /**
+         * The rates this checkout was priced from, carried through so each
+         * vendor slice can record the one it used.
+         *
+         * <p>Carried rather than looked up again at freezing time. A second
+         * lookup could return a different number — the table is refreshed daily
+         * and a checkout can straddle that — and a slice recording a rate its
+         * own amounts were not converted at is worse than one recording nothing.
+         */
+        RateTable rateTable;
     }
 
     private Order persistOrder(Order order, CheckoutResult result) {

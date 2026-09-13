@@ -7,6 +7,7 @@ import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.constant.VendorOrderStatus;
 import com.sujula.model.order.OrderItem;
+import com.sujula.model.money.FxSnapshot;
 import com.sujula.model.order.VendorOrder;
 import com.sujula.model.products.Product;
 import com.sujula.model.products.ProductVariant;
@@ -167,6 +168,28 @@ public class VendorOrderServiceImpl implements VendorOrderService {
                 .build();
     }
 
+    /**
+     * The rate this slice was settled at, for the vendor to see.
+     *
+     * <p>Null when nothing was converted — the buyer paid in this vendor's own
+     * currency — and null when the slice spanned more than one listing currency,
+     * where there was no single rate to record. Both are legitimately absent
+     * rather than missing.
+     */
+    private static VendorOrderDetailResponse.Fx toFx(VendorOrder vendorOrder) {
+        FxSnapshot fx = vendorOrder.getFx();
+        if (fx == null || !fx.isRecorded() || fx.isIdentity()) {
+            return null;
+        }
+        return VendorOrderDetailResponse.Fx.builder()
+                .paidIn(fx.getDisplayCurrency())
+                .settledIn(fx.getNativeCurrency())
+                .rate(fx.getRate())
+                .rateAt(fx.getRateAt())
+                .source(fx.getSource() == null ? null : fx.getSource().name())
+                .build();
+    }
+
     private VendorOrderDetailResponse toDetail(VendorOrder vendorOrder, Vendor vendor) {
         List<VendorOrderDetailResponse.Line> lines = new ArrayList<>();
         for (OrderItem item : vendorOrder.getItems()) {
@@ -196,6 +219,7 @@ public class VendorOrderServiceImpl implements VendorOrderService {
                 .goodsSubtotal(vendorOrder.getSubtotalNative())
                 .discount(vendorOrder.getDiscountNative())
                 .goodsTotal(vendorOrder.getTotalNative())
+                .fx(toFx(vendorOrder))
                 .commissionRate(vendorOrder.getCommissionRate())
                 .commission(vendorOrder.getCommissionNative())
                 .delivery(vendorOrder.getDeliveryNative())
