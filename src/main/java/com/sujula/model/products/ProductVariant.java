@@ -30,6 +30,28 @@ public class ProductVariant {
     @Column(nullable = false)
     private Integer stock;
 
+    /**
+     * Optimistic lock, for the one write that genuinely needs one.
+     *
+     * <p>Setting stock to an absolute figure is not safe under concurrency: two
+     * people counting the same shelf and saving 10 and 12 leaves whichever
+     * committed last, and one of them is simply wrong with nothing to say so.
+     * A caller sending an absolute value therefore has to send the version they
+     * read, and a stale one is refused rather than applied.
+     *
+     * <p>Adjusting by a delta needs none of this - {@code +5} is {@code +5}
+     * whoever else is writing - which is why the inventory endpoint offers both
+     * and asks for the version on only one of them.
+     *
+     * <p>Separate from the pessimistic lock checkout takes. That one stops two
+     * buyers reserving the last handset; this one stops two staff overwriting
+     * each other's count.
+     */
+    @jakarta.persistence.Version
+    @Column(nullable = false)
+    @Builder.Default
+    private Long version = 0L;
+
     @Column(name = "price_override", precision = 12, scale = 2)
     private BigDecimal priceOverride;
 
@@ -100,4 +122,14 @@ public class ProductVariant {
     public void setProduct(Product product) { this.product = product; }
     public List<ProductOptionValue> getSelectedValues() { return selectedValues; }
     public void setSelectedValues(List<ProductOptionValue> selectedValues) { this.selectedValues = selectedValues; }
+
+    public Long getVersion() { return version; }
+
+    /**
+     * Hibernate owns this. It is here because the class writes its accessors by
+     * hand rather than generating them, and there is no setter that callers
+     * should use: a client that could choose its own version could defeat the
+     * lock by echoing back whatever it last saw.
+     */
+    void setVersion(Long version) { this.version = version; }
 }

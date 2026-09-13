@@ -798,11 +798,24 @@ INSERT INTO product_option_values (id, option_id, value, display_value, extra_pr
  (1343, 1331, 'BLUE',  'Blue',     0.00,    '#1F4E9C', NULL, 2),
  (1344, 1332, '6Y',    'Six yards',0.00,    NULL,      NULL, 1);
 
-INSERT INTO product_variants (id, product_id, sku, stock, price_override, active) VALUES
- (1350, 1301, 'KOM-SGA16-128-BLK', 5, NULL,    1),
- (1351, 1301, 'KOM-SGA16-128-BLU', 3, NULL,    1),
- (1352, 1301, 'KOM-SGA16-256-BLK', 4, 9700.00, 1),
- (1353, 1305, 'TER-WAX-IND-6Y',   18, NULL,    1);
+-- `version` is the optimistic lock, and it exists for one write: setting stock
+-- to an absolute figure. A delta is safe whoever else is saving - +5 is +5 -
+-- but two people counting the same shelf and saving 10 and 12 leave whichever
+-- committed last, with the other simply wrong and nothing anywhere to say so.
+-- So PATCH /vendor/inventory/{variantId} demands this value with a setTo and
+-- refuses a stale one. It is separate from the pessimistic lock checkout takes:
+-- that one stops two buyers reserving the last handset, this one stops two
+-- members of staff overwriting each other's count.
+--
+-- 1350 is the serialised one. Its stock is not typed in - it is however many
+-- handsets below are IN_STOCK, which is why it is 2 rather than a round number
+-- somebody chose.
+
+INSERT INTO product_variants (id, product_id, sku, stock, price_override, active, version) VALUES
+ (1350, 1301, 'KOM-SGA16-128-BLK', 2, NULL,    1, 3),
+ (1351, 1301, 'KOM-SGA16-128-BLU', 3, NULL,    1, 0),
+ (1352, 1301, 'KOM-SGA16-256-BLK', 4, 9700.00, 1, 1),
+ (1353, 1305, 'TER-WAX-IND-6Y',   18, NULL,    1, 0);
 
 -- Which option values each variant selects. Two join tables exist for this —
 -- product_variant_values and variant_option_values — mapping the same pair.
@@ -945,6 +958,146 @@ INSERT INTO catalogue_job_errors (id, job_id, row_number, field, message, value)
  (1410, 1400, 4,  'price',    '''nine hundred'' is not a price.', 'nine hundred'),
  (1411, 1400, 17, 'category', 'There is no category called ''Phonez''.', 'Phonez'),
  (1412, 1400, 23, 'sku',      'You already have a listing with the code KOM-SGA16.', 'KOM-SGA16');
+
+-- ── stock_movements ─────────────────────────────────────────────────────────
+-- The stock ledger. Same shape as the custody chain and for the same reason: a
+-- count that can be assigned directly is a count nobody can explain, and the
+-- moment a seller finds nine on the shelf against eleven on the screen, "the
+-- number is eleven" stops being an answer.
+--
+-- `quantity_change` is signed, so the rows sum to the figure on the shelf and a
+-- reconciliation is something anybody can check rather than take on trust. Add
+-- the changes for variant 1351 below: 0 + 10 - 3 - 4 = 3, which is its stock.
+--
+-- Note what is in here alongside the seller's own corrections: SALEs. An audit
+-- that showed the manual edits and quietly omitted the orders that took the
+-- stock would be wrong in exactly the case somebody opens it for - which is why
+-- OrderServiceImpl reserves and releases through the ledger too.
+--
+-- A SALE carries no order number and cannot: stock is reserved before the order
+-- exists, which is the right order to do it in. A RETURN does, because by then
+-- there is one.
+--
+-- `recorded_by` is null on a sale. An order deducted the stock, not a person.
+
+INSERT INTO stock_movements
+ (id, vendor_id, product_id, variant_id, reason, quantity_change,
+  stock_before, stock_after, reference, note, recorded_by_user_id, recorded_at)
+VALUES
+ (1450, 1101, 1301, 1351, 'RESTOCK',    10,  0, 10, 'GRN-2026-014', 'Container from Dakar',
+  1002, @NOW),
+ (1451, 1101, 1301, 1351, 'SALE',        -3, 10,  7, NULL, 'Reserved for an order', NULL, @NOW),
+ (1452, 1101, 1301, 1351, 'CORRECTION',  -4,  7,  3, NULL,
+  'Counted the shelf - four short, reported to the police', 1002, @NOW),
+ (1453, 1101, 1301, 1352, 'RESTOCK',      6,  0,  6, 'GRN-2026-014', NULL, 1002, @NOW),
+ (1454, 1101, 1301, 1352, 'SALE',        -2,  6,  4, NULL, 'Reserved for an order', NULL, @NOW),
+ (1455, 1102, 1305, 1353, 'RESTOCK',     20,  0, 20, 'BOLT-77', 'Twenty six-yard pieces',
+  1003, @NOW),
+ (1456, 1102, 1305, 1353, 'SALE',        -6, 20, 14, NULL, 'Reserved for an order', NULL, @NOW),
+ (1457, 1102, 1305, 1353, 'RETURN',       4, 14, 18, 'SJL-SEED-0001', 'Order cancelled',
+  NULL, @NOW),
+ (1458, 1101, 1301, 1350, 'SERIALISED_UNIT', 3, 0, 3, NULL, '3 handset(s) registered',
+  1002, @NOW),
+ (1459, 1101, 1301, 1350, 'SERIALISED_UNIT', -1, 3, 2, NULL,
+  'Handset 356938035643809 is now WRITTEN_OFF', 1002, @NOW);
+
+-- 1452 is the row that makes this worth building. A month of CORRECTIONs and no
+-- RESTOCKs is a shop with a theft problem, and a ledger that called them all
+-- restocks would hide it.
+
+-- ── imei_units ──────────────────────────────────────────────────────────────
+-- Phones are the one product a count cannot describe. Most sold here are
+-- second-hand, and the buyer is frequently thousands of miles away choosing a
+-- gift for somebody at home: two units of the same model are not
+-- interchangeable when one was opened once and the other has a scratched
+-- screen. That gap is most of the dispute surface on this marketplace, which is
+-- why the grade is finer than the product's NEW/USED and why FOR_PARTS has to
+-- name its fault.
+--
+-- Every IMEI here is Luhn-valid - the last digit checks the other fourteen, and
+-- the API refuses one that does not. Check 490154203237518 by hand if you like.
+--
+-- The unique constraint is platform-wide rather than per seller. The same
+-- handset on two shelves is a phone somebody has sold twice, and a constraint
+-- is the cheapest place to find that out.
+--
+-- 1462 is written off, which is why variant 1350's stock is 2 and not 3: the
+-- units are the authority and the count follows them. A shop whose count did
+-- not follow would go on selling a phone that is in a drawer with water damage.
+
+INSERT INTO imei_units
+ (id, imei, imei2, serial_number, vendor_id, product_id, variant_id, status, grade, grade_note,
+  cost_price, battery_health, warranty_expires_on, sold_on_order_number, sold_at, note,
+  registered_by_user_id, created_at, updated_at)
+VALUES
+ (1460, '490154203237518', NULL, 'RF8N90ABCDE', 1101, 1301, 1350, 'IN_STOCK', 'A_GRADE', NULL,
+  7000.00, 98, '2027-04-18', NULL, NULL, 'Opened for display only', 1002, @NOW, @NOW),
+ (1461, '351756051523993', NULL, 'RF8N90ABCDF', 1101, 1301, 1350, 'IN_STOCK', 'B_GRADE',
+  'Light marks on the frame. Screen unmarked.',
+  6600.00, 91, NULL, NULL, NULL, NULL, 1002, @NOW, @NOW),
+ (1462, '356938035643809', NULL, 'RF8N90ABCDG', 1101, 1301, 1350, 'WRITTEN_OFF', 'FOR_PARTS',
+  'Liquid damage. Does not charge.',
+  6600.00, NULL, NULL, NULL, NULL, 'Dropped in a bucket during the rains', 1002, @NOW, @NOW),
+ (1463, '013227009086244', NULL, 'RF8N90ABCDH', 1101, 1307, NULL, 'SOLD', 'A_GRADE', NULL,
+  5800.00, 95, NULL, 'SJL-SEED-0001', @NOW, NULL, 1002, @NOW, @NOW);
+
+-- 1463 is SOLD and carries the order it went out on. A seller cannot set that
+-- by hand - the order does it, so the record and the sale cannot disagree.
+-- Nothing here is BLOCKED either: that is only ever set by us after a report,
+-- because a seller who could clear it could launder a stolen handset, and
+-- recording an IMEI at all is mostly about making that harder.
+
+-- ── promotions ──────────────────────────────────────────────────────────────
+-- A promotion is a price the shop is charging; a coupon is a credential a buyer
+-- presents. They look alike and behave differently - a coupon can be capped per
+-- customer because there is a customer to count, and a promotion cannot.
+--
+-- `currency` is the vendor's settlement currency and never the buyer's. 1471 is
+-- 500 GMD off because Lamin banks in dalasi; a buyer paying in GBP sees that
+-- converted at the rate their order was quoted at. Re-striking it in GBP would
+-- leave him funding an amount that moves with the market.
+--
+-- 1470 and 1472 are the overlap case. Both cover product 1301 and their windows
+-- touch, so POST /vendor/promotions/1472/activate is refused and the refusal
+-- names 1470 - "conflicts with an existing promotion" would leave a seller
+-- hunting through their own list. Two discounts on one item do not compound
+-- into a price anybody can predict; they compound into whichever the pricing
+-- code reaches first.
+--
+-- 1473 is FREE_SHIPPING and runs alongside 1470 quite happily: one discounts
+-- the delivery leg and the other the goods, so they are not competing for the
+-- same number.
+
+INSERT INTO promotions
+ (id, vendor_id, name, description, type, status,
+  percent_off, amount_off, currency, buy_quantity, get_quantity, get_discount_percent,
+  bundle_price, minimum_basket, maximum_discount,
+  starts_at, ends_at, times_applied, activated_at, created_at, updated_at)
+VALUES
+ (1470, 1101, 'Tobaski phone sale', '15% off selected handsets', 'PERCENT', 'ACTIVE',
+  15.00, NULL, 'GMD', NULL, NULL, NULL, NULL, 2000.00, 2500.00,
+  @NOW, @FUTURE, 7, @NOW, @NOW, @NOW),
+ (1471, 1101, '500 off kettles', NULL, 'FIXED', 'PAUSED',
+  NULL, 500.00, 'GMD', NULL, NULL, NULL, NULL, 1000.00, NULL,
+  @NOW, @FUTURE, 0, @NOW, @NOW, @NOW),
+ (1472, 1101, 'Second phone half price', 'Buy one, get one at 50%', 'BUY_X_GET_Y', 'DRAFT',
+  NULL, NULL, 'GMD', 1, 1, 50.00, NULL, NULL, NULL,
+  @NOW, @FUTURE, 0, NULL, @NOW, @NOW),
+ (1473, 1102, 'Free delivery on cloth', NULL, 'FREE_SHIPPING', 'ACTIVE',
+  NULL, NULL, 'XOF', NULL, NULL, NULL, NULL, 10000.00, NULL,
+  @NOW, @FUTURE, 3, @NOW, @NOW, @NOW);
+
+-- Which goods each covers. No rows means the whole shop, which is why 1473 has
+-- none - and why a store-wide promotion conflicts with everything.
+
+INSERT INTO promotion_products (promotion_id, product_id) VALUES
+ (1470, 1301),
+ (1470, 1302),
+ (1471, 1303),
+ (1472, 1301);
+
+INSERT INTO promotion_categories (promotion_id, category_id) VALUES
+ (1470, 1213);
 
 -- ── wishlist_items ──────────────────────────────────────────────────────────
 
@@ -2322,6 +2475,97 @@ COMMIT;
 --   and the way they drift here is a listing moderation pulled that carries on
 --   selling. The verifier asserts the pair on every row, and so does a test
 --   across every state in the enum.
+--
+--   ── Stock, and why it moved ──────────────────────────────────────────────
+--
+--     GET   /vendor/inventory?lowStock=true
+--     GET   /vendor/inventory/1351/movements
+--     PATCH /vendor/inventory/1351   {"delta":-2,"reason":"DAMAGE"}
+--
+--   Add up variant 1351's movements: 0 + 10 - 3 - 4 = 3, which is its stock.
+--   That is the whole design. A count that can be assigned directly is a count
+--   nobody can explain, so the movement is the record and the figure is what
+--   the movements come to.
+--
+--   Look at what is in that trail beside the seller's own corrections: SALEs.
+--   An audit showing the manual edits and quietly omitting the orders that took
+--   the stock would be wrong in exactly the case somebody opens it for, which
+--   is why OrderServiceImpl reserves and releases through the same ledger. A
+--   SALE has no order number and cannot — stock is reserved before the order
+--   exists, which is the right way round — and no person either, because an
+--   order deducted it rather than a member of staff. A RETURN has both.
+--
+--   1452 is the row that earns the feature: minus four, CORRECTION, "counted
+--   the shelf, four short". A month of those and no restocks is a shop with a
+--   theft problem, and a ledger that called them all restocks would hide it.
+--
+--   ── The optimistic lock ──────────────────────────────────────────────────
+--
+--     PATCH /vendor/inventory/1351   {"setTo":12,"version":0,"reason":"CORRECTION"}
+--
+--   Send that twice. The second is refused, because the first moved the
+--   version. Two people counting the same shelf and saving 10 and 12 must not
+--   leave whichever committed last, with the other simply wrong and nothing
+--   anywhere to say so — so an absolute figure carries the version it was read
+--   at. A delta needs none of that: +5 is +5 whoever else is writing, which is
+--   why the endpoint offers both and asks for the version on only one.
+--
+--   ── Handsets ─────────────────────────────────────────────────────────────
+--
+--     GET   /vendor/imei-units?variantId=1350
+--     POST  /vendor/imei-units
+--
+--   Phones are the one product a count cannot describe: most sold here are
+--   second-hand, and the buyer is often thousands of miles away choosing a gift
+--   for somebody at home. Two units of the same model are not interchangeable
+--   when one was opened once and the other has a scratched screen, and that gap
+--   is most of the dispute surface on this marketplace.
+--
+--   Every IMEI here satisfies its own Luhn check digit, and the verifier checks
+--   that rather than taking this comment's word for it — two of the four
+--   originally written here did not, which the API would have refused on
+--   re-entry. Try registering 490154203237519 (one digit off) and watch that
+--   line alone be rejected while the others register.
+--
+--   Variant 1350's stock is 2, not 3, because 1462 is written off. The units
+--   are the authority and the count follows them; a shop whose count did not
+--   follow would go on selling a phone that is in a drawer with water damage.
+--   For the same reason, PATCH /vendor/inventory/1350 with a typed figure is
+--   refused outright.
+--
+--   Two things a seller cannot do to a handset: mark it SOLD (the order does
+--   that, so the record and the sale cannot disagree) and touch BLOCKED in
+--   either direction. Setting it would let them flag a rival's stock; clearing
+--   it would let them launder a stolen handset, and recording an IMEI at all is
+--   mostly about making that harder.
+--
+--   ── Discounts ────────────────────────────────────────────────────────────
+--
+--     POST /vendor/promotions/1472/activate     refused
+--     POST /vendor/promotions/1471/activate     allowed
+--
+--   The first is refused and names 1470: both cover product 1301 and their
+--   windows touch. Two discounts on one item do not compound into a price
+--   anybody can predict — they compound into whichever the pricing code reaches
+--   first, which is a different answer on different days and an argument with a
+--   buyer either way. "Conflicts with an existing promotion" would leave a
+--   seller hunting through their own list, so the refusal says which one.
+--
+--   1473 is FREE_SHIPPING and runs alongside 1470 happily: one discounts the
+--   delivery leg and the other the goods, so they are not competing for the
+--   same number.
+--
+--   Every amount is in the seller's own currency. 1471 is 500 GMD off because
+--   Lamin banks in dalasi; a buyer paying in GBP sees that converted at the
+--   rate their order was quoted at. Striking it in GBP instead would leave him
+--   funding an amount that moves with the market between writing the promotion
+--   and the order landing.
+--
+--   A promotion is a price the shop is charging; a coupon is a credential a
+--   buyer presents. That difference is why a coupon can be capped per customer
+--   — there is a customer to count — and a promotion cannot. 1081 is a vendor
+--   coupon and 1080 a platform-funded one, and the scope is what decides whose
+--   money it is when commission is worked out.
 --
 --   And one thing you cannot do: move a vendor order to DELIVERED through the
 --   API. Order 1403 is delivered only because this file wrote it that way.

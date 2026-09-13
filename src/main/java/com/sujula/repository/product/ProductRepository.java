@@ -110,6 +110,18 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query("SELECT p.status, COUNT(p) FROM Product p WHERE p.vendor.id = :vendorId GROUP BY p.status")
     List<Object[]> countByStatusForVendor(@Param("vendorId") Long vendorId);
 
+    /**
+     * Which of these listing ids this seller actually owns.
+     *
+     * <p>One query rather than one per id. A promotion naming fifty products
+     * would otherwise be fifty round trips to answer a question the database can
+     * answer once, and the ids that come back are what lets the refusal name the
+     * one that is not theirs.
+     */
+    @Query("SELECT p.id FROM Product p WHERE p.id IN :ids AND p.vendor.id = :vendorId")
+    List<Long> findOwnedIds(@Param("ids") java.util.Collection<Long> ids,
+                            @Param("vendorId") Long vendorId);
+
     boolean existsBySkuIgnoreCaseAndVendorId(String sku, Long vendorId);
 
     @Query("SELECT COUNT(p) > 0 FROM Product p WHERE LOWER(p.sku) = LOWER(:sku) "

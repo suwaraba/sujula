@@ -86,9 +86,20 @@ class VendorCatalogueServiceTest {
         lifecycle = new ProductLifecycle();
 
         ReferenceDataProperties properties = new ReferenceDataProperties();
+        // A real ledger over mocked repositories: the stock edits on this surface
+        // go through it, and a mocked one would hide that they stopped.
+        com.sujula.repository.inventory.StockMovementRepository movements =
+                mock(com.sujula.repository.inventory.StockMovementRepository.class);
+        com.sujula.repository.user.UserRepository users =
+                mock(com.sujula.repository.user.UserRepository.class);
+        when(movements.save(org.mockito.ArgumentMatchers.any())).thenAnswer(call -> call.getArgument(0));
+        when(users.findById(anyLong())).thenReturn(Optional.empty());
+
         service = new VendorCatalogueServiceImpl(products, vendors, categories, brands, variants,
                 images, options, translations, lifecycle,
-                new ReferenceDataService(properties, CurrencyCatalogue.of(properties)));
+                new ReferenceDataService(properties, CurrencyCatalogue.of(properties)),
+                new com.sujula.service.inventory.StockLedger(movements, variants, products),
+                users);
 
         ReflectionTestUtils.setField(service, "maxImages", 12);
 

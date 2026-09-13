@@ -225,6 +225,15 @@ public class SecurityConfig {
                         .requestMatchers("/vendor/products", "/vendor/products/**",
                                          "/vendor/imports/**").authenticated()
 
+                        // Stock, handsets and discounts. Everything under here
+                        // resolves through the caller's own store, so a path
+                        // variable cannot reach another seller's shelf, their
+                        // margins or their customer list.
+                        .requestMatchers("/vendor/inventory", "/vendor/inventory/**",
+                                         "/vendor/imei-units", "/vendor/imei-units/**",
+                                         "/vendor/promotions", "/vendor/promotions/**",
+                                         "/vendor/coupons", "/vendor/coupons/**").authenticated()
+
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to
                         // buy has not signed in yet, and these carry no private figures.

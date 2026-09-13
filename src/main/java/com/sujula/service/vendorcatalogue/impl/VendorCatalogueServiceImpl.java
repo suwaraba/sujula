@@ -28,6 +28,7 @@ import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.constant.MediaStatus;
 import com.sujula.model.constant.ProductCondition;
 import com.sujula.model.constant.ProductStatus;
+import com.sujula.model.constant.StockMovementReason;
 import com.sujula.model.products.Brand;
 import com.sujula.model.products.Category;
 import com.sujula.model.products.Product;
@@ -86,6 +87,8 @@ public class VendorCatalogueServiceImpl implements VendorCatalogueService {
     private final ProductTranslationRepository translations;
     private final ProductLifecycle lifecycle;
     private final ReferenceDataService reference;
+    private final com.sujula.service.inventory.StockLedger ledger;
+    private final com.sujula.repository.user.UserRepository users;
 
     @Value("${sujula.catalogue.max-images-per-product:12}")
     private int maxImages;
@@ -95,7 +98,9 @@ public class VendorCatalogueServiceImpl implements VendorCatalogueService {
                                       ProductVariantRepository variants, ProductImageRepository images,
                                       ProductOptionRepository options,
                                       ProductTranslationRepository translations,
-                                      ProductLifecycle lifecycle, ReferenceDataService reference) {
+                                      ProductLifecycle lifecycle, ReferenceDataService reference,
+                                      com.sujula.service.inventory.StockLedger ledger,
+                                      com.sujula.repository.user.UserRepository users) {
         this.products = products;
         this.vendors = vendors;
         this.categories = categories;
@@ -106,6 +111,14 @@ public class VendorCatalogueServiceImpl implements VendorCatalogueService {
         this.translations = translations;
         this.lifecycle = lifecycle;
         this.reference = reference;
+        this.ledger = ledger;
+        this.users = users;
+    }
+
+    /** The person a ledger row is attributed to. Null rather than failing: a
+     *  movement with no name is worse than none, but not writing it is worse still. */
+    private com.sujula.model.user.User actor(Long userId) {
+        return userId == null ? null : users.findById(userId).orElse(null);
     }
 
     // -- Reads ---------------------------------------------------------------
@@ -259,7 +272,12 @@ public class VendorCatalogueServiceImpl implements VendorCatalogueService {
             product.setSku(resolveSku(product.getVendor(), request.sku(), product.getId()));
         }
         if (request.stock() != null) {
-            product.setStock(request.stock());
+            // Through the ledger, so a stock change made from the listing editor
+            // shows up in the same audit as one made from the inventory screen.
+            // Two ways to change a number and only one of them recorded is how a
+            // reconciliation ends up unexplainable.
+            ledger.setProduct(product, request.stock(), StockMovementReason.CORRECTION,
+                    null, "Set from the listing editor", actor(userId));
             product.setLastRestockedAt(LocalDateTime.now());
         }
         if (request.lowStockThreshold() != null) {
@@ -448,7 +466,8 @@ public class VendorCatalogueServiceImpl implements VendorCatalogueService {
             variant.setSku(resolveVariantSku(request.sku(), variant.getId()));
         }
         if (request.stock() != null) {
-            variant.setStock(request.stock());
+            ledger.setVariant(variant, request.stock(), StockMovementReason.CORRECTION,
+                    null, "Set from the listing editor", actor(userId));
         }
         if (request.priceOverride() != null) {
             variant.setPriceOverride(request.priceOverride());

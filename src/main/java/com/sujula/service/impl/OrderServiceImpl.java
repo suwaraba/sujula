@@ -15,6 +15,7 @@ import com.sujula.model.constant.CouponScope;
 import com.sujula.model.constant.CouponType;
 import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.OrderStatus;
+import com.sujula.model.constant.StockMovementReason;
 import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.constant.VendorOrderStatus;
 import com.sujula.model.order.Order;
@@ -114,6 +115,7 @@ public class OrderServiceImpl implements OrderService {
     private final OrderStatusHistoryRepository statusHistoryRepository;
     private final ProductRepository productRepository;
     private final ProductVariantRepository variantRepository;
+    private final com.sujula.service.inventory.StockLedger stockLedger;
     private final UserRepository userRepository;
     private final VendorRepository vendorRepository;
     private final AddressRepository addressRepository;
@@ -904,13 +906,28 @@ public class OrderServiceImpl implements OrderService {
         return stock != null ? Math.max(stock, 0) : 0;
     }
 
+    /**
+     * Takes stock for an order, through the ledger rather than around it.
+     *
+     * <p>Written as a movement, not just a smaller number, because the seller's
+     * stock audit has to include the thing that actually moves their stock. An
+     * audit showing their own corrections and silently omitting sales would be
+     * wrong in exactly the case they open it for.
+     *
+     * <p>No order reference, and it cannot have one: stock is reserved before
+     * the order exists, which is the right order to do it in - reserving after
+     * creating leaves an order for goods that were gone. The movement carries
+     * its timestamp and the figures either side, which is what a reconciliation
+     * needs; the cancellation path below does have the order number and passes
+     * it.
+     */
     private void deductStock(Product product, ProductVariant variant, int quantity) {
         if (variant != null) {
-            variant.setStock(variant.getStock() - quantity);
-            variantRepository.save(variant);
+            stockLedger.adjustVariant(variant, -quantity, StockMovementReason.SALE,
+                    null, "Reserved for an order", null);
         } else {
-            product.setStock(product.getStock() - quantity);
-            productRepository.save(product);
+            stockLedger.adjustProduct(product, -quantity, StockMovementReason.SALE,
+                    null, "Reserved for an order", null);
         }
     }
 
@@ -1224,16 +1241,17 @@ public class OrderServiceImpl implements OrderService {
         couponRepository.save(coupon);
     }
 
+    /** Puts cancelled goods back on the shelf, and says which order they came off. */
     private void restoreStock(Order order) {
         for (OrderItem item : order.getItems()) {
             if (item.getVariant() != null) {
-                ProductVariant v = item.getVariant();
-                v.setStock(v.getStock() + item.getQuantity());
-                variantRepository.save(v);
+                stockLedger.adjustVariant(item.getVariant(), item.getQuantity(),
+                        StockMovementReason.RETURN, order.getOrderNumber(),
+                        "Order cancelled", null);
             } else {
-                Product p = item.getProduct();
-                p.setStock(p.getStock() + item.getQuantity());
-                productRepository.save(p);
+                stockLedger.adjustProduct(item.getProduct(), item.getQuantity(),
+                        StockMovementReason.RETURN, order.getOrderNumber(),
+                        "Order cancelled", null);
             }
         }
     }
