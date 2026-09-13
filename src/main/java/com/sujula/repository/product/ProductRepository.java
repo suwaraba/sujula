@@ -48,6 +48,86 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      */
     Page<Product> findByVendorIdOrderByCreatedAtDesc(Long vendorId, Pageable pageable);
 
+    // ── The seller's own back office ─────────────────────────────────────────
+
+    /**
+     * One listing, but only if this seller owns it.
+     *
+     * <p>Ownership is the query. Every write on the {@code /vendor/products}
+     * surface resolves through this or its fetching sibling, so another
+     * seller's product is not found rather than found and refused — and a
+     * "forbidden" would confirm that product 4012 exists, which tells a
+     * competitor how many listings the platform has.
+     */
+    @Query("SELECT p FROM Product p WHERE p.id = :id AND p.vendor.id = :vendorId")
+    Optional<Product> findByIdAndVendorId(@Param("id") Long id, @Param("vendorId") Long vendorId);
+
+    /**
+     * The same, with the collections a detail response reads already loaded.
+     *
+     * <p>{@code spring.jpa.open-in-view} is off, so anything the response touches
+     * has to be fetched inside the transaction. Images and variants are separate
+     * queries rather than one join: fetching two collections in a single query
+     * is a cartesian product, and Hibernate would rather throw than guess.
+     */
+    @Query("SELECT p FROM Product p LEFT JOIN FETCH p.images "
+         + "WHERE p.id = :id AND p.vendor.id = :vendorId")
+    Optional<Product> findByIdAndVendorIdWithImages(@Param("id") Long id,
+                                                    @Param("vendorId") Long vendorId);
+
+    /**
+     * The seller's listings, including the ones no buyer can see.
+     *
+     * <p>Deliberately unlike every public query in this class, which filters on
+     * {@code active}. A back office that hid drafts and suspended listings would
+     * hide exactly the rows the seller has to act on.
+     */
+    @Query(value      = "SELECT p FROM Product p WHERE p.vendor.id = :vendorId "
+                      + "AND (:status IS NULL OR p.status = :status) "
+                      + "AND (:includeArchived = TRUE OR p.status <> com.sujula.model.constant.ProductStatus.ARCHIVED) "
+                      + "AND (:search IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) "
+                      + "     OR LOWER(p.sku) LIKE LOWER(CONCAT('%', :search, '%'))) "
+                      + "ORDER BY p.updatedAt DESC",
+           countQuery = "SELECT COUNT(p) FROM Product p WHERE p.vendor.id = :vendorId "
+                      + "AND (:status IS NULL OR p.status = :status) "
+                      + "AND (:includeArchived = TRUE OR p.status <> com.sujula.model.constant.ProductStatus.ARCHIVED) "
+                      + "AND (:search IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) "
+                      + "     OR LOWER(p.sku) LIKE LOWER(CONCAT('%', :search, '%')))")
+    Page<Product> findForVendor(@Param("vendorId") Long vendorId,
+                                @Param("status") com.sujula.model.constant.ProductStatus status,
+                                @Param("includeArchived") boolean includeArchived,
+                                @Param("search") String search,
+                                Pageable pageable);
+
+    /** Everything this seller has, for an export. Ordered so two exports match. */
+    @Query("SELECT p FROM Product p WHERE p.vendor.id = :vendorId "
+         + "AND (:includeArchived = TRUE OR p.status <> com.sujula.model.constant.ProductStatus.ARCHIVED) "
+         + "ORDER BY p.id ASC")
+    List<Product> findAllForExport(@Param("vendorId") Long vendorId,
+                                   @Param("includeArchived") boolean includeArchived);
+
+    /** How many listings this seller is in a given state of, for the back-office counts. */
+    @Query("SELECT p.status, COUNT(p) FROM Product p WHERE p.vendor.id = :vendorId GROUP BY p.status")
+    List<Object[]> countByStatusForVendor(@Param("vendorId") Long vendorId);
+
+    boolean existsBySkuIgnoreCaseAndVendorId(String sku, Long vendorId);
+
+    @Query("SELECT COUNT(p) > 0 FROM Product p WHERE LOWER(p.sku) = LOWER(:sku) "
+         + "AND p.vendor.id = :vendorId AND p.id <> :exceptId")
+    boolean existsBySkuForVendorExcept(@Param("sku") String sku, @Param("vendorId") Long vendorId,
+                                       @Param("exceptId") Long exceptId);
+
+    /**
+     * Whether anybody has ever ordered this listing.
+     *
+     * <p>What decides archive from delete. An order line points at the product,
+     * and a buyer's receipt, invoice and review all have to keep resolving years
+     * later — so a listing somebody bought is never removed, whatever the seller
+     * asks for.
+     */
+    @Query("SELECT COUNT(oi) > 0 FROM OrderItem oi WHERE oi.product.id = :productId")
+    boolean hasBeenOrdered(@Param("productId") Long productId);
+
     // ── Proximity-ranked browse queries ──────────────────────────────────────
     // Every query below is a native query (MySQL — no PostGIS/spatial extension
     // available) that great-circle-distances each product from the DELIVERY

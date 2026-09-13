@@ -68,9 +68,80 @@ public class Product {
     @JoinColumn(name = "brand_id")
     private Brand brand;
 
+    /**
+     * Whether a buyer can see this listing.
+     *
+     * <p>A mirror of {@code status == PUBLISHED}, not an independent fact.
+     * Every public catalogue query in this system filters on it, and rewriting
+     * all of them to read the enum would be a large change to the one part of
+     * the codebase that is under load — so the column stays and
+     * {@code ProductLifecycle} is the only thing allowed to write it.
+     *
+     * <p>The risk of a denormalised mirror is that it drifts, and the answer is
+     * that it has exactly one writer and a test asserting the two can never
+     * disagree. Set it anywhere else and a suspended listing keeps selling.
+     */
     @Column(nullable = false)
     @Builder.Default
     private boolean active = true;
+
+    /**
+     * The listing's place in the moderation ladder.
+     *
+     * <p>The authority. {@link #active} follows from it, never the other way
+     * round: a seller who could flip a boolean would be a seller who can
+     * publish without being approved.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private com.sujula.model.constant.ProductStatus status =
+            com.sujula.model.constant.ProductStatus.DRAFT;
+
+    /** When the seller last sent it for review. */
+    private LocalDateTime submittedForReviewAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reviewed_by_user_id")
+    private com.sujula.model.user.User reviewedBy;
+
+    private LocalDateTime reviewedAt;
+
+    /**
+     * Why a moderator refused it, in words the seller can act on.
+     *
+     * <p>Kept after a later approval rather than cleared. A seller arguing about
+     * why their listing took a week needs the history, and so does anyone
+     * checking whether moderation is being applied consistently.
+     */
+    @Column(length = 500)
+    private String rejectionReason;
+
+    /** First time it went on sale. Not reset by an unpublish. */
+    private LocalDateTime publishedAt;
+
+    private LocalDateTime unpublishedAt;
+
+    /**
+     * When the seller finished with it.
+     *
+     * <p>Archived rather than deleted whenever anybody has ordered it: an order
+     * line points here, and a buyer's receipt, invoice and review all have to
+     * keep resolving years later. A listing nobody ever ordered is genuinely
+     * deleted.
+     */
+    private LocalDateTime archivedAt;
+
+    /**
+     * A digest of the fields a moderator actually looked at.
+     *
+     * <p>What makes "this edit needs re-reviewing" answerable without storing a
+     * second copy of the listing. Taken when approval is granted; compared on
+     * every edit. Changing the stock does not match it and does not re-trigger;
+     * rewriting the description does.
+     */
+    @Column(length = 64)
+    private String approvedContentHash;
 
     @Column(nullable = false)
     @Builder.Default

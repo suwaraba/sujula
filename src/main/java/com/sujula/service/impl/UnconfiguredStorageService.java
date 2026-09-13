@@ -63,6 +63,17 @@ public class UnconfiguredStorageService implements StorageService {
         return false;
     }
 
+    /** Nothing was ever stored, so there is nothing to read. */
+    @Override
+    public java.util.Optional<byte[]> download(String url) {
+        return java.util.Optional.empty();
+    }
+
+    @Override
+    public String upload(String folder, String filename, byte[] content, String contentType) {
+        throw new BadRequestException(MESSAGE);
+    }
+
     /** Nothing was ever stored, so there is nothing to remove. */
     @Override
     public void delete(String publicUrl) {

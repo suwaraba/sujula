@@ -217,6 +217,14 @@ public class SecurityConfig {
                         // the payout endpoint re-authenticates on top of that.
                         .requestMatchers("/vendor/stores", "/vendor/stores/**").authenticated()
 
+                        // A seller's own catalogue. Authenticated is the outer
+                        // gate only: every method resolves the listing by id AND
+                        // vendor in one query, and a job reference is unguessable
+                        // on top of that, because import errors name a seller's
+                        // products, prices and SKUs.
+                        .requestMatchers("/vendor/products", "/vendor/products/**",
+                                         "/vendor/imports/**").authenticated()
+
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to
                         // buy has not signed in yet, and these carry no private figures.

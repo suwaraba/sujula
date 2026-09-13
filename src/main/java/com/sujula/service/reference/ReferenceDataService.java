@@ -102,6 +102,30 @@ public class ReferenceDataService {
      * configuration and a caller that mutated one would change the answer given
      * to everyone after it.
      */
+    /**
+     * Normalises a locale tag to the one this platform actually serves.
+     *
+     * <p>Case-insensitively, because "FR-sn" is the same locale as "fr-SN" and
+     * refusing it teaches nobody anything. Anything not on the list is refused
+     * outright: a translation written in a locale the catalogue never asks for
+     * is work a seller did that nothing will ever read.
+     */
+    public String requireLocale(String tag) {
+        if (tag == null || tag.isBlank()) {
+            throw new com.sujula.exceptions.BadRequestException("A locale is required.");
+        }
+        String wanted = tag.trim();
+        return properties.getLocales().stream()
+                .map(ReferenceDataProperties.Locale::getTag)
+                .filter(supported -> supported.equalsIgnoreCase(wanted))
+                .findFirst()
+                .orElseThrow(() -> new com.sujula.exceptions.BadRequestException(
+                        "This platform does not serve the locale " + wanted + ". Supported: "
+                        + properties.getLocales().stream()
+                                .map(ReferenceDataProperties.Locale::getTag)
+                                .collect(java.util.stream.Collectors.joining(", "))));
+    }
+
     public ReferenceResponses.PublicConfig publicConfig() {
         ReferenceDataProperties.Config config = properties.getConfig();
 

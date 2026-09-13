@@ -549,49 +549,71 @@ VALUES
 -- `weight_kg` and coordinates are what delivery pricing measures. A product
 -- with neither is billed on a flat per-scope fallback, which 1306 demonstrates.
 
+--
+-- `status` is the authority and `active` is a mirror of it: active is true if
+-- and only if status is PUBLISHED. Every public catalogue query filters on
+-- active, and ProductLifecycle is the only thing allowed to write it. Two
+-- fields describing one fact drift the moment something sets one without the
+-- other, and the way they drift here is a listing moderation pulled that keeps
+-- on selling. The verifier checks the pair on every row.
+--
+-- `approved_content_hash` is a digest of the fields a moderator actually looked
+-- at - the name, the text, the price, the category, the brand, the condition -
+-- taken when approval was granted. Editing any of them stops matching, and the
+-- listing goes back into the queue and comes off sale; restocking does not.
+
 INSERT INTO products
  (id, vendor_id, category_id, brand_id, name, slug, short_description, description,
   sku, price, compare_at_price, price_currency, stock, low_stock_threshold,
   allow_backorder, active, featured, weight_kg, dimensions, country, delivery_scope,
   product_condition,
   latitude, longitude, rating, total_reviews, total_sold, score, last_restocked_at,
+  status, submitted_for_review_at, reviewed_by_user_id, reviewed_at, rejection_reason,
+  published_at, unpublished_at, archived_at, approved_content_hash,
   created_at, updated_at)
 VALUES
  (1301, 1101, 1213, 1201, 'Samsung Galaxy A16', 'samsung-galaxy-a16',
   '6.7-inch screen, 5000mAh battery', 'Dual SIM, expandable storage, two-year local warranty.',
   'KOM-SGA16', 8500.00, 9750.00, 'GMD', 12, 3, 0, 1, 1, 0.195, '165x77x8 mm', 'GM', 'NATIONAL',
   'NEW',
-  13.43830000, -16.67810000, 4.50, 2, 9, 87, @NOW, @NOW, @NOW),
+  13.43830000, -16.67810000, 4.50, 2, 9, 87, @NOW,
+  'PUBLISHED', @NOW, 1001, @NOW, NULL, @NOW, NULL, NULL, '8dd9093b17919f57a877c6aea14587792b21ab9c221af890eb4da1d03b02c78a', @NOW, @NOW),
  (1302, 1101, 1213, 1202, 'Nokia 110 4G', 'nokia-110-4g',
   'Feature phone, torch, month-long standby', 'Keypad handset with FM radio and a removable battery.',
   'KOM-N110', 1450.00, NULL, 'GMD', 40, 10, 1, 1, 0, 0.085, '121x50x14 mm', 'GM', 'NATIONAL',
   'NEW',
-  13.43830000, -16.67810000, 4.20, 1, 3, 61, @NOW, @NOW, @NOW),
+  13.43830000, -16.67810000, 4.20, 1, 3, 61, @NOW,
+  'PUBLISHED', @NOW, 1001, @NOW, NULL, @NOW, NULL, NULL, 'b183bd82c74b77b022c49f51545bb922fd54f10a25d267c81fbd08dc7d441c89', @NOW, @NOW),
  (1303, 1101, 1215, 1203, 'Tobaski 1.8L Electric Kettle', 'tobaski-electric-kettle',
   'Stainless steel, auto shut-off', 'Boils 1.8 litres in four minutes. 240V.',
   'KOM-KET18', 1250.00, 1600.00, 'GMD', 22, 5, 0, 1, 1, 1.240, '220x160x240 mm', 'GM', 'REGIIONAL',
   'NEW',
-  13.43830000, -16.67810000, 4.70, 1, 2, 74, @NOW, @NOW, @NOW),
+  13.43830000, -16.67810000, 4.70, 1, 2, 74, @NOW,
+  'PUBLISHED', @NOW, 1001, @NOW, NULL, @NOW, NULL, NULL, '1e7e84fa14b79342223a8825a105b5cd04934b6b1a338867a8b3e9e06c58afbd', @NOW, @NOW),
  (1304, 1101, 1214, NULL, 'Kombo Bluetooth Speaker', 'kombo-bluetooth-speaker',
   'Ten hours of playback', 'Splash-resistant, USB-C charging, carry strap.',
   'KOM-SPK10', 2100.00, NULL, 'GMD', 0, 4, 0, 1, 0, 0.540, '180x75x75 mm', 'GM', 'REGIIONAL',
   'OPEN_BOX',
-  13.43830000, -16.67810000, NULL, 0, 0, 40, NULL, @NOW, @NOW),
+  13.43830000, -16.67810000, NULL, 0, 0, 40, NULL,
+  'PUBLISHED', @NOW, 1001, @NOW, NULL, @NOW, NULL, NULL, '744485b67efa3c76c099715866d146a5e15831fad3f15da4c0d0b0771773ffd6', @NOW, @NOW),
  (1305, 1102, 1216, NULL, 'Wax Print — Six Yards, Indigo', 'wax-print-six-yards-indigo',
   'Hand-finished cotton, six-yard piece', 'Printed in Ziguinchor. Colour holds through cold washing.',
   'TER-WAX-IND', 14500.00, NULL, 'XOF', 18, 4, 0, 1, 1, 0.850, '6 yards', 'SN', 'GLOBAL',
   'NEW',
-  12.56410000, -16.27190000, 4.80, 1, 6, 80, @NOW, @NOW, @NOW),
+  12.56410000, -16.27190000, 4.80, 1, 6, 80, @NOW,
+  'PUBLISHED', @NOW, 1001, @NOW, NULL, @NOW, NULL, NULL, 'a33708187bd7ff9dfd6285fd592a56cb3cc76a5400c1faba8966f6511b310b51', @NOW, @NOW),
  (1306, 1102, 1216, NULL, 'Damask Bazin — Three Yards', 'damask-bazin-three-yards',
   'Heavy damask, unbleached', 'Sold in three-yard cuts. Weight and origin not recorded by the seller.',
   'TER-BAZ-3Y', 9800.00, NULL, 'XOF', 7, 2, 0, 1, 0, NULL, NULL, 'SN', 'NATIONAL',
 'NEW',
-  NULL, NULL, NULL, 0, 0, 35, NULL, @NOW, @NOW),
+  NULL, NULL, NULL, 0, 0, 35, NULL,
+  'PUBLISHED', @NOW, 1001, @NOW, NULL, @NOW, NULL, NULL, 'b4b0bbd5a0a433a03a86331a3821263b67d0d0d2e6c691f0cddf358a042150e8', @NOW, @NOW),
  (1307, 1101, 1213, 1201, 'Samsung Galaxy A05 (withdrawn)', 'samsung-galaxy-a05',
   'Superseded model', 'Unpublished rather than deleted: order lines still point at it.',
   'KOM-SGA05', 6900.00, NULL, 'GMD', 0, 3, 0, 0, 0, 0.190, NULL, 'GM', 'NATIONAL',
   'REFURBISHED',
-  13.43830000, -16.67810000, NULL, 0, 4, 10, NULL, @NOW, @NOW);
+  13.43830000, -16.67810000, NULL, 0, 4, 10, NULL,
+  'ARCHIVED',  @NOW, 1001, @NOW, NULL, @NOW, @NOW, @NOW, NULL, @NOW, @NOW);
 
 -- ── reviews ─────────────────────────────────────────────────────────────────
 -- Nothing writes these: Review is an entity with no service, and the
@@ -816,14 +838,113 @@ INSERT INTO product_attributes (id, product_id, name, value, sort_order) VALUES
 -- bucket that does not exist in dev; presign refuses while storage is
 -- unconfigured, so these are here to populate the column, not to load.
 
-INSERT INTO product_images (id, product_id, image_url, alt_text, sort_order, is_default, created_at) VALUES
- (1370, 1301, 'https://media.example.invalid/products/sga16-front.jpg', 'Galaxy A16 front',   0, 1, @NOW),
- (1371, 1301, 'https://media.example.invalid/products/sga16-back.jpg',  'Galaxy A16 back',    1, 0, @NOW),
- (1372, 1302, 'https://media.example.invalid/products/n110.jpg',        'Nokia 110 4G',       0, 1, @NOW),
- (1373, 1303, 'https://media.example.invalid/products/kettle.jpg',      'Kettle',             0, 1, @NOW),
- (1374, 1304, 'https://media.example.invalid/products/speaker.jpg',     'Bluetooth speaker',  0, 1, @NOW),
- (1375, 1305, 'https://media.example.invalid/products/wax-indigo.jpg',  'Indigo wax print',   0, 1, @NOW),
- (1376, 1306, 'https://media.example.invalid/products/bazin.jpg',       'Damask bazin',       0, 1, @NOW);
+-- The row is written when a storage key is claimed and only becomes READY when
+-- the bytes arrive, so a listing never shows an image that is not there. 1377
+-- is an upload the seller started and abandoned: PENDING, no confirmed_at, and
+-- deliberately not the default even though it is the only image on 1307.
+--
+-- Exactly one default per product, and it is whichever is first in sort order -
+-- reordering is how a seller changes their card image, so the two are not
+-- allowed to disagree.
+
+INSERT INTO product_images
+ (id, product_id, image_url, alt_text, sort_order, is_default,
+  status, original_filename, content_type, size_bytes, confirmed_at, created_at)
+VALUES
+ (1370, 1301, 'https://media.example.invalid/products/sga16-front.jpg', 'Galaxy A16 front',   0, 1,
+  'READY', 'sga16-front.jpg', 'image/jpeg', 184320, @NOW, @NOW),
+ (1371, 1301, 'https://media.example.invalid/products/sga16-back.jpg',  'Galaxy A16 back',    1, 0,
+  'READY', 'sga16-back.jpg',  'image/jpeg', 176044, @NOW, @NOW),
+ (1372, 1302, 'https://media.example.invalid/products/n110.jpg',        'Nokia 110 4G',       0, 1,
+  'READY', 'n110.jpg',        'image/jpeg',  91200, @NOW, @NOW),
+ (1373, 1303, 'https://media.example.invalid/products/kettle.jpg',      'Kettle',             0, 1,
+  'READY', 'kettle.jpg',      'image/jpeg', 120880, @NOW, @NOW),
+ (1374, 1304, 'https://media.example.invalid/products/speaker.jpg',     'Bluetooth speaker',  0, 1,
+  'READY', 'speaker.jpg',     'image/jpeg', 143002, @NOW, @NOW),
+ (1375, 1305, 'https://media.example.invalid/products/wax-indigo.jpg',  'Indigo wax print',   0, 1,
+  'READY', 'wax-indigo.jpg',  'image/jpeg', 210400, @NOW, @NOW),
+ (1376, 1306, 'https://media.example.invalid/products/bazin.jpg',       'Damask bazin',       0, 1,
+  'READY', 'bazin.jpg',       'image/jpeg', 198111, @NOW, @NOW),
+ (1377, 1307, 'https://media.example.invalid/products/sga05.jpg',       NULL,                 0, 0,
+  'PENDING', 'sga05.jpg',     'image/jpeg',   NULL, NULL,  @NOW);
+
+-- ── product_translations ────────────────────────────────────────────────────
+-- Not a nicety on this marketplace. Awa writes French in Ziguinchor; the person
+-- paying is in London and reads English; the person receiving is in Serrekunda.
+-- The listing text is the only description any of them gets - nobody in that
+-- chain can pick the cloth up and look at it - so a translation is the
+-- difference between a sale and an argument about what was bought.
+--
+-- 1390 is written by a person and 1391 by a machine, and the flag is shown to
+-- the buyer. A machine translation of "six yards of wax print, cut to order" is
+-- usually fine and occasionally nonsense, and somebody spending a month's
+-- remittance deserves to know which kind of text they are reading.
+--
+-- 1392 is partial on purpose: a translated name with the original description
+-- beneath it beats neither, so nothing on this table is required but the locale.
+
+INSERT INTO product_translations
+ (id, product_id, locale, name, short_description, description, machine_translated,
+  created_at, updated_at)
+VALUES
+ (1390, 1305, 'fr-SN', 'Wax - six yards, indigo', 'Six yards, indigo',
+  'Wax imprime a la main, coupe en six yards.', 0, @NOW, @NOW),
+ (1391, 1305, 'en-GM', 'Wax print - six yards, indigo', 'Six yards, indigo',
+  'Hand-finished wax print, cut to six yards.', 1, @NOW, @NOW),
+ (1392, 1306, 'fr-SN', 'Bazin riche - trois yards', NULL, NULL, 0, @NOW, @NOW);
+
+-- ── catalogue_jobs and catalogue_job_errors ─────────────────────────────────
+-- Bulk import and export, run away from the request that asked for them. A
+-- seller uploading four hundred rows over a mobile connection loses the
+-- response long before the work finishes, so a synchronous import would have
+-- written half their catalogue with nobody able to say which half.
+--
+-- `reference` is what they poll with, and it is random rather than sequential
+-- because a job id anybody can count through hands out other sellers' import
+-- errors - which name their products, their prices and their SKUs. Ownership is
+-- checked in the query as well; this is the second lock, not the only one.
+--
+-- Three states worth seeing:
+--
+--   1400 COMPLETED_WITH_ERRORS  30 rows, 27 in, 3 rejected, with reasons
+--   1401 FAILED                 the file could not be read at all
+--   1402 COMPLETED (export)     finished, behind a link that expires
+--
+-- 1400 and 1401 are different kinds of failure and they need different words.
+-- "Row 14 has no price" is a problem with a row and the other 29 still went in;
+-- "this is not a spreadsheet" is a problem with the file and nothing was tried.
+
+INSERT INTO catalogue_jobs
+ (id, reference, vendor_id, requested_by_user_id, type, status,
+  source_url, original_filename, format, result_url, result_expires_at,
+  total_rows, succeeded_rows, failed_rows, failure_reason,
+  created_at, started_at, finished_at)
+VALUES
+ (1400, 'IMP-7QK2M4XR9DTB5VNC', 1101, 1002, 'IMPORT', 'COMPLETED_WITH_ERRORS',
+  'imports/1101/january-stock-4f21c8.xlsx', 'january-stock.xlsx', 'xlsx', NULL, NULL,
+  30, 27, 3, NULL,
+  @NOW, @NOW, @NOW),
+ (1401, 'IMP-3HJ8P6WZ2FKD7RQY', 1101, 1002, 'IMPORT', 'FAILED',
+  'imports/1101/prices-9c04de.pdf', 'prices.pdf', NULL, NULL, NULL,
+  0, 0, 0, 'That file is not a spreadsheet we can read. Save it as .xlsx or .csv.',
+  @NOW, @NOW, @NOW),
+ (1402, 'EXP-5MNX9TQ2JVH4BKDW', 1102, 1003, 'EXPORT', 'COMPLETED',
+  NULL, 'current', 'csv',
+  'https://media.example.invalid/exports/exp-5mnx9tq2jvh4bkdw.csv', @FUTURE,
+  2, 2, 0, NULL,
+  @NOW, @NOW, @NOW);
+
+-- The row numbers are the seller's own: the header is row 1, so the first data
+-- row is row 2. Any other convention makes them count.
+--
+-- Each error quotes their text back. "Category does not exist" is half an
+-- answer; "there is no category called 'Phonez'" is the whole one, and it is
+-- the difference between a five-minute fix and an abandoned import.
+
+INSERT INTO catalogue_job_errors (id, job_id, row_number, field, message, value) VALUES
+ (1410, 1400, 4,  'price',    '''nine hundred'' is not a price.', 'nine hundred'),
+ (1411, 1400, 17, 'category', 'There is no category called ''Phonez''.', 'Phonez'),
+ (1412, 1400, 23, 'sku',      'You already have a listing with the code KOM-SGA16.', 'KOM-SGA16');
 
 -- ── wishlist_items ──────────────────────────────────────────────────────────
 
@@ -2116,6 +2237,91 @@ COMMIT;
 --
 --   1103 has no destination at all, which is right for a store nobody has
 --   verified. There is nothing to pay out to yet.
+--
+--   ── A seller's own catalogue ─────────────────────────────────────────────
+--
+--     GET   /vendor/products                    drafts and suspended included
+--     POST  /vendor/products                    created as DRAFT, always
+--     PATCH /vendor/products/1301               some edits go back for review
+--     POST  /vendor/products/1301/publish       only if approved
+--
+--   The ladder is DRAFT to IN_REVIEW to APPROVED to PUBLISHED, and the last
+--   step is the seller's. Being allowed to sell and choosing to are different
+--   decisions: approval arriving overnight should not put a listing live before
+--   the seller has set the stock.
+--
+--   Try POST /vendor/products then publish it straight away. Refused - a draft
+--   cannot put itself on sale, and that refusal is the only thing making the
+--   review queue real rather than advisory.
+--
+--   Then try PATCH /vendor/products/1301 with a new price, and watch it come
+--   off sale. Every seeded listing carries an `approved_content_hash`, a digest
+--   of what a moderator actually looked at: the name, the text, the price, the
+--   category, the brand, the condition. Change any of those and it stops
+--   matching, so the listing goes back to IN_REVIEW and `active` goes false.
+--   Change the stock instead and nothing happens - a seller who had to re-enter
+--   a queue to restock would stop using the queue.
+--
+--   Those hashes are real, not filler. SeededContentHashTest recomputes two of
+--   them from the rows' own text; edit a seeded description without re-deriving
+--   its hash and that test fails rather than the seed quietly becoming a lie.
+--
+--   1307 is the shape of DELETE. Order lines point at it, so archiving is the
+--   only thing that can happen to it: a buyer's receipt, invoice and review all
+--   have to keep resolving years from now. A listing nobody ever ordered is
+--   genuinely deleted, and the order lines decide which - not `total_sold`,
+--   which a cancelled order leaves at zero while a line still points here.
+--
+--   ── Translations ─────────────────────────────────────────────────────────
+--
+--     PUT /vendor/products/1305/translations/fr-SN
+--
+--   Awa writes French in Ziguinchor; the buyer paying is in London; the parcel
+--   goes to Serrekunda. Nobody in that chain can pick the cloth up and look at
+--   it, so the listing text is the whole of what they get. 1391 is marked
+--   machine-translated and the buyer is told: a machine's version of "six yards
+--   of wax print, cut to order" is usually fine and occasionally nonsense, and
+--   somebody spending a month's remittance should know which they are reading.
+--
+--   1392 is deliberately half a translation - a name and nothing else - because
+--   a translated name above the original description beats neither.
+--
+--   ── Bulk ─────────────────────────────────────────────────────────────────
+--
+--     GET /vendor/imports/IMP-7QK2M4XR9DTB5VNC     27 in, 3 rejected, with reasons
+--     GET /vendor/imports/IMP-3HJ8P6WZ2FKD7RQY     the file itself was unreadable
+--     GET /vendor/imports/EXP-5MNX9TQ2JVH4BKDW     a finished export
+--
+--   Those two import jobs are different kinds of failure and they need
+--   different words. 1400 is rows: three of thirty did not parse and the other
+--   twenty-seven are in the catalogue as drafts. 1401 is the file: somebody
+--   uploaded a PDF, nothing was attempted, and saying so once beats four
+--   hundred identical row errors.
+--
+--   Read 1400's errors. Each one names the row as the seller's own spreadsheet
+--   numbers it - header is row 1 - and quotes their text back: "there is no
+--   category called 'Phonez'" rather than "invalid category". That difference
+--   is the whole reason to build this instead of telling them to use the form.
+--
+--   Every row an import creates is a DRAFT. An import that could publish would
+--   be the way past moderation: upload four hundred rows, skip the queue.
+--
+--   The references are random rather than sequential, because a job id anybody
+--   can count through hands out other sellers' import errors - which name their
+--   products, their prices and their SKUs. Ownership is checked in the query as
+--   well; the reference is the second lock, not the only one.
+--
+--   ── One invariant worth checking yourself ────────────────────────────────
+--
+--     SELECT id, status, active FROM products;
+--
+--   `active` is true if and only if `status` is PUBLISHED. Every public
+--   catalogue query filters on active; the ladder lives in status; and
+--   ProductLifecycle is the only thing allowed to write the first. Two fields
+--   describing one fact drift the moment something sets one without the other,
+--   and the way they drift here is a listing moderation pulled that carries on
+--   selling. The verifier asserts the pair on every row, and so does a test
+--   across every state in the enum.
 --
 --   And one thing you cannot do: move a vendor order to DELIVERED through the
 --   API. Order 1403 is delivered only because this file wrote it that way.

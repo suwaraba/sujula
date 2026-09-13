@@ -57,6 +57,50 @@ public class StorageServiceImpl implements StorageService {
     }
 
     @Override
+    public java.util.Optional<byte[]> download(String url) {
+        String key = keyOf(url);
+        if (key == null) {
+            return java.util.Optional.empty();
+        }
+        try (software.amazon.awssdk.core.ResponseInputStream<?> object = r2Client.getObject(
+                software.amazon.awssdk.services.s3.model.GetObjectRequest.builder()
+                        .bucket(r2Properties.getBucketName())
+                        .key(key)
+                        .build())) {
+            return java.util.Optional.of(object.readAllBytes());
+        } catch (software.amazon.awssdk.services.s3.model.NoSuchKeyException absent) {
+            // An upload the client never completed. Not an error worth a stack
+            // trace: the job reports it as a file that is not there.
+            log.info("[Storage] No object at key={}", key);
+            return java.util.Optional.empty();
+        } catch (Exception failed) {
+            log.warn("[Storage] Could not read key={}: {}", key, failed.getMessage());
+            throw new IllegalStateException("That file could not be read from storage.", failed);
+        }
+    }
+
+    @Override
+    public String upload(String folder, String filename, byte[] content, String contentType) {
+        String key = buildKey(folder, filename);
+        r2Client.putObject(PutObjectRequest.builder()
+                        .bucket(r2Properties.getBucketName())
+                        .key(key)
+                        .contentType(contentType)
+                        .build(),
+                software.amazon.awssdk.core.sync.RequestBody.fromBytes(content));
+        return r2Properties.getPublicUrl().stripTrailing() + "/" + key;
+    }
+
+    /** The object key behind a public URL, or null when the URL is not ours. */
+    private String keyOf(String url) {
+        if (url == null || url.isBlank()) {
+            return null;
+        }
+        String prefix = r2Properties.getPublicUrl().stripTrailing() + "/";
+        return url.startsWith(prefix) ? url.substring(prefix.length()) : url;
+    }
+
+    @Override
     public void delete(String publicUrl) {
         if (publicUrl == null || publicUrl.isBlank()) return;
 

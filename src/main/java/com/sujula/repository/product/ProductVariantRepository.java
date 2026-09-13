@@ -22,6 +22,22 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
 
     List<ProductVariant> findByProductId(Long productId);
 
+    /** Variant counts for a whole page, so a list does not lazy-load per row. */
+    @Query("SELECT v.product.id, COUNT(v) FROM ProductVariant v "
+         + "WHERE v.product.id IN :productIds GROUP BY v.product.id")
+    List<Object[]> countByProductIds(@Param("productIds") java.util.Collection<Long> productIds);
+
+    /**
+     * Whether anybody has ever ordered this particular variant.
+     *
+     * <p>What decides turning a variant off from deleting it, asked of the order
+     * lines rather than of the product's sold counter - a listing can have sold
+     * plenty without this variant ever moving, and deactivating a variant nobody
+     * bought leaves dead rows in every seller's option list.
+     */
+    @Query("SELECT COUNT(oi) > 0 FROM OrderItem oi WHERE oi.variant.id = :variantId")
+    boolean hasBeenOrdered(@Param("variantId") Long variantId);
+
     List<ProductVariant> findByProductIdAndActiveTrue(Long productId);
 
     boolean existsBySkuAndProductIdNot(String sku, Long existingProductId);

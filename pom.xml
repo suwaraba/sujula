@@ -120,6 +120,17 @@
             <artifactId>spring-boot-starter-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+            Lets a MockMvc test carry an authenticated principal, so a routing
+            assertion can get past the filter chain to the dispatcher. Without
+            it every request is anonymous and every answer is 403, which proves
+            nothing about which handler a URL resolves to.
+        -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
@@ -140,6 +151,18 @@
             <groupId>com.github.librepdf</groupId>
             <artifactId>openpdf</artifactId>
             <version>2.0.3</version>
+        </dependency>
+        <!--
+            Reading a seller's .xlsx on bulk import. CSV is parsed here (it is a
+            small, well-specified format and a library for it would be a
+            dependency for two hundred lines), but xlsx is a zip of XML and
+            hand-rolling that would be a mistake - and most sellers export from
+            Excel without ever choosing a format.
+        -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.4.1</version>
         </dependency>
     </dependencies>
 
