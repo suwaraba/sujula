@@ -77,9 +77,87 @@ public class Driver {
     private Double  currentLongitude;
     private LocalDateTime lastLocationAt;
 
+    /**
+     * Whether the driver is taking work right now.
+     *
+     * <p>Distinct from {@link #status}, and both matter. Status is what the
+     * platform decided about them — approved, suspended — and this is what they
+     * decided about their own afternoon. A suspended driver who is "available"
+     * is still suspended; an approved one who is offline is simply not driving.
+     */
     @Column(nullable = false)
     @Builder.Default
     private boolean available = false;
+
+    /**
+     * When they last went online.
+     *
+     * <p>Kept apart from {@link #lastLocationAt}, which is the last ping. A
+     * driver online for six hours with no ping in five is a phone that has lost
+     * signal or an app that has been killed, and the two timestamps are what
+     * make that visible.
+     */
+    private LocalDateTime onlineSince;
+
+    // ── KYC ──────────────────────────────────────────────────────────────────
+    //
+    // A driver holds other people's goods, frequently a phone worth more than
+    // they earn in a month, and meets buyers' families at their homes. The
+    // checks below are the whole reason an application is reviewed rather than
+    // simply accepted.
+
+    /** National identity document number, as presented. */
+    @Column(length = 60)
+    private String idDocumentNumber;
+
+    @Column(length = 30)
+    private String idDocumentType;
+
+    @Column(length = 500)
+    private String idDocumentUrl;
+
+    @Column(length = 500)
+    private String licenseDocumentUrl;
+
+    private java.time.LocalDate licenseExpiresOn;
+
+    /** Somebody who will answer if the driver cannot be reached. */
+    @Column(length = 120)
+    private String nextOfKinName;
+
+    @Column(length = 30)
+    private String nextOfKinPhone;
+
+    private LocalDateTime kycSubmittedAt;
+    private LocalDateTime kycReviewedAt;
+
+    @Column(length = 400)
+    private String kycRejectionReason;
+
+    /**
+     * How reliably this driver answers and completes what they accept.
+     *
+     * <p>Declines move it, which is why the spec says so out loud: a driver who
+     * declines everything costs the platform the time between the offer and the
+     * next one, and on a parcel somebody is waiting on from abroad that time is
+     * the whole service. Not a setter: {@code DriverScore} is the only writer.
+     */
+    @Setter(AccessLevel.NONE)
+    @Column(precision = 5, scale = 2)
+    @Builder.Default
+    private BigDecimal acceptanceScore = BigDecimal.valueOf(100.00);
+
+    @Setter(AccessLevel.NONE)
+    @Builder.Default
+    private Integer offersReceived = 0;
+
+    @Setter(AccessLevel.NONE)
+    @Builder.Default
+    private Integer offersAccepted = 0;
+
+    @Setter(AccessLevel.NONE)
+    @Builder.Default
+    private Integer offersDeclined = 0;
 
 
     @Column(precision = 10, scale = 2)
@@ -117,5 +195,32 @@ public class Driver {
     public void creditEarning(BigDecimal amount) {
         this.totalEarnings = this.totalEarnings.add(amount);
         this.totalDeliveries = this.totalDeliveries + 1;
+    }
+
+    /**
+     * Records how a driver answered an offer, and re-derives their score.
+     *
+     * <p>The score is a ratio of the counters rather than a number nudged up and
+     * down, so it cannot drift away from the events behind it: recompute it from
+     * the counts and it comes back the same.
+     */
+    public void recordOffer(boolean accepted) {
+        this.offersReceived = (this.offersReceived == null ? 0 : this.offersReceived) + 1;
+        if (accepted) {
+            this.offersAccepted = (this.offersAccepted == null ? 0 : this.offersAccepted) + 1;
+        } else {
+            this.offersDeclined = (this.offersDeclined == null ? 0 : this.offersDeclined) + 1;
+        }
+        this.acceptanceScore = this.offersReceived == 0
+                ? BigDecimal.valueOf(100.00)
+                : BigDecimal.valueOf(this.offersAccepted)
+                        .multiply(BigDecimal.valueOf(100))
+                        .divide(BigDecimal.valueOf(this.offersReceived), 2,
+                                java.math.RoundingMode.HALF_UP);
+    }
+
+    /** Whether the platform lets this driver carry anything at all. */
+    public boolean canCarry() {
+        return status == DriverStatus.APPROVED || status == DriverStatus.ACTIVE;
     }
 }

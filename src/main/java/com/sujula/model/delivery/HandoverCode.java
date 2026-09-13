@@ -72,6 +72,37 @@ public class HandoverCode {
     private com.sujula.model.order.VendorOrder vendorOrder;
 
     /**
+     * The parcel this code covers, for every link after the shop.
+     *
+     * <p>A third owner alongside delivery and vendor order, and the one the
+     * driver surface actually uses. Exactly one of the three is set.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "shipment_id")
+    private com.sujula.model.shipment.Shipment shipment;
+
+    /**
+     * The leg this code opens, where it opens one rather than the whole parcel.
+     *
+     * <p>A shipment through two hubs has a code per handover, not one code that
+     * works at every counter between Banjul and Basse.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "leg_id")
+    private com.sujula.model.shipment.ShipmentLeg leg;
+
+    /**
+     * How many times the wrong code has been tried against this one.
+     *
+     * <p>Six digits is a hundred thousand guesses from a determined person and
+     * three from somebody who misheard. The count is what tells them apart, and
+     * what burns a code being brute-forced at a counter.
+     */
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer failedAttempts = 0;
+
+    /**
      * Set when a later code supersedes this one.
      *
      * <p>Reissuing replaces rather than edits, so a leaked code is dead and the
