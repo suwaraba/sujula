@@ -1,7 +1,7 @@
 -- ============================================================================
 --  Sujula development seed
 -- ============================================================================
---  Populates all 46 tables with one coherent, related dataset. Run it by hand;
+--  Populates all 47 tables with one coherent, related dataset. Run it by hand;
 --  it is deliberately NOT auto-loaded on startup, because seed data appearing
 --  in a database by surprise is worse than typing one command, and this file
 --  deletes before it inserts.
@@ -42,6 +42,9 @@
 --      'geocode_confidence'" / "'deleted_at'" / "'shipping_address_id'"
 --      — the database predates the addresses and delivery-context layer.
 --
+--      "Table 'sujula.fx_quotes' doesn't exist"
+--      — the database predates held exchange rates.
+--
 --      "Table 'sujula.notifications' doesn't exist"
 --      — the schema predates the `read` -> `is_read` fix. `read` is reserved in
 --      MySQL, so that CREATE TABLE failed, and Hibernate logged it and carried
@@ -50,7 +53,7 @@
 --  To see what is actually there:
 --
 --      SELECT table_name FROM information_schema.tables
---       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 46
+--       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 47
 --
 --  ── Conventions ────────────────────────────────────────────────────────────
 --
@@ -144,6 +147,7 @@ START TRANSACTION;
 -- Reverse foreign-key order. No FOREIGN_KEY_CHECKS=0 anywhere: if this order
 -- is wrong the database says so, which is the point.
 
+DELETE FROM fx_quotes              WHERE id LIKE 'seed-%';
 DELETE FROM idempotency_records    WHERE id >= 1000;
 DELETE FROM delivery_contexts      WHERE id LIKE 'seed-%';
 DELETE FROM account_data_requests  WHERE id >= 1000;
@@ -1095,6 +1099,47 @@ VALUES
   '{"id":"seed-ctx-guest-brikama","guest":true,"countryCode":"GM","currency":"GMD"}',
   @NOW, @FUTURE);
 
+-- ── fx_quotes ───────────────────────────────────────────────────────────────
+-- A rate held still long enough for someone to pay at it.
+--
+-- Between seeing a total and finishing a card form a buyer spends a minute or
+-- two, and an indicative rate moves in that time. Without a held quote the
+-- platform either charges a different figure from the one agreed, or absorbs
+-- the difference silently on every order. A quote makes the commitment explicit
+-- and bounded.
+--
+-- The rates below match the exchange_rates rows seeded above, which is the
+-- point: a quote records the rate as it stood when it was taken, and does not
+-- follow the table afterwards. Change rate 1220 and re-read
+-- seed-fx-oliver-gbp — it still says 0.011.
+--
+-- Ids start with 'seed-' so the delete block can find them. Real ones are 256
+-- bits of base64url from a secure random, because for a guest the id is the
+-- whole of their claim to the quote.
+
+INSERT INTO fx_quotes
+ (id, user_id, base_currency, quote_currency, rate, base_amount, quote_amount,
+  rate_fetched_at, created_at, expires_at, consumed_at)
+VALUES
+ -- Oliver, mid-checkout in sterling. Live, unspent, and the rate is frozen.
+ ('seed-fx-oliver-gbp', 1005, 'GMD', 'GBP', 0.01100000, 4500.0000, 49.5000,
+  '2026-09-12 00:00:00.000000', @NOW, @SOON, NULL),
+
+ -- A guest pricing in CFA. Note the converted amount is a whole franc: XOF has
+ -- no minor units, so 3870.50 is not an amount anyone could hand over.
+ ('seed-fx-guest-xof', NULL, 'GMD', 'XOF', 8.60000000, 450.0000, 3870.0000,
+  '2026-09-12 00:00:00.000000', @NOW, @SOON, NULL),
+
+ -- Already spent on an order. Kept rather than deleted: months from now this is
+ -- the evidence of what rate a buyer was actually promised.
+ ('seed-fx-consumed', 1005, 'GMD', 'GBP', 0.01100000, 15092.0000, 166.0100,
+  '2026-09-12 00:00:00.000000', '2026-09-12 08:40:00.000000', @FUTURE, @NOW),
+
+ -- Past its window. GET /currencies/quote/seed-fx-expired is a 404, not a 410:
+ -- an expired bearer credential and one that never existed should look the same.
+ ('seed-fx-expired', NULL, 'GMD', 'USD', 0.01400000, 1000.0000, 14.0000,
+  '2026-09-12 00:00:00.000000', '2026-09-12 07:00:00.000000', @LAPSED, NULL);
+
 COMMIT;
 
 -- ── What you now have ───────────────────────────────────────────────────────
@@ -1287,6 +1332,63 @@ COMMIT;
 --   available:false — "nobody looked", which is a different thing from "we
 --   looked and found nothing" and leads to different advice. Addresses save
 --   without coordinates, and delivery prices from a scope fallback.
+--
+--   ── Currencies, and why CFA is the interesting one ───────────────────────
+--
+--     GET /currencies
+--
+--   Every entry carries minorUnits. XOF has none — there is no centime in
+--   circulation — so a client that formats every amount to two places will show
+--   CFA totals that cannot be tendered. GMD, GBP, EUR and USD have two.
+--
+--   The exchange_rates rows seeded above make these work:
+--
+--     GET /currencies/rates?base=GMD&quote=GBP    a published rate, direct
+--     GET /currencies/rates?base=GBP&quote=XOF    no direct row, so it comes
+--                                                 back inverted:true with the
+--                                                 reciprocal — disclosed,
+--                                                 because a reciprocal carries
+--                                                 no spread in that direction
+--     GET /currencies/rates?base=GMD&quote=SEK    no rate published at all; it
+--                                                 says so rather than guessing
+--
+--   ── Held rates ───────────────────────────────────────────────────────────
+--
+--     POST /currencies/quote   {"base":"GMD","quote":"GBP","amount":4500}
+--
+--   holds the rate for fifteen minutes. The four seeded quotes cover the states
+--   a client has to handle:
+--
+--     seed-fx-oliver-gbp   live, his, unspent
+--     seed-fx-guest-xof    a guest's — the id is the whole of their claim to it,
+--                          and the converted amount is a whole franc
+--     seed-fx-consumed     already spent on an order, and still readable: a
+--                          client reloading a confirmation page should see it
+--                          reported as used rather than as missing
+--     seed-fx-expired      past its window — a 404, not a 410
+--
+--   Worth trying for what it refuses: GET /currencies/quote/seed-fx-oliver-gbp
+--   as anyone other than Oliver is a 404 rather than a 403.
+--
+--   And worth trying for what it holds: change rate 1220 in exchange_rates,
+--   then re-read seed-fx-oliver-gbp. It still says 0.011. A quote that re-read
+--   the table would not be a quote.
+--
+--   ── Reference data ───────────────────────────────────────────────────────
+--
+--     GET /countries      buy and ship are separate flags. GB buys and does not
+--                         ship: a buyer in London orders for delivery to
+--                         Serekunda, and one "supported" boolean could not say
+--                         that.
+--     GET /locales        each carries rtl, so a client knows to flip.
+--     GET /config/public  feature flags, minimum app versions, support contacts.
+--                         An allow-list assembled by hand — never a filtered
+--                         view of configuration, which is one careless rename
+--                         away from publishing a secret.
+--
+--   None of these read the database. They are configuration under
+--   sujula.reference.*, so changing what this deployment supports is a property
+--   change rather than a migration.
 --
 --   And one thing you cannot do: move a vendor order to DELIVERED through the
 --   API. Order 1403 is delivered only because this file wrote it that way.

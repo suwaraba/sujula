@@ -108,7 +108,8 @@ public class SecurityConfig {
                         // session yet.
                         .ignoringRequestMatchers("/api/payments/callback", "/auth/**", "/me/**",
                                                  "/geo/**", "/delivery/**", "/delivery-contexts",
-                                                 "/delivery-contexts/**"))
+                                                 "/delivery-contexts/**",
+                                                 "/currencies", "/currencies/**"))
                 .authorizeHttpRequests(auth -> {
                     if (docsEnabled) {
                         auth.requestMatchers(
@@ -145,6 +146,17 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/delivery/serviceability",
                                                           "/delivery/quote").permitAll()
                         .requestMatchers("/delivery-contexts", "/delivery-contexts/**").permitAll()
+
+                        // ── Reference data ───────────────────────────────────
+                        // What this deployment supports: currencies and their
+                        // minor units, the countries it buys from and ships to,
+                        // the languages it speaks, and the feature flags a client
+                        // needs before it can draw a single screen. A storefront
+                        // fetches these on first paint, long before anyone signs
+                        // in, and /config/public is an allow-list assembled by
+                        // hand rather than a view onto configuration.
+                        .requestMatchers("/currencies", "/currencies/**",
+                                         "/countries", "/locales", "/config/public").permitAll()
 
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to
