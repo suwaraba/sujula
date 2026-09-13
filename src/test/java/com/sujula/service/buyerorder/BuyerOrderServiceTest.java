@@ -86,6 +86,7 @@ class BuyerOrderServiceTest {
     private UserRepository users;
     private PickupPointRepository pickupPoints;
     private InvoiceService invoices;
+    private com.sujula.service.money.MoneyLedger moneyLedger;
     private BuyerOrderServiceImpl service;
 
     @BeforeEach
@@ -101,9 +102,10 @@ class BuyerOrderServiceTest {
         users = mock(UserRepository.class);
         pickupPoints = mock(PickupPointRepository.class);
         invoices = mock(InvoiceService.class);
+        moneyLedger = mock(com.sujula.service.money.MoneyLedger.class);
 
         service = new BuyerOrderServiceImpl(orders, vendorOrders, refunds, history, deliveries,
-                tracking, reviews, products, users, pickupPoints, invoices);
+                tracking, reviews, products, users, pickupPoints, invoices, moneyLedger);
 
         when(orders.save(any(Order.class))).thenAnswer(call -> call.getArgument(0));
         when(vendorOrders.save(any(VendorOrder.class))).thenAnswer(call -> call.getArgument(0));

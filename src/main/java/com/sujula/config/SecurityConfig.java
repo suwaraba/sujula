@@ -247,6 +247,20 @@ public class SecurityConfig {
                         // nothing to a stranger holding them, and these are not.
                         .requestMatchers("/vendor/orders", "/vendor/orders/**").authenticated()
 
+                        // A seller's figures and a seller's money. Authenticated
+                        // is the outer gate only — the shop is resolved from the
+                        // session and goes into every query, so there is no path
+                        // variable that reaches another shop's takings.
+                        //
+                        // Note what is behind this rule: revenue, margins, a
+                        // bank-ready statement, and the destinations a shop
+                        // ships to. An unguarded route here hands a competitor a
+                        // shop's whole trading position.
+                        .requestMatchers("/vendor/analytics/**", "/vendor/balance",
+                                         "/vendor/transactions", "/vendor/payouts",
+                                         "/vendor/payouts/**", "/vendor/statements/**")
+                                .authenticated()
+
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to
                         // buy has not signed in yet, and these carry no private figures.

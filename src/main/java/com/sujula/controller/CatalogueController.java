@@ -61,11 +61,21 @@ public class CatalogueController {
     private final BrowsingContextResolver contexts;
     private final AuthenticatedCaller caller;
 
+    /**
+     * Counts looks at a listing, for the seller's funnel.
+     *
+     * <p>Called after the page has been built and unable to throw, so a
+     * statistic can never cost a shopper their product page.
+     */
+    private final com.sujula.service.analytics.ProductViewRecorder views;
+
     public CatalogueController(CatalogueService catalogue, BrowsingContextResolver contexts,
-                               AuthenticatedCaller caller) {
+                               AuthenticatedCaller caller,
+                               com.sujula.service.analytics.ProductViewRecorder views) {
         this.catalogue = catalogue;
         this.contexts = contexts;
         this.caller = caller;
+        this.views = views;
     }
 
     // ── Categories ───────────────────────────────────────────────────────────
@@ -151,9 +161,16 @@ public class CatalogueController {
             @RequestParam(required = false) String currency,
             Authentication authentication, HttpServletRequest request) {
 
-        return ResponseEntity.ok(catalogue.productBySlug(slug,
+        CatalogueResponses.ProductDetail detail = catalogue.productBySlug(slug,
                 context(deliverableTo, deliveryLat, deliveryLng, deliveryCountry, currency,
-                        authentication, request)));
+                        authentication, request));
+
+        // Counted after the read succeeded, in its own transaction, and unable
+        // to throw. A shopper must never see an error because a statistic could
+        // not be filed.
+        views.record(detail.id());
+
+        return ResponseEntity.ok(detail);
     }
 
     @GetMapping("/products/{productId}/variants")

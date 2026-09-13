@@ -170,6 +170,10 @@ DELETE FROM kyc_documents           WHERE id >= 1000;
 DELETE FROM product_translations    WHERE id >= 1000;
 -- refund_requests references both an order and a vendor_order, so it clears
 -- before either of them.
+-- The ledger references vendor_orders, payouts and users, so it clears before
+-- any of them.
+DELETE FROM vendor_ledger_entries   WHERE id >= 1000;
+DELETE FROM product_view_stats      WHERE id >= 1000;
 DELETE FROM refund_requests         WHERE id >= 1000;
 -- imei_units references an order_item; stock_movements reference products and
 -- variants. Both clear before those do.
@@ -219,8 +223,10 @@ DELETE FROM carts                  WHERE id >= 1000;
 DELETE FROM audit_logs             WHERE id >= 1000;
 DELETE FROM addresses              WHERE id >= 1000;
 DELETE FROM wishlists              WHERE id >= 1000;
-DELETE FROM vendors                WHERE id >= 1000;
+-- Payouts now carry a vendor, so they go before vendors do. They used to sit
+-- after, which was correct only while the column did not exist.
 DELETE FROM vendor_payouts         WHERE id >= 1000;
+DELETE FROM vendors                WHERE id >= 1000;
 DELETE FROM users                  WHERE id >= 1000;
 DELETE FROM gift_cards             WHERE id >= 1000;
 DELETE FROM exchange_rates         WHERE id >= 1000;
@@ -307,16 +313,6 @@ VALUES
   1, 1, 1, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
  (1011, 'Ndeye',  'Sarr',    'ndeye.sarr@example.sn',      @PW, '+2217700011', 'CUSTOMER',
   1, 1, 1, 0, 0, 0, 0, NULL, 0, 'XOF', 'fr', 'SN', @NOW, @NOW);
-
--- ── vendor_payouts ──────────────────────────────────────────────────────────
--- Hangs off users, not vendors. No service writes these: amounts owed are
--- frozen per vendor order (see vendor_orders.payout_native) and nothing pays
--- them out yet.
-
-INSERT INTO vendor_payouts (id, user_id, amount, currency, status, reference, notes, processed_by, processed_at, created_at, updated_at) VALUES
- (1030, 1002, 4860.00, 'GMD', 'COMPLETED',  'PO-2026-08-KOMBO', 'August settlement',      1001, '2026-09-01 10:00:00.000000', @NOW, @NOW),
- (1031, 1002,  810.00, 'GMD', 'PENDING',    'PO-2026-09-KOMBO', 'September, in progress', NULL, NULL, @NOW, @NOW),
- (1032, 1003, 96000.00,'XOF', 'PROCESSING', 'PO-2026-09-TERANGA',NULL,                    NULL, NULL, @NOW, @NOW);
 
 -- ── vendors ─────────────────────────────────────────────────────────────────
 -- Coordinates matter: they are the despatch origin every delivery leg is
@@ -1402,6 +1398,173 @@ VALUES
   'The indigo run sold out at the market and the next dye is three weeks away.',
   0, NULL);
 
+-- ── vendor_payouts ──────────────────────────────────────────────────────────
+-- Transfers to a seller. Keyed to a user as well as a vendor: drivers and
+-- pickup-point operators earn through this same table and have no shop.
+--
+-- Every one of these has matching rows in vendor_ledger_entries below, and that
+-- is the point — a payout is not a fact on its own, it is a movement in a
+-- ledger. The balance a seller is shown is the sum of those rows and is stored
+-- nowhere, so there is nothing for it to drift from.
+--
+-- 1031 is REQUESTED, which is the state this platform spends most of its time
+-- in: the seller has asked and nobody has decided. Money leaving is the one
+-- action no later call can undo.
+
+INSERT INTO vendor_payouts
+ (id, user_id, vendor_id, amount, currency, status, reference, notes, period,
+  requested_by_user_id, requested_at, failure_reason, processed_by, processed_at,
+  created_at, updated_at)
+VALUES
+ (1030, 1002, 1101, 1000.00, 'GMD', 'COMPLETED', 'PO-2026-08-KOMBO',
+  'August settlement', '2026-08', NULL, NULL, NULL,
+  1001, '2026-09-01 10:00:00.000000', @NOW, @NOW),
+ (1031, 1002, 1101,  250.00, 'GMD', 'REQUESTED', 'PO-2026-09-KOMBO',
+  'Asked for on the 13th', NULL, 1002, @NOW, NULL,
+  NULL, NULL, @NOW, @NOW),
+ (1032, 1003, 1102, 96000.00, 'XOF', 'FAILED', 'PO-2026-09-TERANGA',
+  NULL, '2026-08', NULL, NULL, 'The bank rejected the account number',
+  NULL, NULL, @NOW, @NOW);
+
+-- ── vendor_ledger_entries ───────────────────────────────────────────────────
+-- Every movement of a seller's money. Nothing stores a balance: a balance is
+-- the sum of these rows, so there is no second number to disagree with them.
+--
+-- Signed throughout. Positive is owed to the seller, negative leaves. A ledger
+-- of absolute values plus a direction column is one whose sum is wrong the first
+-- time somebody forgets to read the direction.
+--
+-- available_from is escrow. NULL means the money is earned and NOT payable
+-- because the parcel has not been confirmed delivered — which is the whole
+-- reason a buyer in Madrid will send money for goods they cannot inspect. It is
+-- stamped when delivery is proven, never by time passing and never by the seller.
+--
+-- Currencies are never mixed. Kombo's rows are all GMD and Teranga's all XOF,
+-- and no row anywhere converts one to the other: the conversion already happened
+-- once, at checkout, at a rate the order still carries (C2).
+--
+-- What these rows come to, and what /vendor/balance therefore says:
+--
+--   Kombo (1101), GMD   available  2500 - 250 - 1000 - 250   =  1000.00
+--                       pending    9900 - 990 + 9700 - 970   = 17640.00
+--                       on hold    the 250.00 requested in 1031, which has
+--                                  already left `available` above — asking is
+--                                  what commits it, not approval
+--   Teranga (1102), XOF available  0        (the payout failed and came back)
+--                       pending    13050 - 1631              = 11419
+--
+-- Teranga's rejected slice 1506 is the interesting one: a sale, its commission,
+-- the refund and the commission handed back — four rows that come to exactly
+-- nothing. Netting them into one row would hide the thing a seller opens a
+-- refund to check, which is that they were not charged commission on a sale that
+-- did not happen.
+
+INSERT INTO vendor_ledger_entries
+ (id, vendor_id, vendor_order_id, payout_id, type, amount, currency,
+  available_from, occurred_at, description, reference, created_by_user_id,
+  fx_native_currency, fx_display_currency, fx_rate, fx_rate_at, fx_source, fx_quote_id,
+  created_at)
+VALUES
+ -- Order 1403, delivered and confirmed: the only money Kombo can actually touch.
+ (1800, 1101, 1504, NULL, 'SALE',       2500.00, 'GMD',
+  @NOW, @NOW, 'Sale on order SJL-SEED-0003', 'SJL-SEED-0003', NULL,
+  'GMD', 'GMD', 1.00000000, @NOW, 'IDENTITY', NULL, @NOW),
+ (1801, 1101, 1504, NULL, 'COMMISSION', -250.00, 'GMD',
+  @NOW, @NOW, 'Platform commission on order SJL-SEED-0003', 'SJL-SEED-0003', NULL,
+  'GMD', 'GMD', 1.00000000, @NOW, 'IDENTITY', NULL, @NOW),
+
+ -- Order 1401, shipped but not confirmed. Earned, and not payable.
+ (1802, 1101, 1501, NULL, 'SALE',       9900.00, 'GMD',
+  NULL, @NOW, 'Sale on order SJL-SEED-0001', 'SJL-SEED-0001', NULL,
+  'GMD', 'GBP', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL, @NOW),
+ (1803, 1101, 1501, NULL, 'COMMISSION', -990.00, 'GMD',
+  NULL, @NOW, 'Platform commission on order SJL-SEED-0001', 'SJL-SEED-0001', NULL,
+  'GMD', 'GBP', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL, @NOW),
+
+ -- Order 1404, packed and waiting for a driver. Also held.
+ (1804, 1101, 1505, NULL, 'SALE',       9700.00, 'GMD',
+  NULL, @NOW, 'Sale on order SJL-SEED-0004', 'SJL-SEED-0004', NULL,
+  'GMD', 'EUR', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL, @NOW),
+ (1805, 1101, 1505, NULL, 'COMMISSION', -970.00, 'GMD',
+  NULL, @NOW, 'Platform commission on order SJL-SEED-0004', 'SJL-SEED-0004', NULL,
+  'GMD', 'EUR', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL, @NOW),
+
+ -- August's transfer, which settled.
+ (1806, 1101, NULL, 1030, 'PAYOUT',    -1000.00, 'GMD',
+  @NOW, @NOW, 'Payout requested — PO-2026-08-KOMBO', 'PO-2026-08-KOMBO', NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, @NOW),
+
+ -- And September's, which is still a question rather than an answer. The money
+ -- leaves `available` the moment it is asked for, so a second request cannot
+ -- claim it while the first is being decided.
+ (1807, 1101, NULL, 1031, 'PAYOUT',     -250.00, 'GMD',
+  @NOW, @NOW, 'Payout requested — PO-2026-09-KOMBO', 'PO-2026-09-KOMBO', NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, @NOW),
+
+ -- Teranga's live slice on order 1401. 13050 x 12.5% is 1631.25, and XOF has no
+ -- minor units, so the ledger holds 1631 — 1631.25 CFA is not an amount that
+ -- exists and a row storing it could never be paid.
+ (1808, 1102, 1502, NULL, 'SALE',       13050, 'XOF',
+  NULL, @NOW, 'Sale on order SJL-SEED-0001', 'SJL-SEED-0001', NULL,
+  'XOF', 'GBP', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL, @NOW),
+ (1809, 1102, 1502, NULL, 'COMMISSION', -1631, 'XOF',
+  NULL, @NOW, 'Platform commission on order SJL-SEED-0001', 'SJL-SEED-0001', NULL,
+  'XOF', 'GBP', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL, @NOW),
+
+ -- The slice Teranga rejected, in four rows that come to nothing. The refund
+ -- sits on the same side of escrow as the sale it reverses; if it did not, a
+ -- fully refunded order would leave a balance behind.
+ (1810, 1102, 1506, NULL, 'SALE',       14500, 'XOF',
+  NULL, @NOW, 'Sale on order SJL-SEED-0004', 'SJL-SEED-0004', NULL,
+  'XOF', 'EUR', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL, @NOW),
+ (1811, 1102, 1506, NULL, 'COMMISSION', -1813, 'XOF',
+  NULL, @NOW, 'Platform commission on order SJL-SEED-0004', 'SJL-SEED-0004', NULL,
+  'XOF', 'EUR', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL, @NOW),
+ (1812, 1102, 1506, NULL, 'REFUND',    -14500, 'XOF',
+  NULL, @NOW,
+  'Refund on order SJL-SEED-0004 — the seller could not fulfil this order',
+  'RFN-SEED-0002', NULL,
+  'XOF', 'EUR', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL, @NOW),
+ (1813, 1102, 1506, NULL, 'COMMISSION_REVERSAL', 1813, 'XOF',
+  NULL, @NOW, 'Commission returned on the refunded part of SJL-SEED-0004',
+  'RFN-SEED-0002', NULL,
+  'XOF', 'EUR', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL, @NOW),
+
+ -- A transfer that left and came back. Two rows, not a deleted one: the attempt
+ -- happened, and a seller looking at a gap in their statement deserves to see
+ -- both halves of it.
+ (1814, 1102, NULL, 1032, 'PAYOUT',    -96000, 'XOF',
+  @NOW, @NOW, 'Payout requested — PO-2026-09-TERANGA', 'PO-2026-09-TERANGA', NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, @NOW),
+ (1815, 1102, NULL, 1032, 'PAYOUT_REVERSAL', 96000, 'XOF',
+  @NOW, @NOW,
+  'Payout PO-2026-09-TERANGA came back — The bank rejected the account number',
+  'PO-2026-09-TERANGA', NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, @NOW);
+
+-- ── product_view_stats ──────────────────────────────────────────────────────
+-- One row per listing per day, not one per view. Views outnumber orders by a
+-- long way on a marketplace where most traffic is a phone on a slow connection,
+-- and a row each would be the biggest table here inside a month for a number
+-- only ever read as a daily total.
+--
+-- These count page loads, including reloads and the same person twice. They are
+-- NOT unique visitors, and the funnel that uses them says so on the response —
+-- a conversion rate that quietly means something other than what a seller
+-- assumes is worse than no conversion rate at all.
+--
+-- The phone is looked at far more than it is bought, which is the shape of
+-- selling a 9,700 dalasi item: 180 looks, one sale.
+
+INSERT INTO product_view_stats (id, product_id, vendor_id, viewed_on, views) VALUES
+ (1850, 1301, 1101, '2026-09-11', 64),
+ (1851, 1301, 1101, '2026-09-12', 71),
+ (1852, 1301, 1101, '2026-09-13', 45),
+ (1853, 1303, 1101, '2026-09-12', 18),
+ (1854, 1303, 1101, '2026-09-13', 12),
+ (1855, 1305, 1102, '2026-09-12', 26),
+ (1856, 1305, 1102, '2026-09-13', 9);
+
 -- ── order_items ─────────────────────────────────────────────────────────────
 -- `unit_price` / `total_price` are in the vendor's listing currency and are
 -- never converted in place; the `*_converted` columns hold the same amounts in
@@ -2082,6 +2245,50 @@ COMMIT;
 --                                       reason on it. Then look at 1505 again:
 --                                       untouched, still going. One payment, two
 --                                       vendors, independent outcomes (C3).
+--
+--     GET /vendor/balance               as Lamin: 1000 dalasi available and
+--                                       17,640 pending. The pending figure is
+--                                       escrow — two parcels that have not been
+--                                       confirmed delivered. Nothing stores
+--                                       either number; both are sums of
+--                                       vendor_ledger_entries.
+--     GET /vendor/transactions          the rows behind it. Add the amount
+--                                       column up and you get the balance,
+--                                       which is the only thing that makes a
+--                                       balance checkable.
+--     GET /vendor/balance               as Awa: zero available and 11,419 XOF
+--                                       pending. Her payout failed and came
+--                                       back as a reversal rather than being
+--                                       deleted, so the statement explains the
+--                                       gap instead of hiding it.
+--     GET /vendor/transactions?currency=XOF
+--                                       look at slice 1506: four rows — sale,
+--                                       commission, refund, commission returned
+--                                       — that come to exactly nothing. Netting
+--                                       them into one would hide the thing a
+--                                       seller opens a refund to check.
+--     POST /vendor/payouts/request      as Awa. Refused, and the message says
+--                                       which kind of nothing it is: money
+--                                       still held against parcels, rather than
+--                                       no money at all.
+--     GET /vendor/statements/2026-09?currency=GMD
+--                                       as Lamin. A PDF whose brought-forward
+--                                       plus movements equals its carried-
+--                                       forward. Add &format=csv for the same
+--                                       figures in a spreadsheet.
+--     GET /vendor/analytics/overview    revenue per currency, never one total.
+--                                       A shop trading in two currencies gets
+--                                       two figures and a note saying why they
+--                                       are not added.
+--     GET /vendor/analytics/products    the phone was looked at 180 times and
+--                                       bought once. The response says plainly
+--                                       that views are page loads rather than
+--                                       people.
+--     GET /vendor/analytics/customers   counts and countries, and nothing else.
+--                                       Destinations are where parcels went,
+--                                       never where the payer was, and a
+--                                       country with only a handful of orders
+--                                       is left out entirely.
 --
 --   ── Signing in without signing in ───────────────────────────────────────
 --

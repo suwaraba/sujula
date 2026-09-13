@@ -76,6 +76,14 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
     private final PickupPointRepository pickupPoints;
     private final InvoiceService invoices;
 
+    /**
+     * The only writer of vendor money.
+     *
+     * <p>Here because escrow releases here: the buyer saying the goods arrived
+     * is what turns a sale into something payable.
+     */
+    private final com.sujula.service.money.MoneyLedger moneyLedger;
+
     public BuyerOrderServiceImpl(OrderRepository orders, VendorOrderRepository vendorOrders,
                                  RefundRequestRepository refunds,
                                  OrderStatusHistoryRepository history,
@@ -83,7 +91,8 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
                                  DeliveryTrackingRepository deliveryTracking,
                                  ReviewRepository reviews, ProductRepository products,
                                  UserRepository users, PickupPointRepository pickupPoints,
-                                 InvoiceService invoices) {
+                                 InvoiceService invoices,
+                                 com.sujula.service.money.MoneyLedger moneyLedger) {
         this.orders = orders;
         this.vendorOrders = vendorOrders;
         this.refunds = refunds;
@@ -95,6 +104,7 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
         this.users = users;
         this.pickupPoints = pickupPoints;
         this.invoices = invoices;
+        this.moneyLedger = moneyLedger;
     }
 
     // ── Reads ────────────────────────────────────────────────────────────────
@@ -358,6 +368,12 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
         slice.setEscrowReleasedAt(now);
         slice.setStatus(VendorOrderStatus.DELIVERED);
         vendorOrders.save(slice);
+
+        // The seller's money follows the parcel. Posting the sale here rather
+        // than at checkout is what makes escrow real: until the buyer says the
+        // goods arrived, there is nothing in the ledger to pay out.
+        moneyLedger.postSale(slice);
+        moneyLedger.releaseEscrow(slice, now);
 
         log.info("[Order] Buyer {} confirmed receipt of slice {} — escrow released",
                 userId, slice.getId());
