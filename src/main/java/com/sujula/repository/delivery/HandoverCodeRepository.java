@@ -41,4 +41,51 @@ public interface HandoverCodeRepository extends JpaRepository<HandoverCode, Long
             Long deliveryId, HandoverCodeType codeType, String code, LocalDateTime now);
 
     List<HandoverCode> findByDeliveryId(Long deliveryId);
+
+    // ── Vendor release codes ─────────────────────────────────────────────────
+
+    /**
+     * The live release code for a vendor order, if there is one.
+     *
+     * <p>At most one is live at a time: reissuing invalidates the previous, so a
+     * code that has leaked is dead rather than one of several that all work.
+     */
+    @Query("SELECT h FROM HandoverCode h WHERE h.vendorOrder.id = :vendorOrderId "
+         + "AND h.codeType = com.sujula.model.constant.HandoverCodeType.VENDOR_RELEASE "
+         + "AND h.used = FALSE AND h.invalidatedAt IS NULL "
+         + "ORDER BY h.createdAt DESC LIMIT 1")
+    Optional<HandoverCode> findLiveReleaseCode(@Param("vendorOrderId") Long vendorOrderId);
+
+    /**
+     * The code a driver is presenting, matched against the live one only.
+     *
+     * <p>Scoped to unused, un-invalidated and unexpired in the query rather than
+     * checked afterwards, because a check after the fact is the one that ships
+     * missing.
+     */
+    @Query("SELECT h FROM HandoverCode h WHERE h.vendorOrder.id = :vendorOrderId "
+         + "AND h.codeType = com.sujula.model.constant.HandoverCodeType.VENDOR_RELEASE "
+         + "AND h.code = :code AND h.used = FALSE AND h.invalidatedAt IS NULL "
+         + "AND h.expiresAt > :now")
+    Optional<HandoverCode> findPresentedReleaseCode(@Param("vendorOrderId") Long vendorOrderId,
+                                                    @Param("code") String code,
+                                                    @Param("now") java.time.LocalDateTime now);
+
+    /**
+     * How many release codes have been issued for this slice since a moment.
+     *
+     * <p>What the rate limit reads. Counting the rows rather than a counter on
+     * the vendor order means the limit cannot be reset by anything that forgets
+     * to increment.
+     */
+    @Query("SELECT COUNT(h) FROM HandoverCode h WHERE h.vendorOrder.id = :vendorOrderId "
+         + "AND h.codeType = com.sujula.model.constant.HandoverCodeType.VENDOR_RELEASE "
+         + "AND h.createdAt > :since")
+    long countReleaseCodesSince(@Param("vendorOrderId") Long vendorOrderId,
+                                @Param("since") java.time.LocalDateTime since);
+
+    @Query("SELECT h FROM HandoverCode h WHERE h.vendorOrder.id = :vendorOrderId "
+         + "AND h.codeType = com.sujula.model.constant.HandoverCodeType.VENDOR_RELEASE "
+         + "AND h.used = FALSE AND h.invalidatedAt IS NULL")
+    List<HandoverCode> findLiveReleaseCodes(@Param("vendorOrderId") Long vendorOrderId);
 }

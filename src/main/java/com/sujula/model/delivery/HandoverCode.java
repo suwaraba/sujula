@@ -52,10 +52,33 @@ public class HandoverCode {
     @Version
     private Long version;
 
-    /** The delivery this code belongs to. */
+    /**
+     * The parcel this code belongs to, for every link after the shop door.
+     *
+     * <p>Nullable because {@link com.sujula.model.constant.HandoverCodeType#VENDOR_RELEASE}
+     * hangs off a vendor order instead: a seller packs one parcel for the whole
+     * slice, and the driver collecting it presents one code rather than one per
+     * line. Exactly one of the two is set, which the service enforces - a code
+     * belonging to neither would authorise nothing, and one belonging to both
+     * would authorise two different handovers.
+     */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "delivery_id", nullable = false)
+    @JoinColumn(name = "delivery_id")
     private Delivery delivery;
+
+    /** The vendor order this code releases, for VENDOR_RELEASE. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "vendor_order_id")
+    private com.sujula.model.order.VendorOrder vendorOrder;
+
+    /**
+     * Set when a later code supersedes this one.
+     *
+     * <p>Reissuing replaces rather than edits, so a leaked code is dead and the
+     * fact that it was reissued survives. A seller reissuing constantly is worth
+     * seeing.
+     */
+    private LocalDateTime invalidatedAt;
 
     /** Which leg of the chain this code covers. */
     @Enumerated(EnumType.STRING)

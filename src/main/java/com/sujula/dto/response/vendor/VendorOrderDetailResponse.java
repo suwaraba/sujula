@@ -63,6 +63,30 @@ public class VendorOrderDetailResponse {
     private LocalDateTime updatedAt;
     private LocalDateTime cancelledAt;
 
+    private LocalDateTime acceptedAt;
+    private LocalDateTime readyAt;
+    private LocalDateTime collectedAt;
+
+    /** Why the seller turned it down, when they did. */
+    private String rejectionReason;
+
+    /**
+     * Where the parcel goes, limited to what packing needs.
+     *
+     * <p>The only buyer-derived block on this response, and it comes from the
+     * delivery context rather than the payer's (C1). A seller never learns who
+     * paid, from where, in what currency, or how much.
+     */
+    private com.sujula.dto.response.fulfilment.FulfilmentResponses.Shipping shipping;
+
+    /**
+     * Whether every serialised line has its handsets bound.
+     *
+     * <p>What decides whether {@code /ready} will be accepted. Returned so the
+     * seller's screen can say so before they try.
+     */
+    private boolean readyToPack;
+
     /** The rate a payout was struck at, as the vendor sees it. */
     @Data
     @Builder
@@ -90,8 +114,25 @@ public class VendorOrderDetailResponse {
         private String variantSku;
         private String selectedOptions;
         private String imageUrl;
+        private Long lineId;
         private int quantity;
         private BigDecimal unitPrice;
         private BigDecimal lineTotal;
+
+        /**
+         * Whether this line is tracked handset by handset.
+         *
+         * <p>True when the variant has IMEI units behind it. A serialised line
+         * cannot be packed until a handset is bound to each unit of it, which is
+         * the only thing standing between an order and a parcel containing a
+         * phone nobody can identify afterwards.
+         */
+        private boolean serialised;
+
+        /** The handsets bound so far, in the order they were scanned. */
+        private List<String> assignedImeis;
+
+        /** How many still need binding before this line can be packed. */
+        private int handsetsOutstanding;
     }
 }

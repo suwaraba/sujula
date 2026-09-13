@@ -72,4 +72,14 @@ public interface ImeiUnitRepository extends JpaRepository<ImeiUnit, Long> {
     boolean existsByVariantId(Long variantId);
 
     List<ImeiUnit> findByVariantIdAndStatus(Long variantId, ImeiStatus status);
+
+    /**
+     * The handsets bound to one order line.
+     *
+     * <p>This is the authoritative direction. {@code OrderItem} keeps a
+     * comma-separated snapshot so a receipt reads correctly years later, but
+     * anything asking which handsets are on a line asks here, where the answer
+     * is indexed and cannot have been truncated by a column width.
+     */
+    List<ImeiUnit> findByOrderItemId(Long orderItemId);
 }

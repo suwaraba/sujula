@@ -51,7 +51,8 @@ import lombok.Setter;
        indexes = {
            @Index(name = "idx_imei_vendor",         columnList = "vendor_id"),
            @Index(name = "idx_imei_variant",        columnList = "variant_id"),
-           @Index(name = "idx_imei_vendor_status",  columnList = "vendor_id, status")
+           @Index(name = "idx_imei_vendor_status",  columnList = "vendor_id, status"),
+           @Index(name = "idx_imei_order_item",     columnList = "order_item_id")
        })
 @Getter @Setter
 @NoArgsConstructor
@@ -127,6 +128,26 @@ public class ImeiUnit {
     private String soldOnOrderNumber;
 
     private LocalDateTime soldAt;
+
+    /**
+     * The order line this handset was picked for.
+     *
+     * <p>Set when the seller binds it while packing, which is the moment the
+     * abstract "one Galaxy A16" on an order becomes a specific handset with a
+     * specific history. This side is the authority: {@code OrderItem} keeps a
+     * comma-separated snapshot for the receipt, but anything asking <em>which
+     * line is this handset on</em> asks here, because this is the end that can
+     * be indexed and queried.
+     *
+     * <p>Null for everything on the shelf, and for every handset sold before a
+     * seller was asked to bind one.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "order_item_id")
+    private com.sujula.model.order.OrderItem orderItem;
+
+    /** When the seller bound it to that line. */
+    private LocalDateTime assignedAt;
 
     @Column(length = 300)
     private String note;

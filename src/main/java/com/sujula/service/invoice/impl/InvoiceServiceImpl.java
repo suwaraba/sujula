@@ -2,19 +2,12 @@ package com.sujula.service.invoice.impl;
 
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.SecureRandom;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +34,7 @@ import com.sujula.repository.order.OrderRepository;
 import com.sujula.service.invoice.InvoiceProperties;
 import com.sujula.service.invoice.InvoiceService;
 import com.sujula.service.reference.CurrencyCatalogue;
+import com.sujula.service.security.SignedTokens;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -71,8 +65,6 @@ public class InvoiceServiceImpl implements InvoiceService {
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("d MMM yyyy");
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("d MMM yyyy HH:mm 'UTC'");
-    private static final String MAC_ALGORITHM = "HmacSHA256";
-
     private static final Font H1 = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 18f);
     private static final Font H2 = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11f);
     private static final Font LABEL = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 8f);
@@ -83,7 +75,16 @@ public class InvoiceServiceImpl implements InvoiceService {
     private final OrderRepository orders;
     private final CurrencyCatalogue currencies;
     private final InvoiceProperties properties;
-    private final byte[] signingKey;
+
+    /**
+     * The signer.
+     *
+     * <p>Shared with the parcel label rather than a second private copy of the
+     * same HMAC. Two copies drift, and the one that rots is always the one
+     * nobody re-read. The purpose string keeps them apart: an invoice token
+     * presented to the label endpoint does not verify, and the reverse.
+     */
+    private final SignedTokens tokens;
 
     public InvoiceServiceImpl(OrderRepository orders,
                               CurrencyCatalogue currencies,
@@ -91,102 +92,35 @@ public class InvoiceServiceImpl implements InvoiceService {
         this.orders = orders;
         this.currencies = currencies;
         this.properties = properties;
-        this.signingKey = resolveKey(properties.getSigningSecret());
+        this.tokens = new SignedTokens(properties.getSigningSecret(), "invoice");
     }
 
-    private static byte[] resolveKey(String configured) {
-        if (configured != null && !configured.isBlank()) {
-            return configured.getBytes(StandardCharsets.UTF_8);
-        }
-        byte[] generated = new byte[32];
-        new SecureRandom().nextBytes(generated);
-        log.warn("sujula.invoice.signing-secret is unset: invoice links are signed with a key "
-                + "generated for this process, so they stop working on restart and are not valid "
-                + "on another instance. Set it in the environment for anything but local work.");
-        return generated;
-    }
-
-    // ── Links ────────────────────────────────────────────────────────────────
+    // ── Links ──────────────────────────────────────────────────────────────
 
     @Override
     public BuyerOrderResponses.DocumentLink link(Order order) {
         LocalDateTime expiresAt = LocalDateTime.now(ZoneOffset.UTC).plus(properties.getLinkTtl());
-        String token = mint(order.getId(), expiresAt.toEpochSecond(ZoneOffset.UTC));
+        String token = tokens.mint(String.valueOf(order.getId()),
+                expiresAt.toEpochSecond(ZoneOffset.UTC));
 
         String base = properties.getBaseUrl() == null ? "" : properties.getBaseUrl().trim();
         if (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
         }
-        String url = base + properties.getDownloadPath() + "/" + token;
-
-        return new BuyerOrderResponses.DocumentLink(url, expiresAt, "application/pdf");
+        return new BuyerOrderResponses.DocumentLink(
+                base + properties.getDownloadPath() + "/" + token, expiresAt, "application/pdf");
     }
 
-    private String mint(Long orderId, long expiresAtEpochSecond) {
-        String payload = orderId + "." + expiresAtEpochSecond;
-        return encode(payload) + "." + encode(sign(payload));
-    }
-
-    /**
-     * Validates a token and returns the order id it names.
-     *
-     * <p>The signature is checked before the expiry, and both failures produce
-     * the same shape of answer: a token that is merely stale and one that has
-     * been forged should not be distinguishable by the person probing.
-     */
+    /** The order a valid token names. */
     private Long verify(String token) {
-        String[] parts = token == null ? new String[0] : token.split("\\.");
-        if (parts.length != 2) {
-            throw new BadRequestException("This invoice link is not valid.");
-        }
-        String payload;
-        byte[] presented;
+        String subject = tokens.verify(token, "invoice link");
         try {
-            payload = new String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8);
-            presented = Base64.getUrlDecoder().decode(parts[1]);
-        } catch (IllegalArgumentException malformed) {
-            throw new BadRequestException("This invoice link is not valid.");
-        }
-        if (!MessageDigest.isEqual(presented, sign(payload))) {
-            throw new BadRequestException("This invoice link is not valid.");
-        }
-
-        int split = payload.indexOf('.');
-        if (split < 0) {
-            throw new BadRequestException("This invoice link is not valid.");
-        }
-        long expiresAt;
-        Long orderId;
-        try {
-            orderId = Long.valueOf(payload.substring(0, split));
-            expiresAt = Long.parseLong(payload.substring(split + 1));
+            return Long.valueOf(subject);
         } catch (NumberFormatException malformed) {
             throw new BadRequestException("This invoice link is not valid.");
         }
-        if (Instant.now().getEpochSecond() > expiresAt) {
-            throw new BadRequestException(
-                    "This invoice link has expired. Open the order again for a fresh one.");
-        }
-        return orderId;
     }
 
-    private byte[] sign(String payload) {
-        try {
-            Mac mac = Mac.getInstance(MAC_ALGORITHM);
-            mac.init(new SecretKeySpec(signingKey, MAC_ALGORITHM));
-            return mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
-        } catch (java.security.GeneralSecurityException impossible) {
-            throw new IllegalStateException("HmacSHA256 is unavailable", impossible);
-        }
-    }
-
-    private static String encode(String value) {
-        return encode(value.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private static String encode(byte[] value) {
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(value);
-    }
 
     // ── Rendering ────────────────────────────────────────────────────────────
 

@@ -48,18 +48,28 @@ public class VendorOrderServiceImpl implements VendorOrderService {
 
     /** Orders sitting in the seller's court. */
     private static final Set<VendorOrderStatus> AWAITING_VENDOR = Set.of(
-            VendorOrderStatus.PENDING, VendorOrderStatus.CONFIRMED, VendorOrderStatus.PROCESSING);
+            VendorOrderStatus.PENDING, VendorOrderStatus.PREPARING, VendorOrderStatus.READY_FOR_PICKUP);
 
     /** Payout that is earned and no longer at risk of cancellation. */
     private static final Set<VendorOrderStatus> EARNED = Set.of(VendorOrderStatus.DELIVERED);
 
     /** Payout on orders placed but not yet in the buyer's hands. */
     private static final Set<VendorOrderStatus> IN_FLIGHT = Set.of(
-            VendorOrderStatus.PENDING, VendorOrderStatus.CONFIRMED,
-            VendorOrderStatus.PROCESSING, VendorOrderStatus.SHIPPED);
+            VendorOrderStatus.PENDING, VendorOrderStatus.PREPARING,
+            VendorOrderStatus.READY_FOR_PICKUP, VendorOrderStatus.SHIPPED);
 
     private final VendorOrderRepository vendorOrderRepository;
     private final VendorRepository vendorRepository;
+
+    /**
+     * Shared with the fulfilment endpoints.
+     *
+     * <p>Both this screen and the service behind its buttons have to answer the
+     * same two questions - how much of the buyer a seller sees, and whether the
+     * order can be packed yet. Two copies would eventually disagree, and the
+     * visible symptom is a button the screen offers and the service refuses.
+     */
+    private final com.sujula.service.fulfilment.FulfilmentView view;
 
     @Override
     @Transactional(readOnly = true)
@@ -195,7 +205,12 @@ public class VendorOrderServiceImpl implements VendorOrderService {
         for (OrderItem item : vendorOrder.getItems()) {
             Product product = item.getProduct();
             ProductVariant variant = item.getVariant();
+            int outstanding = view.outstandingHandsets(item);
             lines.add(VendorOrderDetailResponse.Line.builder()
+                    .lineId(item.getId())
+                    .serialised(view.requiredHandsets(item) > 0)
+                    .assignedImeis(item.assignedImeiList())
+                    .handsetsOutstanding(outstanding)
                     .productId(product != null ? product.getId() : null)
                     .variantId(variant != null ? variant.getId() : null)
                     .productName(item.getProductName())
@@ -229,6 +244,14 @@ public class VendorOrderServiceImpl implements VendorOrderService {
                 .placedAt(vendorOrder.getCreatedAt())
                 .updatedAt(vendorOrder.getUpdatedAt())
                 .cancelledAt(vendorOrder.getCancelledAt())
+                .acceptedAt(vendorOrder.getAcceptedAt())
+                .readyAt(vendorOrder.getReadyAt())
+                .collectedAt(vendorOrder.getCollectedAt())
+                .rejectionReason(vendorOrder.getRejectionReason())
+                // The one buyer-derived block a seller sees, and it comes from
+                // the delivery snapshot rather than the payer's (C1).
+                .shipping(view.shippingFor(vendorOrder))
+                .readyToPack(view.everyLineBound(vendorOrder))
                 .build();
     }
 

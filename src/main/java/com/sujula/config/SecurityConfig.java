@@ -234,6 +234,19 @@ public class SecurityConfig {
                                          "/vendor/promotions", "/vendor/promotions/**",
                                          "/vendor/coupons", "/vendor/coupons/**").authenticated()
 
+                        // A seller's own fulfilment desk: accepting, packing,
+                        // the collection code and the parcel label. Authenticated
+                        // is the outer gate only — the vendor is resolved from
+                        // the session and goes into every query, so a path
+                        // variable cannot reach another shop's parcel.
+                        //
+                        // Note what is NOT open here. The collection code is a
+                        // seller-only secret and the label names a recipient, so
+                        // neither gets the permitAll that the tracking page and
+                        // the invoice link have: those two are built to be worth
+                        // nothing to a stranger holding them, and these are not.
+                        .requestMatchers("/vendor/orders", "/vendor/orders/**").authenticated()
+
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to
                         // buy has not signed in yet, and these carry no private figures.

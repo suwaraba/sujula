@@ -1,5 +1,6 @@
 package com.sujula.service;
 
+import com.sujula.dto.response.fulfilment.FulfilmentResponses;
 import com.sujula.dto.response.vendor.VendorOrderDetailResponse;
 import com.sujula.dto.response.vendor.VendorOrderStatsResponse;
 import com.sujula.exceptions.BadRequestException;
@@ -39,6 +40,7 @@ class VendorOrderServiceImplTest {
 
     private VendorOrderRepository vendorOrderRepository;
     private VendorRepository vendorRepository;
+    private com.sujula.service.fulfilment.FulfilmentView view;
     private VendorOrderServiceImpl service;
 
     private Vendor vendor;
@@ -48,7 +50,16 @@ class VendorOrderServiceImplTest {
     void setUp() {
         vendorOrderRepository = mock(VendorOrderRepository.class);
         vendorRepository = mock(VendorRepository.class);
-        service = new VendorOrderServiceImpl(vendorOrderRepository, vendorRepository);
+        // Real, over stubs for the two repositories behind it: the packability
+        // and shipping answers this screen shows are the ones the fulfilment
+        // endpoints enforce, and a mocked view would let the two drift in the
+        // exact place this test exists to pin.
+        com.sujula.repository.inventory.ImeiUnitRepository imeiUnits =
+                mock(com.sujula.repository.inventory.ImeiUnitRepository.class);
+        com.sujula.repository.PickupPointRepository pickupPoints =
+                mock(com.sujula.repository.PickupPointRepository.class);
+        view = new com.sujula.service.fulfilment.FulfilmentView(imeiUnits, pickupPoints);
+        service = new VendorOrderServiceImpl(vendorOrderRepository, vendorRepository, view);
 
         vendor = Vendor.builder()
                 .id(50L)
@@ -63,11 +74,24 @@ class VendorOrderServiceImplTest {
         // What the buyer paid, in the buyer's currency. None of it may surface.
         order.setCurrency("GBP");
         order.setTotal(new BigDecimal("142.50"));
-        order.setShippingFullName("A Buyer");
-        order.setShippingStreet("221B Baker Street");
-        order.setShippingCity("London");
-        order.setShippingLatitude(51.5237);
-        order.setShippingLongitude(-0.1585);
+
+        // The payer: in London, paying in pounds. Nothing about this side of the
+        // order reaches the seller at all.
+        order.setBillingFullName("Fatou Ceesay");
+        order.setBillingStreet("221B Baker Street");
+        order.setBillingCity("London");
+        order.setBillingCountry("GB");
+
+        // The recipient: the sister in Serrekunda the parcel is actually for.
+        // A different person, in a different country - which is the ordinary
+        // case here rather than an edge one (C1).
+        order.setShippingFullName("Isatou Ceesay");
+        order.setShippingStreet("12 Kairaba Avenue");
+        order.setShippingCity("Serrekunda");
+        order.setShippingCountry("GM");
+        order.setShippingPhone("+220 7712345");
+        order.setShippingLatitude(13.4384);
+        order.setShippingLongitude(-16.6781);
 
         when(vendorOrderRepository.save(any(VendorOrder.class))).thenAnswer(i -> i.getArgument(0));
     }
@@ -133,17 +157,53 @@ class VendorOrderServiceImplTest {
     }
 
     @Test
-    void nothingAboutTheBuyerOrTheirCurrencyIsReturned() {
+    void nothingAboutThePayerOrTheirCurrencyIsReturned() {
         String rendered = detailOf(VendorOrderStatus.PENDING).toString();
 
-        // The buyer's side of this exact order, field by field.
-        assertFalse(rendered.contains("GBP"), "the buyer's currency must not appear");
-        assertFalse(rendered.contains("11.20"), "the buyer's converted total must not appear");
+        // The payer's side of this exact order, field by field. A seller in
+        // Banjul learns nothing about who paid or from where - that is C1, and
+        // a seller who could see both sides could tell which of their buyers is
+        // sending money home.
+        assertFalse(rendered.contains("GBP"), "the payer's currency must not appear");
+        assertFalse(rendered.contains("11.20"), "the payer's converted total must not appear");
         assertFalse(rendered.contains("142.50"), "the order total must not appear");
-        assertFalse(rendered.contains("London"), "the buyer's city must not appear");
-        assertFalse(rendered.contains("Baker Street"), "the buyer's address must not appear");
-        assertFalse(rendered.contains("51.52"), "the buyer's coordinates must not appear");
-        assertFalse(rendered.contains("A Buyer"), "the buyer's name must not appear");
+        assertFalse(rendered.contains("Fatou"), "the payer's name must not appear");
+        assertFalse(rendered.contains("London"), "the payer's city must not appear");
+        assertFalse(rendered.contains("Baker Street"), "the payer's address must not appear");
+    }
+
+    @Test
+    void theSellerGetsTheDeliveryNameAndTownAndNoMoreOfIt() {
+        VendorOrderDetailResponse detail = detailOf(VendorOrderStatus.PENDING);
+        FulfilmentResponses.Shipping shipping = detail.getShipping();
+
+        // What packing needs: who to write on the box, and where it is going.
+        assertEquals("Isatou Ceesay", shipping.recipientName());
+        assertEquals("Serrekunda", shipping.town());
+        assertEquals("GM", shipping.country());
+
+        // And what packing does not need. The platform routes the parcel and
+        // the driver resolves the address from the label's QR, so printing it
+        // here would hand every seller a home address they have no delivery to
+        // make to.
+        String rendered = detail.toString();
+        assertFalse(rendered.contains("Kairaba"), "the recipient's street must not appear");
+        assertFalse(rendered.contains("13.43"), "the recipient's coordinates must not appear");
+        assertFalse(rendered.contains("7712345"), "the recipient's full phone must not appear");
+        assertTrue(shipping.phoneHint().endsWith("345"),
+                "but enough of it to confirm the right parcel");
+    }
+
+    @Test
+    void aParcelLeavingTheCountryIsFlaggedAgainstTheVendorsOwnCountry() {
+        // The comparison is delivery country against the SELLER's country. The
+        // payer is in London and that is irrelevant: a Banjul seller shipping to
+        // Serrekunda is domestic however far away the money came from.
+        vendor.setPickupCountryCode("GM");
+        assertFalse(detailOf(VendorOrderStatus.PENDING).getShipping().international());
+
+        vendor.setPickupCountryCode("SN");
+        assertTrue(detailOf(VendorOrderStatus.PENDING).getShipping().international());
     }
 
     @Test
@@ -177,21 +237,29 @@ class VendorOrderServiceImplTest {
     // ── Transitions ──────────────────────────────────────────────────────────
 
     @Test
-    void aVendorAcceptsThenPacksThenShips() {
+    void aVendorAcceptsThenPacksAndStopsThere() {
         when(vendorOrderRepository.findByIdAndVendorId(11L, 50L))
                 .thenReturn(Optional.of(slice(VendorOrderStatus.PENDING)));
-        assertEquals(VendorOrderStatus.CONFIRMED,
-                service.updateStatus(4L, 11L, VendorOrderStatus.CONFIRMED).getStatus());
+        assertEquals(VendorOrderStatus.PREPARING,
+                service.updateStatus(4L, 11L, VendorOrderStatus.PREPARING).getStatus());
 
         when(vendorOrderRepository.findByIdAndVendorId(11L, 50L))
-                .thenReturn(Optional.of(slice(VendorOrderStatus.CONFIRMED)));
-        assertEquals(VendorOrderStatus.PROCESSING,
-                service.updateStatus(4L, 11L, VendorOrderStatus.PROCESSING).getStatus());
+                .thenReturn(Optional.of(slice(VendorOrderStatus.PREPARING)));
+        assertEquals(VendorOrderStatus.READY_FOR_PICKUP,
+                service.updateStatus(4L, 11L, VendorOrderStatus.READY_FOR_PICKUP).getStatus());
+    }
 
+    @Test
+    void aVendorCannotDeclareTheirOwnParcelCollected() {
         when(vendorOrderRepository.findByIdAndVendorId(11L, 50L))
-                .thenReturn(Optional.of(slice(VendorOrderStatus.PROCESSING)));
-        assertEquals(VendorOrderStatus.SHIPPED,
-                service.updateStatus(4L, 11L, VendorOrderStatus.SHIPPED).getStatus());
+                .thenReturn(Optional.of(slice(VendorOrderStatus.READY_FOR_PICKUP)));
+
+        // SHIPPED is what presenting the release code produces. A vendor who could
+        // set it directly could report a parcel collected that is still on the shelf,
+        // which is a custody chain with a hole in it.
+        BadRequestException error = assertThrows(BadRequestException.class,
+                () -> service.updateStatus(4L, 11L, VendorOrderStatus.SHIPPED));
+        assertTrue(error.getMessage().contains("SHIPPED"));
     }
 
     @Test
@@ -220,7 +288,7 @@ class VendorOrderServiceImplTest {
                 .thenReturn(Optional.of(slice(VendorOrderStatus.SHIPPED)));
 
         assertThrows(BadRequestException.class,
-                () -> service.updateStatus(4L, 11L, VendorOrderStatus.CONFIRMED));
+                () -> service.updateStatus(4L, 11L, VendorOrderStatus.PREPARING));
     }
 
     @Test
@@ -236,11 +304,11 @@ class VendorOrderServiceImplTest {
     @Test
     void settingTheStatusItAlreadyHasIsNotAnError() {
         when(vendorOrderRepository.findByIdAndVendorId(11L, 50L))
-                .thenReturn(Optional.of(slice(VendorOrderStatus.CONFIRMED)));
+                .thenReturn(Optional.of(slice(VendorOrderStatus.PREPARING)));
 
         // A double-tapped button should not raise an error at the seller.
-        assertEquals(VendorOrderStatus.CONFIRMED,
-                service.updateStatus(4L, 11L, VendorOrderStatus.CONFIRMED).getStatus());
+        assertEquals(VendorOrderStatus.PREPARING,
+                service.updateStatus(4L, 11L, VendorOrderStatus.PREPARING).getStatus());
     }
 
     @Test
@@ -253,7 +321,7 @@ class VendorOrderServiceImplTest {
         assertTrue(shipped.getAllowedNextStatuses().isEmpty());
 
         assertTrue(detailOf(VendorOrderStatus.PENDING).getAllowedNextStatuses()
-                .containsAll(List.of(VendorOrderStatus.CONFIRMED, VendorOrderStatus.CANCELLED)));
+                .containsAll(List.of(VendorOrderStatus.PREPARING, VendorOrderStatus.CANCELLED)));
     }
 
     // ── Statistics ───────────────────────────────────────────────────────────
@@ -262,7 +330,7 @@ class VendorOrderServiceImplTest {
     void statsAreCountedPerStatusAndPaidInTheVendorsCurrency() {
         when(vendorOrderRepository.countByStatusForVendor(50L)).thenReturn(List.of(
                 new Object[]{VendorOrderStatus.PENDING, 2L},
-                new Object[]{VendorOrderStatus.PROCESSING, 1L},
+                new Object[]{VendorOrderStatus.READY_FOR_PICKUP, 1L},
                 new Object[]{VendorOrderStatus.DELIVERED, 5L}));
         when(vendorOrderRepository.sumPayoutNative(anyLong(), any()))
                 .thenReturn(new BigDecimal("4050.00"));

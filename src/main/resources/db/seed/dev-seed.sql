@@ -154,6 +154,27 @@ START TRANSACTION;
 -- ── Clear previous seed ─────────────────────────────────────────────────────
 -- Reverse foreign-key order. No FOREIGN_KEY_CHECKS=0 anywhere: if this order
 -- is wrong the database says so, which is the point.
+--
+-- Every table this file inserts into is cleared here. That is not tidiness: a
+-- table that is inserted into and never cleared makes the file run exactly once
+-- and then fail on a duplicate key, which is the opposite of what it is for.
+DELETE FROM catalogue_job_errors    WHERE job_id >= 1000;
+DELETE FROM catalogue_jobs          WHERE id >= 1000;
+DELETE FROM promotion_categories    WHERE promotion_id >= 1000;
+DELETE FROM promotion_products      WHERE promotion_id >= 1000;
+DELETE FROM promotions              WHERE id >= 1000;
+DELETE FROM store_staff_permissions WHERE staff_id >= 1000;
+DELETE FROM store_staff             WHERE id >= 1000;
+DELETE FROM store_operating_hours   WHERE id >= 1000;
+DELETE FROM kyc_documents           WHERE id >= 1000;
+DELETE FROM product_translations    WHERE id >= 1000;
+-- refund_requests references both an order and a vendor_order, so it clears
+-- before either of them.
+DELETE FROM refund_requests         WHERE id >= 1000;
+-- imei_units references an order_item; stock_movements reference products and
+-- variants. Both clear before those do.
+DELETE FROM imei_units              WHERE id >= 1000;
+DELETE FROM stock_movements         WHERE id >= 1000;
 
 DELETE FROM cart_quote_lines       WHERE id >= 1000;
 DELETE FROM cart_quotes            WHERE id LIKE 'seed-%';
@@ -203,6 +224,10 @@ DELETE FROM vendor_payouts         WHERE id >= 1000;
 DELETE FROM users                  WHERE id >= 1000;
 DELETE FROM gift_cards             WHERE id >= 1000;
 DELETE FROM exchange_rates         WHERE id >= 1000;
+-- categories references itself, so the children go before the parents. One
+-- flat delete is refused, and rightly - a parent row is still referenced at the
+-- moment it is removed.
+DELETE FROM categories             WHERE id >= 1000 AND parent_id IS NOT NULL;
 DELETE FROM categories             WHERE id >= 1000;
 DELETE FROM brands                 WHERE id >= 1000;
 
@@ -1017,6 +1042,10 @@ VALUES
 -- Every IMEI here is Luhn-valid - the last digit checks the other fourteen, and
 -- the API refuses one that does not. Check 490154203237518 by hand if you like.
 --
+-- 1464 and 1465 are the same model AND the same variant as each other. That is
+-- the point of them: a count would say "two Galaxy A16 256GB", and the order
+-- needs to say which of the two is in the box.
+--
 -- The unique constraint is platform-wide rather than per seller. The same
 -- handset on two shelves is a phone somebody has sold twice, and a constraint
 -- is the cheapest place to find that out.
@@ -1028,18 +1057,34 @@ VALUES
 INSERT INTO imei_units
  (id, imei, imei2, serial_number, vendor_id, product_id, variant_id, status, grade, grade_note,
   cost_price, battery_health, warranty_expires_on, sold_on_order_number, sold_at, note,
-  registered_by_user_id, created_at, updated_at)
+  registered_by_user_id, order_item_id, assigned_at, created_at, updated_at)
 VALUES
  (1460, '490154203237518', NULL, 'RF8N90ABCDE', 1101, 1301, 1350, 'IN_STOCK', 'A_GRADE', NULL,
-  7000.00, 98, '2027-04-18', NULL, NULL, 'Opened for display only', 1002, @NOW, @NOW),
+  7000.00, 98, '2027-04-18', NULL, NULL, 'Opened for display only', 1002, NULL, NULL, @NOW, @NOW),
  (1461, '351756051523993', NULL, 'RF8N90ABCDF', 1101, 1301, 1350, 'IN_STOCK', 'B_GRADE',
   'Light marks on the frame. Screen unmarked.',
-  6600.00, 91, NULL, NULL, NULL, NULL, 1002, @NOW, @NOW),
+  6600.00, 91, NULL, NULL, NULL, NULL, 1002, NULL, NULL, @NOW, @NOW),
  (1462, '356938035643809', NULL, 'RF8N90ABCDG', 1101, 1301, 1350, 'WRITTEN_OFF', 'FOR_PARTS',
   'Liquid damage. Does not charge.',
-  6600.00, NULL, NULL, NULL, NULL, 'Dropped in a bucket during the rains', 1002, @NOW, @NOW),
+  6600.00, NULL, NULL, NULL, NULL, 'Dropped in a bucket during the rains', 1002, NULL, NULL, @NOW, @NOW),
  (1463, '013227009086244', NULL, 'RF8N90ABCDH', 1101, 1307, NULL, 'SOLD', 'A_GRADE', NULL,
-  5800.00, 95, NULL, 'SJL-SEED-0001', @NOW, NULL, 1002, @NOW, @NOW);
+  5800.00, 95, NULL, 'SJL-SEED-0001', @NOW, NULL, 1002, NULL, NULL, @NOW, @NOW),
+ -- Bound to order line 1418, but not here: this table is written long before
+ -- order_items exists, and the foreign key is real. The binding is an UPDATE
+ -- further down, which is also the order it happens in for real - a handset is
+ -- registered when it arrives and bound weeks later when somebody packs it.
+ --
+ -- RESERVED rather than SOLD: it is in a box in the shop, not with the buyer,
+ -- and it goes back to IN_STOCK if the order is rejected.
+ (1464, '351756051524009', NULL, 'RF8N90ABCDJ', 1101, 1301, 1352, 'RESERVED', 'A_GRADE', NULL,
+  7100.00, 100, '2027-06-30', 'SJL-SEED-0004', NULL, 'Packed for the Serrekunda parcel',
+  1002, NULL, NULL, @NOW, @NOW),
+ -- On the shelf, same model and same variant. What makes the binding on 1464 a
+ -- choice rather than the only possibility: two units of one variant are not
+ -- interchangeable, and the order records which one actually went.
+ (1465, '490154203237609', NULL, 'RF8N90ABCDK', 1101, 1301, 1352, 'IN_STOCK', 'B_GRADE',
+  'Small scuff on the rear glass.',
+  6900.00, 94, NULL, NULL, NULL, NULL, 1002, NULL, NULL, @NOW, @NOW);
 
 -- 1463 is SOLD and carries the order it went out on. A seller cannot set that
 -- by hand - the order does it, so the record and the sale cannot disagree.
@@ -1191,6 +1236,33 @@ VALUES
   'Collecting Saturday morning.', NULL, NULL, 0,
   '2026-09-12', '09:00-12:00',
   26, 0, 0.00,
+  NULL, 0.00, @NOW, @NOW),
+
+ -- The shape this marketplace exists for, and the only order in this file that
+ -- actually has it: the payer and the recipient are different people, in
+ -- different countries, on different continents. Fatou is in Madrid and pays in
+ -- euros with a European card; the parcel goes to her sister Isatou in
+ -- Serrekunda, who has a phone number and no account.
+ --
+ -- Read the two blocks below as the two halves of C1. billing_* is the payer
+ -- context: Madrid, Spain, which is what decides the currency and the payment
+ -- methods offered. shipping_* is the delivery context: Serrekunda, Gambia,
+ -- which is what decides the shipping cost, the serviceability and what the
+ -- seller in Banjul is shown. Nothing derives either from the other, and an
+ -- implementation that collapsed them would price this parcel as a delivery
+ -- inside Spain.
+ (1404, 'SJL-SEED-0004', 'Q2XNF8VJHR4TMW7K', 1005, NULL, NULL, NULL, NULL,
+  'PROCESSING', 125.26, 6.90, 0.00, 0.00, 132.16, 'EUR',
+  NULL, NULL, 'PAID', 'CARD', @NOW,
+  'HOME_DELIVERY', NULL,
+  'Isatou Ceesay', '+2203100077', '12 Kairaba Avenue', NULL,
+  'Serrekunda', 'Kanifing', NULL, 'GM',
+  13.43840000, -16.67810000, NULL,
+  'Fatou Ceesay', 'Calle de Alcala 145', 'Madrid', 'Comunidad de Madrid', '28009', 'ES',
+  'For my sister - please do not write the price on the box.',
+  'Diaspora order: payer ES, delivery GM.', 'Call the number on arrival, she has no app.', 0,
+  NULL, NULL,
+  132, 0, 0.00,
   NULL, 0.00, @NOW, @NOW);
 
 -- shipping_address_id on the orders above records which saved address the buyer
@@ -1224,7 +1296,15 @@ VALUES
  (1602, 1403, 'PAY-SEED0000002', 'CASH_IN_STORE', 'PAID', 2610.00, 0.00, 'GMD',
   NULL, NULL, NULL, NULL, 'Pay 2610.00 at handover. Quote reference PAY-SEED0000002.',
   1008, 'TILL-2026-09-12-0044', NULL, 'Collected at Westfield Junction',
-  @NOW, NULL, NULL, 2, @NOW, @NOW);
+  @NOW, NULL, NULL, 2, @NOW, @NOW),
+ -- One payment, two vendors, and one of them has since rejected. The payment
+ -- stays PAID and whole: the refund for the rejected slice is a request against
+ -- that slice (1451), not a reduction of this row. Reducing it here would make
+ -- the money the buyer actually paid unreconstructable.
+ (1603, 1404, 'PAY-SEED0000003', 'CARD', 'PAID', 132.16, 0.00, 'EUR',
+  'MOCK-3D7C25E1A84B49F2C6E0', NULL, NULL, '{"gateway":"mock","status":"succeeded"}', NULL,
+  NULL, 'MOCK-3D7C25E1A84B49F2C6E0', NULL, 'Settled synchronously by mock',
+  @NOW, NULL, NULL, 1, @NOW, @NOW);
 
 -- ── vendor_orders ───────────────────────────────────────────────────────────
 -- One vendor's slice of an order. Amounts appear twice: `*_native` in the
@@ -1255,34 +1335,72 @@ VALUES
 -- a fact is not the same as leaving the columns null, which would be
 -- indistinguishable from nobody having written anything down.
 
+-- The fulfilment stamps are consequences, not inputs. accepted_at is set when a
+-- seller accepts, ready_at when they pack, collected_at when a driver presents
+-- the release code — so a row with a collected_at and no ready_at would be a
+-- parcel that left without being packed. release_code_issue_count is a summary
+-- of the handover_codes rows, never the authority: the rate limit counts the
+-- rows, because a counter is something a code path can forget to increment.
+
 INSERT INTO vendor_orders
  (id, order_id, vendor_id, status, native_currency,
   subtotal_native, discount_native, total_native,
   commission_rate, commission_native, delivery_native, payout_native,
   subtotal, discount, total, coupon_id, coupon_code, cancelled_at,
   receipt_confirmed_at, escrow_released_at, created_at, updated_at,
-  fx_native_currency, fx_display_currency, fx_rate, fx_rate_at, fx_source, fx_quote_id)
+  fx_native_currency, fx_display_currency, fx_rate, fx_rate_at, fx_source, fx_quote_id,
+  accepted_at, ready_at, collected_at, rejection_reason,
+  release_code_issue_count, release_code_issued_at)
 VALUES
  (1501, 1401, 1101, 'SHIPPED', 'GMD',
   11000.00, 1100.00, 9900.00,
   10.00, 990.00, 209.09, 8910.00,
   121.00, 12.10, 108.90, NULL, NULL, NULL, NULL, NULL, @NOW, @NOW,
-  'GMD', 'GBP', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL),
- (1502, 1401, 1102, 'CONFIRMED', 'XOF',
+  'GMD', 'GBP', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL,
+  @NOW, @NOW, @NOW, NULL, 1, @NOW),
+ (1502, 1401, 1102, 'PREPARING', 'XOF',
   14500.00, 1450.00, 13050.00,
   12.50, 1631.25, 1429.69, 11418.75,
   18.56, 1.86, 16.70, NULL, NULL, NULL, NULL, NULL, @NOW, @NOW,
-  'XOF', 'GBP', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL),
+  'XOF', 'GBP', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL,
+  @NOW, NULL, NULL, NULL, 0, NULL),
  (1503, 1402, 1101, 'PENDING', 'GMD',
   2900.00, 0.00, 2900.00,
   10.00, 290.00, 150.00, 2610.00,
   2900.00, 0.00, 2900.00, NULL, NULL, NULL, NULL, NULL, @NOW, @NOW,
-  'GMD', 'GMD', 1.00000000, @NOW, 'IDENTITY', NULL),
+  'GMD', 'GMD', 1.00000000, @NOW, 'IDENTITY', NULL,
+  NULL, NULL, NULL, NULL, 0, NULL),
  (1504, 1403, 1101, 'DELIVERED', 'GMD',
   2500.00, 0.00, 2500.00,
   10.00, 250.00, 110.00, 2250.00,
   2500.00, 0.00, 2500.00, NULL, NULL, NULL, @NOW, @NOW, @NOW, @NOW,
-  'GMD', 'GMD', 1.00000000, @NOW, 'IDENTITY', NULL);
+  'GMD', 'GMD', 1.00000000, @NOW, 'IDENTITY', NULL,
+  @NOW, @NOW, @NOW, NULL, 1, @NOW),
+
+ -- Packed and waiting for a driver, with a live release code (1735) and a
+ -- handset bound to its line (1464). The only slice here that reaches
+ -- READY_FOR_PICKUP, which is the state most of the fulfilment surface is about:
+ -- the goods are in the shop, nothing is on a road, and the code exists.
+ (1505, 1404, 1101, 'READY_FOR_PICKUP', 'GMD',
+  9700.00, 0.00, 9700.00,
+  10.00, 970.00, 380.00, 8730.00,
+  106.70, 0.00, 106.70, NULL, NULL, NULL, NULL, NULL, @NOW, @NOW,
+  'GMD', 'EUR', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL,
+  @NOW, @NOW, NULL, NULL, 1, @NOW),
+
+ -- Rejected by the seller, carrying the reason the buyer is shown and the
+ -- refund it raised (1451). Note what did not happen to 1505 on the same
+ -- payment: it is still packed and still going. That is C3 — one seller pulling
+ -- out does not touch another's line, and the refund is this slice's amount
+ -- rather than a proportion of the order.
+ (1506, 1404, 1102, 'CANCELLED', 'XOF',
+  14500.00, 0.00, 14500.00,
+  12.50, 1812.50, 1590.00, 12687.50,
+  18.56, 0.00, 18.56, NULL, NULL, @NOW, NULL, NULL, @NOW, @NOW,
+  'XOF', 'EUR', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL,
+  @NOW, NULL, NULL,
+  'The indigo run sold out at the market and the next dye is three weeks away.',
+  0, NULL);
 
 -- ── order_items ─────────────────────────────────────────────────────────────
 -- `unit_price` / `total_price` are in the vendor's listing currency and are
@@ -1298,28 +1416,51 @@ VALUES
 INSERT INTO order_items
  (id, order_id, vendor_order_id, product_id, variant_id, vendor_id, quantity,
   unit_price, total_price, currency, unit_price_converted, total_price_converted,
-  delivery_cost, product_name, product_sku, variant_sku, selected_options, product_image_url)
+  delivery_cost, product_name, product_sku, variant_sku, selected_options, product_image_url,
+  assigned_imeis, imei_assigned_at)
 VALUES
  (1405, 1401, 1501, 1301, 1352, 1101, 1,
   9700.00, 9700.00, 'GMD', 106.70, 106.70,
   1.84, 'Samsung Galaxy A16', 'KOM-SGA16', 'KOM-SGA16-256-BLK', 'Storage: 256 GB, Colour: Black',
-  'https://media.example.invalid/products/sga16-front.jpg'),
+  'https://media.example.invalid/products/sga16-front.jpg', NULL, NULL),
  (1406, 1401, 1501, 1303, NULL, 1101, 1,
   1300.00, 1300.00, 'GMD', 14.30, 14.30,
   0.46, 'Tobaski 1.8L Electric Kettle', 'KOM-KET18', NULL, NULL,
-  'https://media.example.invalid/products/kettle.jpg'),
+  'https://media.example.invalid/products/kettle.jpg', NULL, NULL),
  (1407, 1401, 1502, 1305, 1353, 1102, 1,
   14500.00, 14500.00, 'XOF', 18.56, 18.56,
   1.83, 'Wax Print — Six Yards, Indigo', 'TER-WAX-IND', 'TER-WAX-IND-6Y', 'Length: Six yards',
-  'https://media.example.invalid/products/wax-indigo.jpg'),
+  'https://media.example.invalid/products/wax-indigo.jpg', NULL, NULL),
  (1408, 1402, 1503, 1307, NULL, 1101, 1,
   2900.00, 2900.00, 'GMD', 2900.00, 2900.00,
   150.00, 'Samsung Galaxy A05', 'KOM-SGA05', NULL, NULL,
-  NULL),
+  NULL, NULL, NULL),
  (1409, 1403, 1504, 1303, NULL, 1101, 2,
   1250.00, 2500.00, 'GMD', 1250.00, 2500.00,
   110.00, 'Tobaski 1.8L Electric Kettle', 'KOM-KET18', NULL, NULL,
-  'https://media.example.invalid/products/kettle.jpg');
+  'https://media.example.invalid/products/kettle.jpg', NULL, NULL),
+ -- A phone, packed and bound to handset 1464. assigned_imeis is a snapshot for
+ -- the receipt; imei_units.order_item_id is the authority, and the two are
+ -- written together when the seller scans it.
+ (1418, 1404, 1505, 1301, 1352, 1101, 1,
+  9700.00, 9700.00, 'GMD', 106.70, 106.70,
+  4.18, 'Samsung Galaxy A16', 'KOM-SGA16', 'KOM-SGA16-256-BLK', 'Storage: 256 GB, Colour: Black',
+  'https://media.example.invalid/products/sga16-front.jpg',
+  '351756051524009', @NOW),
+ -- The rejected seller's line. It stays on the order: what the buyer ordered is
+ -- a fact, and deleting the row would leave the refund referring to nothing.
+ (1419, 1404, 1506, 1305, 1353, 1102, 1,
+  14500.00, 14500.00, 'XOF', 18.56, 18.56,
+  2.72, 'Wax Print — Six Yards, Indigo', 'TER-WAX-IND', 'TER-WAX-IND-6Y', 'Length: Six yards',
+  'https://media.example.invalid/products/wax-indigo.jpg',
+  NULL, NULL);
+
+-- The handset binding, now that both ends of it exist. Two writes, deliberately:
+-- imei_units.order_item_id is the authority and is what a warranty claim or a
+-- stolen-handset report is resolved through, and order_items.assigned_imeis is
+-- the snapshot the buyer's receipt reads years later. The service writes both
+-- together when the seller scans; so does this.
+UPDATE imei_units SET order_item_id = 1418, assigned_at = @NOW WHERE id = 1464;
 
 -- ── order_status_history ────────────────────────────────────────────────────
 -- Append-only trail. `from_status` is null on the first row of each order.
@@ -1367,7 +1508,20 @@ VALUES
  (1450, 'RFN-SEED-0001', 1401, 1502, 1005, 'REQUESTED',
   16.70, 'GBP', 13050.00,
   'XOF', 'GBP', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL,
-  'Found the same phone locally.', NULL, NULL, NULL, NULL, NULL, @NOW);
+  'Found the same phone locally.', NULL, NULL, NULL, NULL, NULL, @NOW),
+ -- Raised by the SELLER rejecting, not by the buyer asking. The two arrive at
+ -- the same queue and the same status, and they should: either way a person
+ -- decides whether money leaves. requested_by is the seller's user here, which
+ -- is how an administrator tells the two apart.
+ (1451, 'RFN-SEED-0002', 1404, 1506, 1003, 'REQUESTED',
+  18.56, 'EUR', 14500.00,
+  'XOF', 'EUR', 0.00128000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL,
+  'The seller could not fulfil this order: The indigo run sold out at the market and the next dye is three weeks away.',
+  NULL, NULL, NULL, NULL, NULL, @NOW);
+
+-- 1451 refunds 18.56 EUR of a 132.16 EUR payment and leaves the other 106.70
+-- alone, because that parcel is packed and going. A refund expressed as a
+-- proportion of the order could not say that.
 
 -- 1502 is left CONFIRMED above rather than CANCELLED on purpose: this is the
 -- state between a buyer asking and an administrator answering, which is where
@@ -1443,12 +1597,33 @@ INSERT INTO proof_of_delivery (id, delivery_id, image_url, signature_url, latitu
 -- The short code the receiving party reads out. `version` is an optimistic
 -- lock, so two people cannot burn the same code concurrently.
 
-INSERT INTO handover_codes (id, delivery_id, code, code_type, used, used_at, used_by_user_id, expires_at, version, created_at) VALUES
- (1730, 1700, '418302', 'VENDOR_TO_DRIVER',    1, @NOW, 1007, '2026-09-12 18:00:00.000000', 1, @NOW),
- (1731, 1700, '905177', 'DRIVER_TO_PICKUP',    1, @NOW, 1008, '2026-09-12 18:00:00.000000', 1, @NOW),
- (1732, 1700, '234861', 'PICKUP_TO_CUSTOMER',  1, @NOW, 1004, '2026-09-12 20:00:00.000000', 1, @NOW),
- (1733, 1701, '660419', 'VENDOR_TO_DRIVER',    1, @NOW, 1007, '2026-09-13 18:00:00.000000', 1, @NOW),
- (1734, 1701, '773025', 'DRIVER_TO_CUSTOMER',  0, NULL, NULL, '2026-09-20 18:00:00.000000', 0, @NOW);
+-- VENDOR_RELEASE is the one type that hangs off a vendor order rather than a
+-- delivery, which is why delivery_id is nullable: a seller packs one parcel for
+-- the whole slice and there is no delivery yet to attach it to. Exactly one of
+-- the two columns is set on every row.
+--
+-- 1735 and 1736 are the same slice. 1735 was read out over a bad line, so the
+-- seller reissued: it carries invalidated_at and no longer opens anything, and
+-- 1736 is the live one. Reissuing replaces rather than edits, so a code that
+-- leaked is dead AND the fact that it was reissued survives - a seller
+-- reissuing constantly is worth being able to see.
+
+INSERT INTO handover_codes (id, delivery_id, vendor_order_id, code, code_type, used, used_at, used_by_user_id, expires_at, invalidated_at, version, created_at) VALUES
+ (1730, 1700, NULL, '418302', 'VENDOR_TO_DRIVER',    1, @NOW, 1007, '2026-09-12 18:00:00.000000', NULL, 1, @NOW),
+ (1731, 1700, NULL, '905177', 'DRIVER_TO_PICKUP',    1, @NOW, 1008, '2026-09-12 18:00:00.000000', NULL, 1, @NOW),
+ (1732, 1700, NULL, '234861', 'PICKUP_TO_CUSTOMER',  1, @NOW, 1004, '2026-09-12 20:00:00.000000', NULL, 1, @NOW),
+ (1733, 1701, NULL, '660419', 'VENDOR_TO_DRIVER',    1, @NOW, 1007, '2026-09-13 18:00:00.000000', NULL, 1, @NOW),
+ (1734, 1701, NULL, '773025', 'DRIVER_TO_CUSTOMER',  0, NULL, NULL, '2026-09-20 18:00:00.000000', NULL, 0, @NOW),
+ (1735, NULL, 1505, '304912', 'VENDOR_RELEASE',      0, NULL, NULL, '2026-09-16 12:00:00.000000', @NOW,  0, @NOW),
+ (1736, NULL, 1505, '871460', 'VENDOR_RELEASE',      0, NULL, NULL, '2026-09-16 12:00:00.000000', NULL, 0, @NOW);
+
+-- Two rows for one slice, and vendor_orders.release_code_issue_count says 1
+-- rather than 2 - which is the disagreement to expect, because the count is a
+-- summary and these rows are the record. The reissue limit reads the rows.
+
+-- Neither code is written on the parcel label. The label carries a signed QR
+-- that resolves the address for whoever scans it; the code is read aloud to the
+-- driver. A code printed on the box it protects protects nothing.
 
 -- ── delivery_routes ─────────────────────────────────────────────────────────
 -- A driver's run for one day. delivery_ids and optimized_order are TEXT lists,
@@ -1866,7 +2041,7 @@ COMMIT;
 --
 --   Worth looking at first:
 --
---     GET /api/vendor/orders            as Lamin, then as Awa. Same order 1401,
+--     GET /vendor/orders                as Lamin, then as Awa. Same order 1401,
 --                                       two slices, each priced only in that
 --                                       vendor's own currency. Neither response
 --                                       contains GBP, London, or Oliver.
@@ -1881,6 +2056,32 @@ COMMIT;
 --                                       rank the catalogue against a place the
 --                                       parcel is never going.
 --     GET /api/admin/orders/1401        the buyer's side of the same order.
+--
+--     GET /vendor/orders/1505           as Lamin. The fulfilment surface: a
+--                                       packed parcel for Isatou in Serrekunda,
+--                                       paid for by Fatou in Madrid. The
+--                                       `shipping` block is the whole of what a
+--                                       seller learns about either of them - a
+--                                       name, a town, a country and three digits
+--                                       of a phone. No street, because the
+--                                       platform routes the parcel and the QR on
+--                                       the label resolves the address for
+--                                       whoever scans it; no payer at all.
+--     GET /vendor/orders/1505/handoff-code
+--                                       871460. Served no-store and never
+--                                       logged. 304912 was the previous one and
+--                                       is dead - try presenting it.
+--     GET /vendor/orders/1505/label     an A6 PDF. Read what is NOT on it: no
+--                                       street, no price, no contents, and not
+--                                       the collection code. A code printed on
+--                                       the box it protects protects nothing.
+--     POST /vendor/orders/1505/ready    refused - it is already packed. Try it
+--                                       on a slice whose phone is unscanned and
+--                                       the refusal names the line and the count.
+--     GET /vendor/orders/1506           as Awa. The slice she rejected, with her
+--                                       reason on it. Then look at 1505 again:
+--                                       untouched, still going. One payment, two
+--                                       vendors, independent outcomes (C3).
 --
 --   ── Signing in without signing in ───────────────────────────────────────
 --

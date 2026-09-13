@@ -157,7 +157,7 @@ class BuyerOrderServiceTest {
         order.setShippingCity("Serrekunda");
         order.setShippingCountry("GM");
 
-        VendorOrder a = slice(SLICE_A, vendor(10L, "Banjul Electronics"), VendorOrderStatus.CONFIRMED,
+        VendorOrder a = slice(SLICE_A, vendor(10L, "Banjul Electronics"), VendorOrderStatus.PREPARING,
                 "GMD", new BigDecimal("120.00"), new BigDecimal("8400.00"), new BigDecimal("70.00"));
         VendorOrder b = slice(SLICE_B, vendor(20L, "Dakar Mobile"), sliceB,
                 "XOF", new BigDecimal("92.00"), new BigDecimal("60000"), new BigDecimal("652.17"));
@@ -209,7 +209,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void somebodyElsesOrderIsNotFoundRatherThanForbidden() {
-        given(order(VendorOrderStatus.CONFIRMED, PaymentStatus.PAID));
+        given(order(VendorOrderStatus.PREPARING, PaymentStatus.PAID));
 
         // Not "forbidden": that would confirm the order exists, which is itself
         // worth withholding when the id is a small integer anyone can walk.
@@ -225,7 +225,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void wholeOrderCancelsOnlyWhileEverySellerIsStillPreDispatch() {
-        given(order(VendorOrderStatus.CONFIRMED, PaymentStatus.PAID));
+        given(order(VendorOrderStatus.PREPARING, PaymentStatus.PAID));
 
         BuyerOrderResponses.Cancelled result =
                 service.cancel(BUYER, ORDER, new BuyerOrderRequests.Cancel("Changed my mind"));
@@ -250,7 +250,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void cancellingAnAlreadyCancelledOrderIsNotAnError() {
-        Order order = order(VendorOrderStatus.CONFIRMED, PaymentStatus.PAID);
+        Order order = order(VendorOrderStatus.PREPARING, PaymentStatus.PAID);
         order.setStatus(OrderStatus.CANCELLED);
         given(order);
 
@@ -266,7 +266,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void cancellingOneSellerLeavesTheOtherAlone() {
-        Order order = order(VendorOrderStatus.CONFIRMED, PaymentStatus.PAID);
+        Order order = order(VendorOrderStatus.PREPARING, PaymentStatus.PAID);
         given(order);
 
         BuyerOrderResponses.Cancelled result = service.cancelVendorOrder(
@@ -275,7 +275,7 @@ class BuyerOrderServiceTest {
         VendorOrder untouched = order.getVendorOrders().stream()
                 .filter(slice -> slice.getId().equals(SLICE_B)).findFirst().orElseThrow();
 
-        assertEquals(VendorOrderStatus.CONFIRMED, untouched.getStatus());
+        assertEquals(VendorOrderStatus.PREPARING, untouched.getStatus());
         assertNull(untouched.getCancelledAt());
         // The order itself keeps going: one seller pulling out is not the end of it.
         assertEquals(OrderStatus.PROCESSING, result.status());
@@ -284,7 +284,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void cancellingEverySliceSeparatelyEventuallyCancelsTheOrder() {
-        Order order = order(VendorOrderStatus.CONFIRMED, PaymentStatus.PAID);
+        Order order = order(VendorOrderStatus.PREPARING, PaymentStatus.PAID);
         given(order);
 
         service.cancelVendorOrder(BUYER, ORDER, SLICE_A, new BuyerOrderRequests.Cancel(null));
@@ -296,7 +296,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void cancellingOneSellerAsksForMoneyBackRatherThanMovingIt() {
-        given(order(VendorOrderStatus.CONFIRMED, PaymentStatus.PAID));
+        given(order(VendorOrderStatus.PREPARING, PaymentStatus.PAID));
 
         service.cancelVendorOrder(BUYER, ORDER, SLICE_B,
                 new BuyerOrderRequests.Cancel("Too slow"));
@@ -328,7 +328,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void tappingCancelTwiceDoesNotQueueTwoRefunds() {
-        given(order(VendorOrderStatus.CONFIRMED, PaymentStatus.PAID));
+        given(order(VendorOrderStatus.PREPARING, PaymentStatus.PAID));
         // Second call: the first request is already open.
         when(refunds.findOpenForVendorOrder(anyLong(), anyList()))
                 .thenReturn(Optional.empty())
@@ -342,7 +342,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void anUnpaidOrderIsCancelledWithoutARefundRequest() {
-        given(order(VendorOrderStatus.CONFIRMED, PaymentStatus.PENDING));
+        given(order(VendorOrderStatus.PREPARING, PaymentStatus.PENDING));
 
         BuyerOrderResponses.Cancelled result =
                 service.cancel(BUYER, ORDER, new BuyerOrderRequests.Cancel(null));
@@ -356,7 +356,7 @@ class BuyerOrderServiceTest {
         // The first refund moved the order to PARTIALLY_REFUNDED. Reading that
         // as "never paid" would cancel the second seller's goods and raise
         // nothing — the buyer keeps neither the phone nor the money.
-        Order order = order(VendorOrderStatus.CONFIRMED, PaymentStatus.PARTIALLY_REFUNDED);
+        Order order = order(VendorOrderStatus.PREPARING, PaymentStatus.PARTIALLY_REFUNDED);
         given(order);
 
         service.cancelVendorOrder(BUYER, ORDER, SLICE_B, new BuyerOrderRequests.Cancel(null));
@@ -368,7 +368,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void theHistoryRecordsWhatTheOrderWasBeforeItWasCancelled() {
-        Order order = order(VendorOrderStatus.CONFIRMED, PaymentStatus.PAID);
+        Order order = order(VendorOrderStatus.PREPARING, PaymentStatus.PAID);
         given(order);
 
         service.cancel(BUYER, ORDER, new BuyerOrderRequests.Cancel(null));
@@ -393,7 +393,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void receiptCannotBeConfirmedForGoodsNobodyHasSent() {
-        given(order(VendorOrderStatus.CONFIRMED, PaymentStatus.PAID));
+        given(order(VendorOrderStatus.PREPARING, PaymentStatus.PAID));
 
         BadRequestException refused = assertThrows(BadRequestException.class,
                 () -> service.confirmReceipt(BUYER, ORDER, SLICE_A,
@@ -469,7 +469,7 @@ class BuyerOrderServiceTest {
 
     @Test
     void thereIsNoInvoiceUntilTheOrderIsPaid() {
-        given(order(VendorOrderStatus.CONFIRMED, PaymentStatus.PENDING));
+        given(order(VendorOrderStatus.PREPARING, PaymentStatus.PENDING));
 
         assertThrows(BadRequestException.class, () -> service.invoiceLink(BUYER, ORDER));
         verify(invoices, never()).link(any());

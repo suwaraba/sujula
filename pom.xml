@@ -164,6 +164,16 @@
             <artifactId>poi-ooxml</artifactId>
             <version>5.4.1</version>
         </dependency>
+        <!--
+            The QR on a parcel label. A driver scans it rather than typing an
+            order number off a printed page in the dark outside a shop, which is
+            where these are actually read.
+        -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>javase</artifactId>
+            <version>3.5.3</version>
+        </dependency>
     </dependencies>
 
     <build>

@@ -35,7 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
  * placed.
  */
 @RestController
-@RequestMapping("/api/vendor/orders")
+@RequestMapping("/vendor/orders")
 @PreAuthorize("hasRole('VENDOR')")
 public class VendorOrderController {
 

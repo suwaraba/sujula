@@ -174,8 +174,8 @@ public class VendorOrder {
      */
     public boolean isPreDispatch() {
         return status == com.sujula.model.constant.VendorOrderStatus.PENDING
-                || status == com.sujula.model.constant.VendorOrderStatus.CONFIRMED
-                || status == com.sujula.model.constant.VendorOrderStatus.PROCESSING;
+                || status == com.sujula.model.constant.VendorOrderStatus.PREPARING
+                || status == com.sujula.model.constant.VendorOrderStatus.READY_FOR_PICKUP;
     }
 
     /** Vendor-scoped coupon applied to this slice, if any. Snapshot survives coupon deletion. */
@@ -192,6 +192,42 @@ public class VendorOrder {
     private List<OrderItem> items = new ArrayList<>();
 
     private LocalDateTime cancelledAt;
+
+    // ── Fulfilment, as the seller works through it ───────────────────────────
+
+    /** When the seller accepted the order and started packing. */
+    private LocalDateTime acceptedAt;
+
+    /** When it was packed and waiting for a driver. */
+    private LocalDateTime readyAt;
+
+    /** When a driver collected it, against a release code. */
+    private LocalDateTime collectedAt;
+
+    /**
+     * Why the seller refused it.
+     *
+     * <p>Required when they do. A rejection with no reason leaves the buyer with
+     * a cancelled order, a pending refund and nothing to tell the person waiting
+     * for the parcel - which on this marketplace is somebody else entirely, in
+     * another country, who was told a gift was coming.
+     */
+    @Column(length = 400)
+    private String rejectionReason;
+
+    /**
+     * How many times the release code has been reissued.
+     *
+     * <p>Counted because reissuing is how a code that has leaked is replaced,
+     * and because doing it constantly is how a seller brute-forces nothing in
+     * particular but does exhaust the driver's patience. The rate limit reads
+     * this.
+     */
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer releaseCodeIssueCount = 0;
+
+    private LocalDateTime releaseCodeIssuedAt;
 
     @CreationTimestamp
     @Column(updatable = false)
