@@ -98,7 +98,17 @@ public class SecurityConfig {
                         // Requiring a cookie-delivered CSRF token here would also
                         // make the API unusable from a native client, which has no
                         // cookie jar to read one from.
-                        .ignoringRequestMatchers("/api/payments/callback", "/auth/**", "/me/**"))
+                        //
+                        // /geo, /delivery and /delivery-contexts are read-only
+                        // public lookups. They take POST because a destination is
+                        // an address — too long for a query string, and not
+                        // something to leave in access logs — but they change
+                        // nothing that a forged request could exploit, and a CSRF
+                        // token cannot be required of a shopper who has no
+                        // session yet.
+                        .ignoringRequestMatchers("/api/payments/callback", "/auth/**", "/me/**",
+                                                 "/geo/**", "/delivery/**", "/delivery-contexts",
+                                                 "/delivery-contexts/**"))
                 .authorizeHttpRequests(auth -> {
                     if (docsEnabled) {
                         auth.requestMatchers(
@@ -121,6 +131,20 @@ public class SecurityConfig {
                         // already holds: signing out, rotating a password, turning
                         // multi-factor on or off. /me is the account itself.
                         .requestMatchers("/auth/**", "/me", "/me/**").authenticated()
+
+                        // ── Before there is an account ───────────────────────
+                        // Looking an address up, asking whether you deliver to a
+                        // town, and finding out what shipping costs are all
+                        // questions a shopper asks before signing in — and a
+                        // storefront that will not answer them until they do is
+                        // one they leave. None of these writes anything a caller
+                        // could later be identified by; a delivery context is the
+                        // exception and is protected by an unguessable id rather
+                        // than by a session.
+                        .requestMatchers("/geo/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/delivery/serviceability",
+                                                          "/delivery/quote").permitAll()
+                        .requestMatchers("/delivery-contexts", "/delivery-contexts/**").permitAll()
 
                         .requestMatchers(HttpMethod.GET, "/api/categories/**").permitAll()
                         // Store pages and store search: a shopper deciding where to

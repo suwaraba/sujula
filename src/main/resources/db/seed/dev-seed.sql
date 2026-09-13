@@ -1,7 +1,7 @@
 -- ============================================================================
 --  Sujula development seed
 -- ============================================================================
---  Populates all 44 tables with one coherent, related dataset. Run it by hand;
+--  Populates all 46 tables with one coherent, related dataset. Run it by hand;
 --  it is deliberately NOT auto-loaded on startup, because seed data appearing
 --  in a database by surprise is worse than typing one command, and this file
 --  deletes before it inserts.
@@ -38,6 +38,10 @@
 --      "Unknown column 'phone_verified' in 'field list'"
 --      — the users table predates phone verification.
 --
+--      "Table 'sujula.delivery_contexts' doesn't exist", or "Unknown column
+--      'geocode_confidence'" / "'deleted_at'" / "'shipping_address_id'"
+--      — the database predates the addresses and delivery-context layer.
+--
 --      "Table 'sujula.notifications' doesn't exist"
 --      — the schema predates the `read` -> `is_read` fix. `read` is reserved in
 --      MySQL, so that CREATE TABLE failed, and Hibernate logged it and carried
@@ -46,7 +50,7 @@
 --  To see what is actually there:
 --
 --      SELECT table_name FROM information_schema.tables
---       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 44
+--       WHERE table_schema = 'sujula' ORDER BY table_name;   -- expect 46
 --
 --  ── Conventions ────────────────────────────────────────────────────────────
 --
@@ -140,6 +144,8 @@ START TRANSACTION;
 -- Reverse foreign-key order. No FOREIGN_KEY_CHECKS=0 anywhere: if this order
 -- is wrong the database says so, which is the point.
 
+DELETE FROM idempotency_records    WHERE id >= 1000;
+DELETE FROM delivery_contexts      WHERE id LIKE 'seed-%';
 DELETE FROM account_data_requests  WHERE id >= 1000;
 DELETE FROM phone_verifications    WHERE id >= 1000;
 DELETE FROM oauth_accounts         WHERE id >= 1000;
@@ -302,18 +308,56 @@ INSERT INTO wishlists (id, user_id, created_at) VALUES
  (1041, 1005, @NOW);
 
 -- ── addresses ───────────────────────────────────────────────────────────────
--- `latitude`/`longitude` are set here as if the geocoder had placed them. The
--- application geocodes on save and exposes a `located` flag; a row with nulls
--- is a legitimate state and 1053 is seeded that way on purpose.
+-- `latitude`/`longitude` are set here as if the geocoder had placed them, and
+-- `geocode_confidence` records how much each pin is worth — which is the whole
+-- point of the column. A geocoder always returns coordinates; what varies is
+-- whether they are the building or the middle of the town, and delivery is
+-- priced from the distance between them.
+--
+-- All four states are represented, because the client behaves differently for
+-- each:
+--
+--   USER_CONFIRMED  the resident moved the pin themselves. Outranks anything a
+--                   geocoder says later, and an edit will not move it.
+--   EXACT           the building. Dispatchable as it stands.
+--   CENTROID        the right area, not the right door — needsPinConfirmation
+--   NONE            never placed at all. A legitimate state: most of the
+--                   country has no street numbering, and refusing to save an
+--                   address nobody can find would make the book useless for
+--                   the buyers it is mainly for. Delivery prices from a scope
+--                   fallback until someone drops a pin.
 
 INSERT INTO addresses
  (id, user_id, label, full_name, phone, street, apartment_suite, city, state,
-  postal_code, country_code, latitude, longitude, is_default, created_at)
+  postal_code, country_code, latitude, longitude,
+  geocode_confidence, geocoded_at, pin_confirmed_at, deleted_at,
+  is_default, created_at)
 VALUES
- (1050, 1004, 'Home',   'Aminata Ceesay', '+2203100004', '27 Sayerr Jobe Avenue', NULL,       'Serekunda', 'West Coast', NULL,     'GM', 13.43950000, -16.67520000, 1, @NOW),
- (1051, 1004, 'Shop',   'Aminata Ceesay', '+2203100004', 'Latrikunda Market',     'Stall 14', 'Serekunda', 'West Coast', NULL,     'GM', 13.42880000, -16.66900000, 0, @NOW),
- (1052, 1005, 'Home',   'Oliver Bennett', '+447700900005','221B Baker Street',    'Flat 2',   'London',    'Greater London','NW1 6XE','GB', 51.52370000, -0.15850000, 1, @NOW),
- (1053, 1006, 'Home',   'Modou Sanneh',   '+2203100006', 'Off Brikama Highway',   NULL,       'Brikama',   'West Coast', NULL,     'GM', NULL,          NULL,         1, @NOW);
+ -- Aminata moved the pin onto her own compound. Nothing the geocoder returns
+ -- later will move it back.
+ (1050, 1004, 'Home',   'Aminata Ceesay', '+2203100004', '27 Sayerr Jobe Avenue', NULL,       'Serekunda', 'West Coast', NULL,     'GM', 13.43950000, -16.67520000,
+  'USER_CONFIRMED', @NOW, @NOW, NULL, 1, @NOW),
+
+ -- A market stall the geocoder placed in the right block but not at the right
+ -- unit. needsPinConfirmation comes back true, so a client shows a map.
+ (1051, 1004, 'Shop',   'Aminata Ceesay', '+2203100004', 'Latrikunda Market',     'Stall 14', 'Serekunda', 'West Coast', NULL,     'GM', 13.42880000, -16.66900000,
+  'CENTROID', @NOW, NULL, NULL, 0, @NOW),
+
+ -- London: street-numbered, fully mapped, resolved to the building.
+ (1052, 1005, 'Home',   'Oliver Bennett', '+447700900005','221B Baker Street',    'Flat 2',   'London',    'Greater London','NW1 6XE','GB', 51.52370000, -0.15850000,
+  'EXACT', @NOW, NULL, NULL, 1, @NOW),
+
+ -- Off the highway, on no street map. Saved anyway, and priced from a scope
+ -- fallback until Modou drops a pin — which is what confirm-pin is for.
+ (1053, 1006, 'Home',   'Modou Sanneh',   '+2203100006', 'Off Brikama Highway',   NULL,       'Brikama',   'West Coast', NULL,     'GM', NULL,          NULL,
+  'NONE', NULL, NULL, NULL, 1, @NOW),
+
+ -- A tombstone: deleted by its owner, kept because order 1403 was placed
+ -- against it. It is gone from the address book — GET /me/addresses does not
+ -- list it and GET /me/addresses/1054 is a 404 — and the order it belongs to
+ -- still resolves.
+ (1054, 1004, 'Old flat','Aminata Ceesay', '+2203100004', '4 Kotu Stream Road',   NULL,       'Kotu',      'West Coast', NULL,     'GM', 13.45100000, -16.70200000,
+  'EXACT', @NOW, NULL, @NOW, 0, '2026-06-01 09:00:00.000000');
 
 -- ── audit_logs ──────────────────────────────────────────────────────────────
 -- Append-only. The actor is recorded twice: by id, and as a name/email
@@ -590,7 +634,7 @@ INSERT INTO orders
   delivery_mode, pickup_point_id,
   shipping_full_name, shipping_phone, shipping_street, shipping_apartment,
   shipping_city, shipping_state, shipping_postal_code, shipping_country,
-  shipping_latitude, shipping_longitude,
+  shipping_latitude, shipping_longitude, shipping_address_id,
   billing_full_name, billing_street, billing_city, billing_state, billing_postal_code, billing_country,
   notes, internal_notes, delivery_instructions, contactless_delivery,
   scheduled_date, scheduled_time_slot,
@@ -603,7 +647,7 @@ VALUES
   'HOME_DELIVERY', NULL,
   'Oliver Bennett', '+447700900005', '221B Baker Street', 'Flat 2',
   'London', 'Greater London', 'NW1 6XE', 'GB',
-  51.52370000, -0.15850000,
+  51.52370000, -0.15850000, 1052,
   'Oliver Bennett', '221B Baker Street', 'London', 'Greater London', 'NW1 6XE', 'GB',
   'Leave with the porter if out.', 'Two vendors, two settlement currencies.', 'Ring the bell twice.', 0,
   NULL, NULL,
@@ -616,7 +660,7 @@ VALUES
   'HOME_DELIVERY', NULL,
   'Binta Faal', '+2203100010', 'Bakau New Town', NULL,
   'Bakau', 'Kanifing', NULL, 'GM',
-  13.47810000, -16.68200000,
+  13.47810000, -16.68200000, NULL,
   NULL, NULL, NULL, NULL, NULL, NULL,
   NULL, 'Guest checkout, no account.', NULL, 0,
   NULL, NULL,
@@ -629,12 +673,20 @@ VALUES
   'PICKUP_POINT', 1096,
   'Aminata Ceesay', '+2203100004', 'Westfield Junction', 'Unit 3',
   'Serekunda', 'West Coast', NULL, 'GM',
-  13.44290000, -16.67760000,
+  13.44290000, -16.67760000, 1054,
   NULL, NULL, NULL, NULL, NULL, NULL,
   'Collecting Saturday morning.', NULL, NULL, 0,
   '2026-09-12', '09:00-12:00',
   26, 0, 0.00,
   NULL, 0.00, @NOW, @NOW);
+
+-- shipping_address_id on the orders above records which saved address the buyer
+-- chose; the shipping_* snapshot records where the parcel actually went. They
+-- are deliberately not the same thing, and 1403 is the case that shows why:
+-- Aminata picked her old flat (1054) and then chose to collect at Westfield, so
+-- the snapshot is the pickup point and the reference is the address. She has
+-- since moved and deleted 1054 — which is why that row is a tombstone rather
+-- than gone, and why deleting it did not orphan this order.
 
 -- ── payments ────────────────────────────────────────────────────────────────
 -- One record per order, one settlement path whatever brought the money in.
@@ -959,6 +1011,90 @@ VALUES
   '2026-08-28 16:00:00.000000', '2026-08-28 16:01:00.000000', '2026-08-28 16:01:12.000000',
   NULL, NULL, 'Could not serialise the export: order 1402 had no currency recorded');
 
+-- ── delivery_contexts ───────────────────────────────────────────────────────
+-- Where a basket is going, resolved once so the cart, the quote and checkout
+-- all price against the same destination rather than three copies of it that
+-- drift apart.
+--
+-- The ids here start with 'seed-' so the delete block above can find them: real
+-- ones are 256 bits of base64url from a secure random, because for a guest the
+-- id is the only thing standing between a stranger and their home address. A
+-- readable id is fine in a seed and would be a vulnerability in production.
+--
+-- @FUTURE and @LAPSED, not fixed timestamps: a context seeded to expire on a
+-- date in this file is expired before anyone runs it, and an expired context
+-- reads as one that never existed.
+--
+-- pickup_point_id is a plain column rather than a mapped association, so the
+-- database will accept an id that points at nothing. 1096 is the only seeded
+-- hub; check it by hand when adding a row here, because nothing else will.
+
+INSERT INTO delivery_contexts
+ (id, user_id, latitude, longitude, address_line, city, state, postal_code, country_code,
+  geocode_confidence, mode, pickup_point_id, address_id, currency, language, timezone,
+  created_at, expires_at)
+VALUES
+ -- Aminata, from her saved and pin-confirmed address. Home delivery to a point
+ -- a rider can actually navigate to.
+ ('seed-ctx-aminata-home', 1004, 13.43950000, -16.67520000,
+  '27 Sayerr Jobe Avenue', 'Serekunda', 'West Coast', NULL, 'GM',
+  'USER_CONFIRMED', 'HOME_DELIVERY', NULL, 1050, 'GMD', 'en', 'Africa/Banjul', @NOW, @FUTURE),
+
+ -- A guest: no account, and the id is the whole of their claim to this row.
+ -- This is the common case — most shopping happens before anyone signs in.
+ ('seed-ctx-guest-brikama', NULL, 13.27140000, -16.64920000,
+  'Brikama Market Road', 'Brikama', 'West Coast', NULL, 'GM',
+  'CENTROID', 'HOME_DELIVERY', NULL, NULL, 'GMD', 'en', 'Africa/Banjul', @NOW, @FUTURE),
+
+ -- Collection from a hub. No destination pin at all, and still deliverable:
+ -- the parcel goes to the pickup point and the buyer collects it.
+ ('seed-ctx-guest-pickup', NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, 'GM',
+  'NONE', 'PICKUP_POINT', 1096, NULL, 'GMD', 'en', 'Africa/Banjul', @NOW, @FUTURE),
+
+ -- Oliver in London, shopping in sterling. Cross-border, which is what makes
+ -- the serviceability answer interesting.
+ ('seed-ctx-oliver-london', 1005, 51.52370000, -0.15850000,
+  '221B Baker Street Flat 2', 'London', 'Greater London', 'NW1 6XE', 'GB',
+  'EXACT', 'HOME_DELIVERY', NULL, 1052, 'GBP', 'en', 'Europe/London', @NOW, @FUTURE),
+
+ -- Expired, and therefore indistinguishable from one that never existed.
+ -- GET /delivery-contexts/seed-ctx-expired returns 404, not 410.
+ ('seed-ctx-expired', NULL, 13.44000000, -16.67000000,
+  'Kairaba Avenue', 'Serekunda', NULL, NULL, 'GM',
+  'CENTROID', 'HOME_DELIVERY', NULL, NULL, 'GMD', 'en', 'Africa/Banjul',
+  '2026-09-01 08:00:00.000000', @LAPSED);
+
+-- ── idempotency_records ─────────────────────────────────────────────────────
+-- The answer already given to a request that is being made again.
+--
+-- Seeded so the replay path can be exercised without first having to lose a
+-- response: POST /me/addresses as Aminata with Idempotency-Key
+-- 'seed-key-aminata-home' returns the recorded body instead of saving a second
+-- address, and the same key with a different body is refused rather than
+-- served — which is the check that stops a client reusing one key for a whole
+-- session from silently discarding requests.
+--
+-- The scope is the caller and the endpoint together. Neither alone is enough:
+-- without the caller, two shoppers who pick the same key collide; without the
+-- endpoint, one key used twice returns the wrong operation's answer.
+
+INSERT INTO idempotency_records
+ (id, scope, idempotency_key, request_fingerprint, response_status, response_body,
+  created_at, expires_at)
+VALUES
+ (1850, 'user:1004:me.addresses.create', 'seed-key-aminata-home',
+  '0000000000000000000000000000000000000000000000000000000000000000', 201,
+  '{"id":1050,"label":"Home","city":"Serekunda","countryCode":"GM","confidence":"USER_CONFIRMED"}',
+  @NOW, @FUTURE),
+
+ -- A guest's key. Guests share one scope per endpoint, which is why the
+ -- fingerprint check is not optional.
+ (1851, 'anon:delivery-contexts.create', 'seed-key-guest-context',
+  '1111111111111111111111111111111111111111111111111111111111111111', 201,
+  '{"id":"seed-ctx-guest-brikama","guest":true,"countryCode":"GM","currency":"GMD"}',
+  @NOW, @FUTURE);
+
 COMMIT;
 
 -- ── What you now have ───────────────────────────────────────────────────────
@@ -1046,6 +1182,111 @@ COMMIT;
 --
 --   Asking for an erasure again while ERA-9B21EF07 is open returns that same
 --   request rather than starting a second one.
+--
+--   ── Addresses, and how much each pin is worth ────────────────────────────
+--
+--   GET /me/addresses as Aminata returns two. Each carries a confidence, and a
+--   client is meant to behave differently for each:
+--
+--     1050  Home        USER_CONFIRMED  she moved the pin herself. dispatchable,
+--                                       and a PATCH to the street will not move it
+--     1051  Shop        CENTROID        right block, wrong unit —
+--                                       needsPinConfirmation is true, show a map
+--     1052  Oliver      EXACT           London is street-numbered and fully mapped
+--     1053  Modou       NONE            off the highway, on no street map. Saved
+--                                       anyway; delivery prices from a scope
+--                                       fallback until he drops a pin
+--
+--   Fix 1053 with the endpoint that exists for exactly this:
+--
+--     POST /me/addresses/1053/confirm-pin   {"latitude":13.2714,"longitude":-16.6492}
+--
+--   It comes back USER_CONFIRMED and dispatchable, and stays that way through
+--   later edits.
+--
+--   ── The address that would not go away ───────────────────────────────────
+--
+--   1054 is Aminata's old flat. She deleted it, and it is still in the table —
+--   because order 1403 was placed against it, and an order that names a row
+--   should still resolve to something. It is gone from her book: GET
+--   /me/addresses does not list it, GET /me/addresses/1054 is a 404.
+--
+--   Delete 1051 to see the other branch. Nothing was ever ordered against it,
+--   so it is removed outright rather than kept — accumulating names, phone
+--   numbers and locations for their own sake, least of all for someone who
+--   asked for them to be gone, is not a default worth having.
+--
+--     DELETE /me/addresses/1051   -> {"retained": false, ...}
+--     DELETE /me/addresses/1050   -> {"retained": true,  ...}   (order 1403)
+--
+--   ── Delivery contexts ────────────────────────────────────────────────────
+--
+--   The destination the cart, the quote and checkout all price against, so the
+--   three cannot drift apart and quote three different figures.
+--
+--     seed-ctx-aminata-home    hers, from her confirmed address
+--     seed-ctx-guest-brikama   a guest's — no account, and the id is the whole
+--                              of their claim to it
+--     seed-ctx-guest-pickup    collection at hub 1096, with no destination pin
+--                              at all, and still deliverable
+--     seed-ctx-oliver-london   cross-border, priced in sterling
+--     seed-ctx-expired         past its window
+--
+--   Two of these are worth trying for what they refuse:
+--
+--     GET /delivery-contexts/seed-ctx-aminata-home   signed in as anyone else,
+--          or as a guest, is a 404 rather than a 403. Confirming it exists
+--          would tell whoever guessed the id that they guessed right.
+--     GET /delivery-contexts/seed-ctx-expired        also a 404, not a 410: an
+--          expired bearer credential and one that never existed should be
+--          indistinguishable.
+--
+--   Real ids are 256 bits of base64url from a secure random. The readable ones
+--   here exist so the DELETE block at the top can find them, and would be a
+--   vulnerability in production — for a guest the id is the only thing between
+--   a stranger and their home address.
+--
+--   ── Idempotency ──────────────────────────────────────────────────────────
+--
+--   A request that times out on a slow connection is indistinguishable, from
+--   the client's side, from one that never arrived — so clients retry, and
+--   without a key the shopper ends up with the address twice.
+--
+--     POST /me/addresses  as Aminata
+--       Idempotency-Key: seed-key-aminata-home
+--
+--   returns the recorded response instead of saving anything. Send the same key
+--   with a different body and it is refused rather than served: a key reused
+--   for different content is not a retry, and replaying the first answer would
+--   silently discard the second request.
+--
+--   ── Serviceability and quotes ────────────────────────────────────────────
+--
+--   Both public — no account needed, because both are asked before there is a
+--   basket.
+--
+--     POST /delivery/serviceability
+--       {"origin":{"vendorId":1101},"destination":{"deliveryContextId":null,
+--        "latitude":13.2714,"longitude":-16.6492,"countryCode":"GM"},
+--        "nearestPickupPoints":3}
+--
+--     POST /delivery/quote
+--       {"origin":{"vendorId":1101},"destination":{"latitude":13.2714,
+--        "longitude":-16.6492,"countryCode":"GM"},"weightKg":2.5,
+--        "value":3000,"currency":"GMD"}
+--
+--   Quoting to Oliver in GBP returns complete:false unless an exchange rate is
+--   seeded for it — which is correct. Quoting the rate card's own currency
+--   under someone else's symbol is how a buyer is charged fifty pounds for a
+--   fifty-dalasi delivery.
+--
+--   ── Without a geocoder ───────────────────────────────────────────────────
+--
+--   sujula.google.geocoding.api-key is usually unset in development, and
+--   everything above still works. POST /geo/validate-address answers
+--   available:false — "nobody looked", which is a different thing from "we
+--   looked and found nothing" and leads to different advice. Addresses save
+--   without coordinates, and delivery prices from a scope fallback.
 --
 --   And one thing you cannot do: move a vendor order to DELIVERED through the
 --   API. Order 1403 is delivered only because this file wrote it that way.

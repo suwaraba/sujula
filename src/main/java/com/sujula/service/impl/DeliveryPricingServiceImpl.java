@@ -57,9 +57,6 @@ public class DeliveryPricingServiceImpl implements DeliveryPricingService {
 
     private static final Logger log = LoggerFactory.getLogger(DeliveryPricingServiceImpl.class);
 
-    /** Mean Earth radius, in km. */
-    private static final double EARTH_RADIUS_KM = 6371.0088;
-
     private static final int DISTANCE_SCALE = 3;
     private static final int WEIGHT_SCALE = 3;
 
@@ -207,20 +204,10 @@ public class DeliveryPricingServiceImpl implements DeliveryPricingService {
             return leg;
         }
 
-        BigDecimal chargeableKm = distance.km.subtract(properties.getIncludedKm()).max(BigDecimal.ZERO);
-        BigDecimal chargeableKg = weightKg.subtract(properties.getIncludedKg()).max(BigDecimal.ZERO);
-
-        BigDecimal cost = properties.getBaseFee()
-                .add(properties.getPerKm().multiply(chargeableKm))
-                .add(properties.getPerKg().multiply(chargeableKg))
-                .multiply(properties.scopeMultiplierFor(scope))
-                .multiply(properties.modeMultiplierFor(mode));
-
-        cost = cost.max(properties.getMinFee());
-        if (properties.getMaxFee() != null) {
-            cost = cost.min(properties.getMaxFee());
-        }
-        leg.cost = cost.setScale(RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+        // The arithmetic lives on the rate card, so the per-mode quote at
+        // /delivery/quote and this per-product one cannot drift apart.
+        leg.cost = properties.priceLeg(distance.km, weightKg, scope, mode)
+                .setScale(RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
         return leg;
     }
 
@@ -335,12 +322,9 @@ public class DeliveryPricingServiceImpl implements DeliveryPricingService {
     }
 
     static double haversineKm(double lat1, double lon1, double lat2, double lon2) {
-        double dLat = Math.toRadians(lat2 - lat1);
-        double dLon = Math.toRadians(lon2 - lon1);
-        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
-                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-                * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        // Delegated: the formula lives in Distances so serviceability and
+        // pricing measure the same journey the same way.
+        return com.sujula.service.delivery.Distances.haversineKm(lat1, lon1, lat2, lon2);
     }
 
     // ── Currency ──────────────────────────────────────────────────────────────

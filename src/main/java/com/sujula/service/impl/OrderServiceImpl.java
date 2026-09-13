@@ -163,6 +163,13 @@ public class OrderServiceImpl implements OrderService {
                 .shippingState(address.getState())
                 .shippingPostalCode(address.getPostalCode())
                 .shippingCountry(address.getCountryCode())
+                // Which saved address was chosen, recorded alongside the snapshot
+                // rather than instead of it. The snapshot still addresses the
+                // parcel and still must not move when someone edits their address
+                // book; this only lets a later delete tell whether an order named
+                // the row, so it can be kept as a tombstone instead of orphaning
+                // this reference.
+                .shippingAddress(address)
                 .shippingLatitude(destination.latitude())
                 .shippingLongitude(destination.longitude())
                 .notes(request.getNotes())
@@ -278,6 +285,13 @@ public class OrderServiceImpl implements OrderService {
                 .shippingState(address.getState())
                 .shippingPostalCode(address.getPostalCode())
                 .shippingCountry(address.getCountryCode())
+                // Which saved address was chosen, recorded alongside the snapshot
+                // rather than instead of it. The snapshot still addresses the
+                // parcel and still must not move when someone edits their address
+                // book; this only lets a later delete tell whether an order named
+                // the row, so it can be kept as a tombstone instead of orphaning
+                // this reference.
+                .shippingAddress(address)
                 .shippingLatitude(destination.latitude())
                 .shippingLongitude(destination.longitude())
                 .notes(notes)

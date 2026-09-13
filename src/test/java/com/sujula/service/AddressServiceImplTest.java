@@ -9,6 +9,7 @@ import com.sujula.model.Address;
 import com.sujula.model.user.User;
 import com.sujula.repository.AddressRepository;
 import com.sujula.repository.user.UserRepository;
+import com.sujula.service.geo.GeocodingGateway;
 import com.sujula.service.impl.AddressServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,8 +48,37 @@ class AddressServiceImplTest {
         owner.setId(4L);
         when(userRepository.findById(4L)).thenReturn(Optional.of(owner));
 
+        // Soft deletion arrived with /me/addresses, so the service reads through
+        // the live-only queries now. The fake store mirrors that: a tombstone is
+        // in `stored` but must not come back from a read.
         when(addressRepository.findByUserId(4L)).thenAnswer(i -> List.copyOf(stored));
+        when(addressRepository.findLiveByUserId(4L)).thenAnswer(i -> stored.stream()
+                .filter(a -> !a.isDeleted())
+                .sorted(java.util.Comparator.comparing(Address::isDefault).reversed()
+                        .thenComparing(Address::getId, java.util.Comparator.reverseOrder()))
+                .toList());
         when(addressRepository.countByUserId(4L)).thenAnswer(i -> (long) stored.size());
+        when(addressRepository.countLiveByUserId(4L))
+                .thenAnswer(i -> stored.stream().filter(a -> !a.isDeleted()).count());
+        when(addressRepository.findLiveByIdAndUserId(any(), any())).thenAnswer(i -> {
+            Long wanted = i.getArgument(0);
+            Long owningUser = i.getArgument(1);
+            return stored.stream()
+                    .filter(a -> wanted.equals(a.getId()) && !a.isDeleted())
+                    .filter(a -> a.getUser() != null && a.getUser().getId().equals(owningUser))
+                    .findFirst();
+        });
+        when(addressRepository.findLiveDefault(4L)).thenAnswer(i -> stored.stream()
+                .filter(a -> !a.isDeleted() && a.isDefault())
+                .findFirst());
+        when(addressRepository.findNextDefaultCandidate(any(), any())).thenAnswer(i -> {
+            Long excluded = i.getArgument(1);
+            return stored.stream()
+                    .filter(a -> !a.isDeleted() && !a.getId().equals(excluded))
+                    .min(java.util.Comparator.comparing(Address::getId));
+        });
+        // No order names any of these, so they delete outright.
+        when(addressRepository.isReferencedByAnyOrder(any())).thenReturn(false);
         when(addressRepository.save(any(Address.class))).thenAnswer(i -> {
             Address address = i.getArgument(0);
             if (address.getId() == null) {
@@ -74,7 +104,8 @@ class AddressServiceImplTest {
         when(googleMapsService.getCoordinates(any(), any()))
                 .thenReturn(new GeoAddress("Kairaba Ave", 13.4383, -16.6781, "Gambia", "GM", "Serekunda"));
 
-        service = new AddressServiceImpl(addressRepository, userRepository, googleMapsService);
+        GeocodingGateway geocoding = new GeocodingGateway(googleMapsService, "en", "a-test-api-key");
+        service = new AddressServiceImpl(addressRepository, userRepository, googleMapsService, geocoding);
     }
 
     @Test
@@ -150,7 +181,9 @@ class AddressServiceImplTest {
 
     @Test
     void capsHowManyAddressesOneBuyerCanHoard() {
-        when(addressRepository.countByUserId(4L)).thenReturn(20L);
+        // countLiveByUserId, because the cap counts the book — a deleted address
+        // that is retained as a tombstone must not use up one of the twenty.
+        when(addressRepository.countLiveByUserId(4L)).thenReturn(20L);
 
         assertThrows(BadRequestException.class, () -> service.create(4L, request("Another", 13.4, -16.6)));
     }

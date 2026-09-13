@@ -30,6 +30,23 @@ public class AuthenticatedCaller {
         return user(authentication).getId();
     }
 
+    /**
+     * The signed-in user's id, or null when nobody is signed in.
+     *
+     * <p>For the endpoints that serve guests as well as buyers — a delivery
+     * context, a shipping quote — where not being signed in is the ordinary case
+     * rather than a failure. Distinct from {@link #userId} on purpose: an
+     * endpoint that requires an identity should get an exception when there is
+     * none, not a null to forget to check.
+     */
+    public Long userIdOrNull(Authentication authentication) {
+        return authentication != null
+                && authentication.getPrincipal() instanceof User user
+                && user.getId() != null
+                ? user.getId()
+                : null;
+    }
+
     public User user(Authentication authentication) {
         if (authentication != null
                 && authentication.getPrincipal() instanceof User user

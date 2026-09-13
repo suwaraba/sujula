@@ -163,6 +163,28 @@ public class Order {
     private Double shippingLatitude;
     private Double shippingLongitude;
 
+    /**
+     * Which saved address this order was placed against, when it was placed
+     * against one at all.
+     *
+     * <p>Not how the parcel is addressed — the snapshot above is, and it stays
+     * authoritative precisely because an order must not change when someone edits
+     * their address book. This is a much narrower thing: a record of which row
+     * was chosen, so that deleting an address can tell whether an order named it.
+     * An address nobody ordered against is deleted outright; one that was is kept
+     * as a tombstone so this reference still resolves.
+     *
+     * <p>Null for guest checkout, for orders placed by typing an address rather
+     * than choosing one, and for every order placed before this column existed.
+     * Null therefore means "not known to be referenced", which is why the delete
+     * path treats the presence of a reference as the signal and never its
+     * absence as proof.
+     */
+    @JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "shipping_address_id")
+    private com.sujula.model.Address shippingAddress;
+
     // ── Billing address snapshot ──────────────────────────────────────────────
 
     private String billingFullName;
@@ -494,6 +516,14 @@ public class Order {
 
 	public void setShippingLongitude(Double shippingLongitude) {
 		this.shippingLongitude = shippingLongitude;
+	}
+
+	public com.sujula.model.Address getShippingAddress() {
+		return shippingAddress;
+	}
+
+	public void setShippingAddress(com.sujula.model.Address shippingAddress) {
+		this.shippingAddress = shippingAddress;
 	}
 
 	/** True once the order has a point a courier can navigate to. */

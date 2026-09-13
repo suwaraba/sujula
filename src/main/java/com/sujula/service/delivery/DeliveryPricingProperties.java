@@ -86,6 +86,51 @@ public class DeliveryPricingProperties {
         return modeMultiplier.getOrDefault(mode, BigDecimal.ONE);
     }
 
+    /**
+     * The rate card's formula, in the one place both callers can reach it.
+     *
+     * <p>{@code base + per-km beyond the included distance + per-kg beyond the
+     * included weight}, scaled for how far the goods travel under their scope and
+     * for how the buyer receives them, then clamped to the floor and ceiling.
+     *
+     * <p>It lives here rather than inside the quoting service because two things
+     * price delivery: the per-product quote a basket needs, and the per-mode
+     * quote {@code /delivery/quote} answers with. Kept as two copies of the
+     * arithmetic they agree today and have no reason to keep agreeing — and a
+     * shipping estimate that disagrees with what checkout charges is the kind of
+     * discrepancy a shopper notices.
+     *
+     * <p>In the rate card's own currency; converting is the caller's job.
+     *
+     * @param distanceKm how far the parcel travels
+     * @param weightKg   billable weight
+     */
+    public BigDecimal priceLeg(BigDecimal distanceKm, BigDecimal weightKg,
+                               DeliveryScope scope, DeliveryMode mode) {
+        if (mode == DeliveryMode.VENDOR_PICKUP) {
+            return BigDecimal.ZERO;   // nothing is delivered
+        }
+
+        BigDecimal chargeableKm = nonNull(distanceKm).subtract(includedKm).max(BigDecimal.ZERO);
+        BigDecimal chargeableKg = nonNull(weightKg).subtract(includedKg).max(BigDecimal.ZERO);
+
+        BigDecimal cost = baseFee
+                .add(perKm.multiply(chargeableKm))
+                .add(perKg.multiply(chargeableKg))
+                .multiply(scopeMultiplierFor(scope))
+                .multiply(modeMultiplierFor(mode));
+
+        cost = cost.max(minFee);
+        if (maxFee != null) {
+            cost = cost.min(maxFee);
+        }
+        return cost.setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal nonNull(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
     public BigDecimal fallbackKmFor(DeliveryScope scope) {
         if (scope == null) {
             return new BigDecimal("15");
