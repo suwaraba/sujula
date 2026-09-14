@@ -56,7 +56,17 @@ public enum Permission {
     ORDER_ADMIN,
     PAYMENT_ADMIN,
     EXCHANGE_RATE_ADMIN,
-    AUDIT_READ;
+    AUDIT_READ,
+
+    /**
+     * Read the administrative surface without deciding anything on it.
+     *
+     * <p>What support holds. It is granted alongside the read halves above
+     * rather than instead of them, so a client can render the queues and grey
+     * out the buttons — which is what stops an agent clicking something the API
+     * will refuse.
+     */
+    STAFF_READ;
 
     /** Granted to every authenticated account whatever its role. */
     public static Set<Permission> baseline() {

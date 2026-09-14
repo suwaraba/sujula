@@ -97,6 +97,39 @@ public class UserSession {
     @Column(length = 30)
     private SessionRevocationReason revokedReason;
 
+    /**
+     * The administrator holding this session on somebody else's behalf.
+     *
+     * <p>Null for every ordinary session, which is almost all of them. Set means
+     * an administrator opened it through {@code /admin/users/{id}/impersonate},
+     * and three things follow: the access token carries the same id so clients
+     * can show a banner, the session is short-lived rather than the usual
+     * length, and the user's own session list shows it as what it is rather than
+     * as a mysterious device they do not recognise.
+     *
+     * <p>An id rather than an association on purpose. This row outlives account
+     * deletion more often than most — an impersonation somebody later questions
+     * is exactly the case where the administrator may since have left — and a
+     * foreign key would either block that deletion or null the evidence.
+     */
+    private Long impersonatedByUserId;
+
+    /**
+     * Why the administrator needed it.
+     *
+     * <p>Required at the endpoint. Impersonation is the single most invasive
+     * thing the admin surface can do — it reads somebody's messages, their
+     * addresses, their orders — and a reason recorded at the moment is the only
+     * thing that distinguishes support work from snooping.
+     */
+    @Column(length = 500)
+    private String impersonationReason;
+
+    /** Whether this session is somebody acting as somebody else. */
+    public boolean isImpersonated() {
+        return impersonatedByUserId != null;
+    }
+
     /** Usable right now: not revoked, not past its expiry. */
     public boolean isActive() {
         return revokedAt == null && expiresAt != null && expiresAt.isAfter(LocalDateTime.now());

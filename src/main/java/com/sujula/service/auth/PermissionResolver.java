@@ -75,7 +75,12 @@ public class PermissionResolver {
             case ADMIN -> granted.addAll(EnumSet.of(
                     Permission.USER_ADMIN, Permission.VENDOR_ADMIN, Permission.CATALOGUE_ADMIN,
                     Permission.ORDER_ADMIN, Permission.PAYMENT_ADMIN, Permission.EXCHANGE_RATE_ADMIN,
-                    Permission.AUDIT_READ));
+                    Permission.AUDIT_READ, Permission.STAFF_READ));
+            // Everything an administrator can see, and nothing they can do.
+            // Granted as its own set rather than as "ADMIN minus the writes",
+            // because a set defined by subtraction grows every time somebody
+            // adds a permission and forgets to subtract it.
+            case SUPPORT -> granted.addAll(EnumSet.of(Permission.STAFF_READ, Permission.AUDIT_READ));
             case CUSTOMER -> { /* the buyer set above is the whole grant */ }
         }
 

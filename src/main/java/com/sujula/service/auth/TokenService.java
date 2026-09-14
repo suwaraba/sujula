@@ -94,10 +94,31 @@ public class TokenService {
      *                  can be recognised on the very next request
      */
     public String mintAccessToken(User user, Long sessionId) {
+        return mintAccessToken(user, sessionId, null);
+    }
+
+    /**
+     * The same, for a session an administrator is holding on somebody's behalf.
+     *
+     * <p>The {@code act} claim names the administrator, and it is on the token
+     * rather than only in the database for one reason: every client that reads
+     * a token can then show the banner without asking a second endpoint, and a
+     * banner that depends on a second request is one that is missing on the
+     * screen where it matters. It is also what makes an impersonated request
+     * distinguishable in a log after the fact.
+     *
+     * <p>Named after the actor claim in RFC 8693, which is the same idea:
+     * {@code sub} is who the request is acting <em>as</em>, {@code act} is who
+     * is actually behind it.
+     *
+     * @param actingAdminId the administrator behind the session, or null for an
+     *                      ordinary one
+     */
+    public String mintAccessToken(User user, Long sessionId, Long actingAdminId) {
         Instant now = Instant.now();
         Instant expiry = now.plus(properties.getJwt().getAccessTokenTtl());
         try {
-            JWTClaimsSet claims = new JWTClaimsSet.Builder()
+            JWTClaimsSet.Builder builder = new JWTClaimsSet.Builder()
                     .subject(String.valueOf(user.getId()))
                     .issuer(properties.getJwt().getIssuer())
                     .issueTime(Date.from(now))
@@ -105,8 +126,11 @@ public class TokenService {
                     .jwtID(UUID.randomUUID().toString())
                     .claim("sid", sessionId)
                     .claim("role", user.getRole().name())
-                    .claim("typ", "access")
-                    .build();
+                    .claim("typ", "access");
+            if (actingAdminId != null) {
+                builder.claim("act", actingAdminId);
+            }
+            JWTClaimsSet claims = builder.build();
 
             SignedJWT jwt = new SignedJWT(
                     new JWSHeader.Builder(JWSAlgorithm.HS256).type(JOSEObjectType.JWT).build(), claims);
@@ -149,15 +173,31 @@ public class TokenService {
             if (sid == null) {
                 return Optional.empty();
             }
+            Number act = (Number) claims.getClaim("act");
             return Optional.of(new AccessTokenClaims(userId, sid.longValue(),
-                    claims.getStringClaim("role"), expiry.toInstant()));
+                    claims.getStringClaim("role"), expiry.toInstant(),
+                    act == null ? null : act.longValue()));
         } catch (Exception e) {
             return Optional.empty();
         }
     }
 
-    /** What a verified access token asserts. */
-    public record AccessTokenClaims(Long userId, Long sessionId, String role, Instant expiresAt) {}
+    /**
+     * What a verified access token asserts.
+     *
+     * @param userId         who the request acts as
+     * @param impersonatedBy the administrator behind it, or null for an ordinary
+     *                       session. Present so a client can show the banner and
+     *                       a log can tell the two apart afterwards.
+     */
+    public record AccessTokenClaims(Long userId, Long sessionId, String role, Instant expiresAt,
+                                    Long impersonatedBy) {
+
+        /** Whether somebody is holding this session on the user's behalf. */
+        public boolean isImpersonated() {
+            return impersonatedBy != null;
+        }
+    }
 
     // ── Refresh tokens ───────────────────────────────────────────────────────
 
