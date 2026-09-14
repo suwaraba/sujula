@@ -49,12 +49,30 @@ public enum LedgerEntryType {
      */
     PAYOUT_REVERSAL,
 
+    /**
+     * Money held still while a dispute is decided. Always negative.
+     *
+     * <p>Posted only when the sale had already left escrow. While it is still
+     * held there is nothing available to hold, and a negative row against money
+     * that was never payable would take the balance down twice for one sale.
+     *
+     * <p>A row rather than a flag, so a seller looking at a balance that dropped
+     * overnight can see which sale it was and read the reason beside it. That is
+     * the entire argument for a ledger and it applies hardest here, because this
+     * is the entry a seller is most likely to think is a mistake.
+     */
+    DISPUTE_HOLD,
+
+    /** The hold lifted, when the dispute closed. Always positive. */
+    DISPUTE_HOLD_RELEASE,
+
     /** A correction somebody made by hand, with a reason attached. */
     ADJUSTMENT;
 
     /** Whether this type normally adds to what a vendor is owed. */
     public boolean isCredit() {
-        return this == SALE || this == COMMISSION_REVERSAL || this == PAYOUT_REVERSAL;
+        return this == SALE || this == COMMISSION_REVERSAL || this == PAYOUT_REVERSAL
+                || this == DISPUTE_HOLD_RELEASE;
     }
 
     /**

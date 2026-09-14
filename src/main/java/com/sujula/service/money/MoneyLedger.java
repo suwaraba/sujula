@@ -120,6 +120,17 @@ public class MoneyLedger {
      */
     @Transactional
     public int releaseEscrow(VendorOrder slice, LocalDateTime when) {
+        if (slice.getDisputeFrozenAt() != null) {
+            // The guard that makes a dispute freeze structural rather than
+            // remembered. Delivery is the usual reason escrow releases, and a
+            // parcel arriving is exactly what most disputes are about — so
+            // without this, the event that triggers the argument would also pay
+            // the seller in the middle of it. Refusing here catches every path,
+            // including ones written later that know nothing about disputes.
+            log.info("[Ledger] Slice {} not released: a dispute is holding it since {}",
+                    slice.getId(), slice.getDisputeFrozenAt());
+            return 0;
+        }
         LocalDateTime at = when != null ? when : LocalDateTime.now();
         List<VendorLedgerEntry> held = entries.findByVendorOrderIdOrderByOccurredAtAsc(slice.getId())
                 .stream().filter(VendorLedgerEntry::isHeld).toList();
@@ -187,6 +198,137 @@ public class MoneyLedger {
         log.info("[Ledger] Refund posted on slice {}: -{} {}, commission +{} returned",
                 slice.getId(), refunded, currency, givenBack);
         return posted;
+    }
+
+    // ── Disputes ─────────────────────────────────────────────────────────────
+
+    /**
+     * Holds a slice's money still while a dispute is decided.
+     *
+     * <p>Two different situations, and only one of them needs an entry. If the
+     * sale is still in escrow, nothing is payable and the freeze is already
+     * complete — {@link #releaseEscrow} will refuse to lift it. If it has been
+     * released, the money is sitting in the seller's available balance and has
+     * to be taken back out, which is what this row does.
+     *
+     * <p>Writing the row in both cases would take the balance down twice for one
+     * sale: once by never adding it and once by subtracting it.
+     *
+     * @return the hold entry, or null when the sale was still held and there was
+     *         nothing available to hold
+     */
+    @Transactional
+    public VendorLedgerEntry holdForDispute(VendorOrder slice, String reference, String reason) {
+        LocalDateTime availability = availabilityOfSale(slice, null);
+        if (availability == null) {
+            log.info("[Ledger] Slice {} disputed while still in escrow — no hold entry needed",
+                    slice.getId());
+            return null;
+        }
+        if (!findHolds(slice).isEmpty()) {
+            // A second dispute on the same slice must not hold the money twice.
+            log.info("[Ledger] Slice {} is already held for a dispute", slice.getId());
+            return null;
+        }
+
+        String currency = currencyOf(slice);
+        BigDecimal held = round(payableOf(slice), currency).abs();
+        if (held.signum() == 0) {
+            return null;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        VendorLedgerEntry entry = save(dated(slice, LedgerEntryType.DISPUTE_HOLD,
+                held.negate(), currency, now, now,
+                reason == null || reason.isBlank()
+                        ? "Held while a dispute on " + orderNumber(slice) + " is decided"
+                        : "Held while a dispute on " + orderNumber(slice) + " is decided — " + reason,
+                reference));
+        log.info("[Ledger] Slice {} held for dispute {}: -{} {}",
+                slice.getId(), reference, held, currency);
+        return entry;
+    }
+
+    /**
+     * Lifts a dispute hold, whatever the dispute decided.
+     *
+     * <p>Always the full hold, always as its own row. Where the buyer won, a
+     * separate refund takes the money back off — netting the two would leave a
+     * seller unable to tell "the hold came off and then you were refunded" from
+     * "you were never held", and those are different stories about their month.
+     *
+     * @return the release entry, or null where nothing was held
+     */
+    @Transactional
+    public VendorLedgerEntry releaseDisputeHold(VendorOrder slice, String reference, String why) {
+        List<VendorLedgerEntry> holds = findHolds(slice);
+        if (holds.isEmpty()) {
+            return null;
+        }
+        String currency = currencyOf(slice);
+        BigDecimal total = BigDecimal.ZERO;
+        for (VendorLedgerEntry hold : holds) {
+            total = total.add(hold.getAmount());
+        }
+        BigDecimal giveBack = round(total, currency).abs();
+        if (giveBack.signum() == 0) {
+            return null;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        VendorLedgerEntry entry = save(dated(slice, LedgerEntryType.DISPUTE_HOLD_RELEASE,
+                giveBack, currency, now, now,
+                why == null || why.isBlank()
+                        ? "Dispute on " + orderNumber(slice) + " closed — hold lifted"
+                        : "Dispute on " + orderNumber(slice) + " closed — " + why,
+                reference));
+        log.info("[Ledger] Slice {} hold lifted on {}: +{} {}",
+                slice.getId(), reference, giveBack, currency);
+        return entry;
+    }
+
+    /** Holds on a slice that have not been lifted yet. */
+    private List<VendorLedgerEntry> findHolds(VendorOrder slice) {
+        List<VendorLedgerEntry> all = entries.findByVendorOrderIdOrderByOccurredAtAsc(slice.getId());
+        BigDecimal released = BigDecimal.ZERO;
+        List<VendorLedgerEntry> holds = new ArrayList<>();
+        for (VendorLedgerEntry existing : all) {
+            if (existing.getType() == LedgerEntryType.DISPUTE_HOLD) {
+                holds.add(existing);
+            } else if (existing.getType() == LedgerEntryType.DISPUTE_HOLD_RELEASE) {
+                released = released.add(existing.getAmount());
+            }
+        }
+        if (released.signum() == 0) {
+            return holds;
+        }
+        // Everything held has already been given back, so there is nothing
+        // outstanding. Compared rather than counted, because a slice can be
+        // disputed, released and disputed again.
+        BigDecimal outstanding = BigDecimal.ZERO;
+        for (VendorLedgerEntry hold : holds) {
+            outstanding = outstanding.add(hold.getAmount());
+        }
+        return outstanding.abs().compareTo(released) <= 0 ? List.of() : holds;
+    }
+
+    /**
+     * What this slice has actually earned the seller, net of everything posted.
+     *
+     * <p>Summed from the rows rather than read off the vendor order's payout
+     * column, because by the time a dispute is raised there may have been a
+     * partial refund — and holding the original sale would hold money the seller
+     * no longer has.
+     */
+    private BigDecimal payableOf(VendorOrder slice) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (VendorLedgerEntry existing : entries.findByVendorOrderIdOrderByOccurredAtAsc(slice.getId())) {
+            if (existing.getType() != LedgerEntryType.PAYOUT
+                    && existing.getType() != LedgerEntryType.PAYOUT_REVERSAL) {
+                total = total.add(existing.getAmount());
+            }
+        }
+        return total;
     }
 
     // ── Payouts ──────────────────────────────────────────────────────────────

@@ -232,6 +232,8 @@ public class StatementRenderer {
             case COMMISSION_REVERSAL -> "Commission returned";
             case PAYOUT -> "Paid out";
             case PAYOUT_REVERSAL -> "Payout returned";
+            case DISPUTE_HOLD -> "Held during a dispute";
+            case DISPUTE_HOLD_RELEASE -> "Dispute closed — hold lifted";
             case ADJUSTMENT -> "Adjustment";
         };
     }

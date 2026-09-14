@@ -160,6 +160,21 @@ public class VendorOrder {
      */
     private LocalDateTime escrowReleasedAt;
 
+    /**
+     * Set while a dispute is holding this slice's money still.
+     *
+     * <p>Written only by the dispute writer and read by {@code MoneyLedger}
+     * before it releases escrow — which is what makes the freeze structural
+     * rather than remembered. A delivery that happens after a dispute is raised
+     * would otherwise release the money through a path that knows nothing about
+     * disputes, and the parcel arriving is exactly what the argument is usually
+     * about.
+     *
+     * <p>Per slice, never per order (C3). One seller's disputed line must not
+     * hold another seller's payout on the same payment.
+     */
+    private LocalDateTime disputeFrozenAt;
+
     /** Whether the buyer has confirmed they have these goods. */
     public boolean isReceiptConfirmed() {
         return receiptConfirmedAt != null;

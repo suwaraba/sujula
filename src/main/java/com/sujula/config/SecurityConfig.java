@@ -305,6 +305,25 @@ public class SecurityConfig {
                         // point id.
                         .requestMatchers("/pickup", "/pickup/**").authenticated()
 
+                        // After the sale. Signed in is the outer gate only:
+                        // every one of these rows is scoped by putting the
+                        // caller into the query, and the two sides of a return
+                        // or a dispute are found by two different ownership
+                        // tests rather than by a role. There is deliberately no
+                        // role check here — a buyer is a seller on somebody
+                        // else's platform and both write to the same rows.
+                        .requestMatchers("/returns", "/returns/**",
+                                         "/disputes", "/disputes/**",
+                                         "/messages/**").authenticated()
+
+                        // A review's own endpoints. Reading reviews is public
+                        // and lives on the catalogue; changing, answering and
+                        // reporting one is not.
+                        .requestMatchers(HttpMethod.PATCH, "/reviews/*").authenticated()
+                        .requestMatchers(HttpMethod.DELETE, "/reviews/*").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/reviews/*/reply",
+                                                          "/reviews/*/report").authenticated()
+
                         .requestMatchers("/vendor/analytics/**", "/vendor/balance",
                                          "/vendor/transactions", "/vendor/payouts",
                                          "/vendor/payouts/**", "/vendor/statements/**")

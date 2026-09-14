@@ -179,6 +179,18 @@ DELETE FROM product_translations    WHERE id >= 1000;
 -- Custody events reference shipments and legs; legs reference shipments and
 -- drivers; handover codes now reference legs as well as deliveries. Children
 -- first, as everywhere else here.
+-- After-sales. Threads and messages reference orders and products; disputes
+-- reference vendor orders and returns, and returns reference disputes back, so
+-- the link is cleared before either row goes.
+UPDATE return_requests SET dispute_id = NULL WHERE id >= 1000;
+DELETE FROM thread_messages         WHERE id >= 1000;
+DELETE FROM message_threads         WHERE id >= 1000;
+DELETE FROM review_reports          WHERE id >= 1000;
+DELETE FROM dispute_evidence        WHERE id >= 1000;
+DELETE FROM dispute_messages        WHERE id >= 1000;
+DELETE FROM return_lines            WHERE id >= 1000;
+DELETE FROM disputes                WHERE id >= 1000;
+DELETE FROM return_requests         WHERE id >= 1000;
 DELETE FROM handover_codes          WHERE id >= 1000;
 DELETE FROM custody_events          WHERE id >= 1000;
 DELETE FROM recipient_instructions  WHERE id >= 1000;
@@ -704,12 +716,16 @@ VALUES
 -- `rating` / `total_reviews` columns on products above are maintained by hand
 -- here to match.
 
-INSERT INTO reviews (id, product_id, user_id, rating, title, comment, verified, vendor_reply, vendor_replied_at, created_at) VALUES
- (1310, 1301, 1004, 5, 'Battery is the selling point', 'Two days between charges with normal use. Screen is bright enough outdoors.', 1, 'Thank you Aminata!', @NOW, @NOW),
- (1311, 1301, 1005, 4, 'Good, slow to charge',        'No complaints about the phone. The charger in the box is slow.', 1, NULL, NULL, @NOW),
- (1312, 1303, 1004, 5, 'Boils fast',                  'Four minutes as advertised. Handle stays cool.', 1, NULL, NULL, @NOW),
- (1313, 1302, 1006, 4, 'Does what it should',         'Bought it for the torch and the standby time.', 0, NULL, NULL, @NOW),
- (1314, 1305, 1005, 5, 'Colour held',                 'Washed cold three times, no bleeding at all.', 1, NULL, NULL, @NOW);
+-- edit_count and report_count are NOT NULL and have no database default: the
+-- Lombok @Builder.Default on Review is a Java-side default and does nothing for
+-- raw SQL. Listed explicitly rather than relied upon, which is also what a
+-- migration adding them to a live table would have to do.
+INSERT INTO reviews (id, product_id, user_id, rating, title, comment, verified, vendor_reply, vendor_replied_at, edit_count, report_count, created_at) VALUES
+ (1310, 1301, 1004, 5, 'Battery is the selling point', 'Two days between charges with normal use. Screen is bright enough outdoors.', 1, 'Thank you Aminata!', @NOW, 0, 0, @NOW),
+ (1311, 1301, 1005, 4, 'Good, slow to charge',        'No complaints about the phone. The charger in the box is slow.', 1, NULL, NULL, 0, 1, @NOW),
+ (1312, 1303, 1004, 5, 'Boils fast',                  'Four minutes as advertised. Handle stays cool.', 1, NULL, NULL, 0, 0, @NOW),
+ (1313, 1302, 1006, 4, 'Does what it should',         'Bought it for the torch and the standby time.', 0, NULL, NULL, 0, 0, @NOW),
+ (1314, 1305, 1005, 5, 'Colour held',                 'Washed cold three times, no bleeding at all.', 1, NULL, NULL, 0, 0, @NOW);
 
 -- ── vendor_bank_accounts ────────────────────────────────────────────────────
 -- Where a payout would go. MOBILE_MONEY is the account type that matters most
@@ -2162,6 +2178,213 @@ INSERT INTO parcel_access_codes
 VALUES
  (1950, 0, 1901, '628104', 0, NULL, @LAPSED, @NOW, 3, 'f•••u@example.es', @NOW),
  (1951, 0, 1901, '317905', 5, @NOW,  @FUTURE, NULL, 0, 'f•••u@example.es', @NOW);
+
+-- ── return_requests, return_lines ───────────────────────────────────────────
+-- A return is goods going back. A refund is money going back. They are
+-- different things on different timelines and this schema keeps them apart —
+-- refund_requests is elsewhere in this file and is what an administrator
+-- approves, while this is a conversation between a buyer and a seller about a
+-- parcel.
+--
+-- 1960 is the diaspora case in its unhappiest form. Oliver in London paid for a
+-- phone on order 1401; the seller says the driver collected it, and it never
+-- turned up. Note the reason: NEVER_ARRIVED is the one return reason that
+-- skips the delivery check, because a buyer who cannot report a missing parcel
+-- until it is marked delivered has been beaten by the very problem they are
+-- reporting.
+--
+-- The offer columns carry a settlement the buyer did not take: the seller
+-- offered 50 GBP against the 106.70 claimed, and Oliver escalated instead.
+-- offered_at survives beside the escalation because "he offered and I refused"
+-- is a fact a moderator needs.
+--
+-- Two currencies on every figure, at the order's own frozen rate (C2). Oliver
+-- is owed pounds; Kombo would lose dalasis; the rate is 0.011, taken on the day
+-- of the order and never read again.
+
+INSERT INTO return_requests
+ (id, version, reference, vendor_order_id, requested_by_user_id, status, reason,
+  description, photo_urls,
+  amount, currency, amount_native,
+  fx_native_currency, fx_display_currency, fx_rate, fx_rate_at, fx_source, fx_quote_id,
+  decided_by_user_id, decided_at, decision_note, seller_pays_carriage,
+  offered_amount, offered_amount_native, offer_note, offered_at, offer_accepted_at,
+  received_at, received_by_user_id, received_note,
+  escalated_at, dispute_id, refund_reference, withdrawn_at,
+  created_at, updated_at)
+VALUES
+ (1960, 0, 'RTN-4KQ7MXB2VN', 1501, 1005, 'ESCALATED', 'NEVER_ARRIVED',
+  'The tracking says collected but nothing has arrived. My cousin has been at the address every day.',
+  'https://media.example.invalid/returns/empty-doorway.jpg',
+  106.70, 'GBP', 9700.00,
+  'GMD', 'GBP', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL,
+  1002, @NOW, 'Our driver collected it and the code was presented. We cannot send a second one.',
+  TRUE,
+  -- 50 GBP at 0.011 display-per-native is 4545.45 GMD. Divided at the order's
+  -- own rate rather than looked up today: the seller does not choose the rate.
+  50.00, 4545.45, 'We will meet you halfway rather than argue about it.', @NOW, NULL,
+  NULL, NULL, NULL,
+  -- dispute_id is filled by the UPDATE below, once 1980 exists. The two tables
+  -- reference each other, so no insert order satisfies both — which is exactly
+  -- what the service does too: raise the dispute, then point the return at it.
+  @NOW, NULL, NULL, NULL,
+  @NOW, @NOW);
+
+-- The line, priced as it was at the time. product_name and the unit prices are
+-- snapshots: a seller who later renames or reprices the phone must not change
+-- what an open return settles at.
+INSERT INTO return_lines
+ (id, return_request_id, order_item_id, quantity, unit_price_native, unit_price,
+  product_name, assigned_imeis)
+VALUES
+ (1970, 1960, 1405, 1, 9700.00, 106.70, 'Samsung Galaxy A16', NULL);
+
+-- ── disputes ────────────────────────────────────────────────────────────────
+-- What 1960 became. Raising one freezes the seller's money on THIS sub-order
+-- and nothing else (C3): vendor_order 1501 carries dispute_frozen_at below, and
+-- 1502 — Teranga's wax print on the same payment — does not. Teranga is paid on
+-- time for a parcel nobody is arguing about.
+--
+-- hold_reference is deliberately NULL, and that is the interesting half. The
+-- freeze works two ways depending on where the money was when the argument
+-- started:
+--
+--   * Sale already out of escrow → a DISPUTE_HOLD row takes it back off the
+--     available balance, with a reason the seller can read.
+--   * Sale still IN escrow → there is nothing available to hold, and posting a
+--     negative row would take the balance down twice for one sale. The freeze
+--     is the stamp on the vendor order, which MoneyLedger reads before it
+--     releases anything.
+--
+-- 1501 is the second case: its ledger rows (1802, 1803) carry available_from
+-- NULL. So there is no hold row here, and there must not be one — which the
+-- claims check.
+
+INSERT INTO disputes
+ (id, version, reference, vendor_order_id, raised_by_user_id, status, reason,
+  description, return_request_id,
+  amount, currency, amount_native,
+  fx_native_currency, fx_display_currency, fx_rate, fx_rate_at, fx_source, fx_quote_id,
+  frozen_at, unfrozen_at, hold_reference,
+  outcome, awarded_to_buyer, awarded_to_buyer_native,
+  resolved_by_user_id, resolved_at, resolution_note, withdrawn_at, refund_reference,
+  created_at, updated_at)
+VALUES
+ (1980, 0, 'DSP-9MRT4XKQ2B', 1501, 1005, 'OPEN', 'NOT_RECEIVED',
+  'Nothing arrived. The seller says it was collected; nobody has it.', 1960,
+  106.70, 'GBP', 9700.00,
+  'GMD', 'GBP', 0.01100000, '2026-09-12 00:00:00.000000', 'PUBLISHED_RATE', NULL,
+  @NOW, NULL, NULL,
+  NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, NULL,
+  @NOW, @NOW);
+
+-- The other half of the link, now that both rows exist.
+UPDATE return_requests SET dispute_id = 1980 WHERE id = 1960;
+
+-- The freeze itself. One column, read by MoneyLedger before every escrow
+-- release, so a delivery recorded after the dispute was raised cannot pay the
+-- seller in the middle of the argument about whether it happened.
+UPDATE vendor_orders SET dispute_frozen_at = @NOW WHERE id = 1501;
+
+-- ── dispute_messages, dispute_evidence ──────────────────────────────────────
+-- The case file, in the order it was written. Both sides, plus one internal
+-- note that neither of them may read — filtered out in the repository query
+-- rather than in a mapper somebody later forgets to apply.
+--
+-- author_side is frozen at the time rather than derived on every read: a buyer
+-- who later opens a shop is not retroactively the seller in an old argument.
+
+INSERT INTO dispute_messages
+ (id, dispute_id, author_user_id, author_side, body, internal, created_at)
+VALUES
+ (1990, 1980, 1005, 'BUYER',
+  'Nothing arrived. The seller says it was collected; nobody has it.', FALSE, @NOW),
+ (1991, 1980, NULL, 'VENDOR',
+  'From the return RTN-4KQ7MXB2VN: Our driver collected it and the code was presented. We cannot send a second one.',
+  FALSE, @NOW),
+ -- Never shown to either party. A moderator working from the custody chain
+ -- needs somewhere to put what they found that is not a public reply.
+ (1992, 1980, 1001, 'PLATFORM',
+  'Custody chain on SHP-SEED-0003 has no COLLECTED event at all — the parcel is still DRIVER_OFFERED. The seller is describing a different shipment.',
+  TRUE, @NOW);
+
+INSERT INTO dispute_evidence
+ (id, dispute_id, uploaded_by_user_id, uploaded_by_side, url, content_type, caption, created_at)
+VALUES
+ -- The caption is required for a reason: without it a moderator has a
+ -- photograph of a doorway and no idea what they are meant to see in it.
+ (1995, 1980, 1005, 'BUYER',
+  'https://media.example.invalid/disputes/doorway-2026-09-12.jpg', 'image/jpeg',
+  'The delivery address on the afternoon the tracking says it was handed over.', @NOW);
+
+-- ── review_reports ──────────────────────────────────────────────────────────
+-- A report queues a person. It hides nothing, and the review it names (1311,
+-- four stars, "slow to charge") is still visible — which is the whole design.
+-- A marketplace where a review disappears because the seller objected has no
+-- reviews worth reading, and the sellers who lose most by that are the honest
+-- ones.
+--
+-- reviews.report_count is recounted from these rows rather than nudged, and the
+-- table refuses a second report from the same person — so this counts people
+-- rather than complaints.
+
+INSERT INTO review_reports
+ (id, review_id, reported_by_user_id, reason, detail,
+  reviewed_at, reviewed_by_user_id, moderator_note, created_at)
+VALUES
+ (1998, 1311, 1002, 'FALSE_CLAIM',
+  'The charger in the box is the 25W one. This is not accurate.',
+  NULL, NULL, NULL, @NOW);
+
+
+-- ── message_threads, thread_messages ────────────────────────────────────────
+-- Every thread hangs off an order or a product and there is no third option.
+-- That is what stops this being a messaging service: nobody can open a channel
+-- to a stranger, because there is no row shape for one.
+--
+-- 2011 is the filter doing its job. What the seller typed is in original_body
+-- and only a moderator ever reads it; what everybody reads has the number taken
+-- out. Both are kept — a buyer whose innocent sentence was mangled needs
+-- somebody to be able to look, and a seller who tries this every week leaves a
+-- pattern that only exists if the attempts were kept.
+--
+-- The reason it is taken out at all: a sale arranged privately has no escrow,
+-- so money sent is gone; no custody chain, so nobody can prove what arrived;
+-- no dispute and no refund. On this route the buyer is on another continent
+-- from the goods, which makes them the person least able to walk in and
+-- complain.
+
+INSERT INTO message_threads
+ (id, version, subject, order_id, product_id, buyer_user_id, vendor_id, title,
+  last_message_at, unread_for_buyer, unread_for_vendor, closed_at, created_at)
+VALUES
+ -- Oliver asked and the seller answered, so the unread message is the seller's
+ -- and it is unread by the buyer. The counters are per side and are recomputed
+ -- from the messages rather than nudged: a counter that is incremented drifts,
+ -- and what this one drifts into is a badge nobody can clear.
+ (2000, 0, 'ORDER', 1401, NULL, 1005, 1101, 'Where is the phone?',
+  @NOW, 1, 0, NULL, @NOW),
+ -- No purchase behind this one, and none needed: somebody deciding whether to
+ -- buy is exactly who has to be able to ask. Nobody has answered yet, so it is
+ -- the seller who has something waiting.
+ (2001, 0, 'PRODUCT', NULL, 1301, 1006, 1101, 'Is it dual sim?',
+  @NOW, 0, 1, NULL, @NOW);
+
+INSERT INTO thread_messages
+ (id, thread_id, sender_user_id, sender_side, body, original_body,
+  filtered, filtered_kinds, read_at, created_at)
+VALUES
+ (2010, 2000, 1005, 'BUYER',
+  'The tracking has said collected for four days. Has it actually left the shop?',
+  NULL, FALSE, NULL, @NOW, @NOW),
+ (2011, 2000, 1002, 'VENDOR',
+  'It went out with the driver on Tuesday. Ring me on [removed] and I will check with him.',
+  'It went out with the driver on Tuesday. Ring me on 3100002 and I will check with him.',
+  TRUE, 'PHONE', NULL, @NOW),
+ (2012, 2001, 1006, 'BUYER',
+  'Does the A16 take two sim cards, or one sim and a memory card?',
+  NULL, FALSE, NULL, NULL, @NOW);
 
 -- ── delivery_routes ─────────────────────────────────────────────────────────
 -- A driver's run for one day. delivery_ids and optimized_order are TEXT lists,
