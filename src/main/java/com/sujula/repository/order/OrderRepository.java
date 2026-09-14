@@ -91,6 +91,38 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     long countByStatus(OrderStatus status);
 
+    /**
+     * The administrative order search.
+     *
+     * <p>{@code destinationCountry} is a filter in its own right and not a proxy
+     * for the buyer: on this platform the payer and the delivery are routinely
+     * in different countries (C1), so "orders going to The Gambia" and "orders
+     * from Gambian buyers" are different questions and only one of them is what
+     * a dispatcher means.
+     *
+     * <p>{@code stuckSince} is what a stuck-order sweep reads — not how old an
+     * order is, but how long it has sat without moving.
+     */
+    @Query("""
+            SELECT o FROM Order o WHERE
+              (:status IS NULL OR o.status = :status)
+              AND (:destinationCountry IS NULL OR o.shippingCountry = :destinationCountry)
+              AND (:vendorId IS NULL OR EXISTS (
+                   SELECT 1 FROM VendorOrder vo WHERE vo.order = o AND vo.vendor.id = :vendorId))
+              AND (:stuckSince IS NULL OR o.updatedAt < :stuckSince)
+              AND (:q IS NULL OR
+                   LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', :q, '%')) OR
+                   LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', :q, '%')) OR
+                   LOWER(o.customer.email) LIKE LOWER(CONCAT('%', :q, '%')))
+            ORDER BY o.createdAt DESC
+            """)
+    Page<Order> adminSearch(@Param("q") String q,
+                            @Param("status") OrderStatus status,
+                            @Param("destinationCountry") String destinationCountry,
+                            @Param("vendorId") Long vendorId,
+                            @Param("stuckSince") LocalDateTime stuckSince,
+                            Pageable pageable);
+
     // ── Revenue analytics ────────────────────────────────────────────────────
 
     /** Orders with the given status created within [from, to]. */

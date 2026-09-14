@@ -61,6 +61,49 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
 
     List<Shipment> findByStatus(ShipmentStatus status);
 
+    /**
+     * The dispatch board.
+     *
+     * <p>{@code waitingSince} is the filter that matters: a board sorted by age
+     * shows what came in first, and a board filtered by how long something has
+     * been stuck shows what is going wrong. The second is what a dispatcher
+     * opens the screen for.
+     */
+    @Query("SELECT s FROM Shipment s WHERE "
+         + "(:status IS NULL OR s.status = :status) "
+         + "AND (:country IS NULL OR s.destinationCountry = :country) "
+         + "AND (:driverId IS NULL OR EXISTS (SELECT 1 FROM ShipmentLeg l "
+         + "     WHERE l.shipment = s AND l.driver.id = :driverId)) "
+         + "AND (:waitingSince IS NULL OR s.updatedAt < :waitingSince) "
+         + "ORDER BY s.updatedAt ASC")
+    Page<Shipment> findBoard(@Param("status") ShipmentStatus status,
+                             @Param("country") String country,
+                             @Param("driverId") Long driverId,
+                             @Param("waitingSince") java.time.LocalDateTime waitingSince,
+                             Pageable pageable);
+
+    /**
+     * Parcels nobody is carrying.
+     *
+     * <p>Read as "has no leg anybody has accepted" rather than by status,
+     * because a parcel whose offer lapsed is unassigned again and its status
+     * still says DRIVER_OFFERED until the chain is re-derived. The legs are the
+     * truth about who has it.
+     */
+    @Query("SELECT s FROM Shipment s WHERE s.cancelledAt IS NULL "
+         + "AND s.status IN (com.sujula.model.constant.ShipmentStatus.AWAITING_COLLECTION, "
+         + "                 com.sujula.model.constant.ShipmentStatus.DRIVER_OFFERED) "
+         + "AND NOT EXISTS (SELECT 1 FROM ShipmentLeg l WHERE l.shipment = s "
+         + "     AND l.assignmentStatus IN (com.sujula.model.constant.LegAssignmentStatus.ACCEPTED, "
+         + "                                com.sujula.model.constant.LegAssignmentStatus.IN_PROGRESS)) "
+         + "ORDER BY s.createdAt ASC")
+    List<Shipment> findUnassigned(Pageable pageable);
+
+    /** Parcels belonging to one order, for the admin order view. */
+    @Query("SELECT s FROM Shipment s WHERE s.vendorOrder.order.id = :orderId "
+         + "ORDER BY s.id ASC")
+    List<Shipment> findByOrderId(@Param("orderId") Long orderId);
+
     // ── What is on a counter ─────────────────────────────────────────────────
 
     /**

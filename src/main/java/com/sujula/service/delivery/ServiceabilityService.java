@@ -19,9 +19,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.EnumMap;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -73,17 +76,22 @@ public class ServiceabilityService {
     private final GeocodingGateway geocoding;
     private final ExchangeRateService exchangeRates;
     private final DeliveryContextService contexts;
+    private final ZoneRegistry zones;
+    private final RateCardRegistry rateCards;
 
     public ServiceabilityService(DeliveryPricingProperties properties,
                                  PickupPointRepository pickupPoints, VendorRepository vendors,
                                  GeocodingGateway geocoding, ExchangeRateService exchangeRates,
-                                 DeliveryContextService contexts) {
+                                 DeliveryContextService contexts, ZoneRegistry zones,
+                                 RateCardRegistry rateCards) {
         this.properties = properties;
         this.pickupPoints = pickupPoints;
         this.vendors = vendors;
         this.geocoding = geocoding;
         this.exchangeRates = exchangeRates;
         this.contexts = contexts;
+        this.zones = zones;
+        this.rateCards = rateCards;
     }
 
     // ── Serviceability ───────────────────────────────────────────────────────
@@ -98,9 +106,21 @@ public class ServiceabilityService {
         boolean crossBorder = origin.countryCode != null && destination.countryCode != null
                 && !origin.countryCode.equals(destination.countryCode);
 
+        // Asked of the destination, never of the payer. A buyer in Madrid
+        // sending to Serrekunda is inside the Serrekunda zone; their own
+        // position is outside every zone this platform operates and consulting
+        // it would refuse the order this marketplace exists to take.
+        ZoneRegistry.Serviceability zone =
+                zones.serviceabilityAtDestination(destination.latitude(), destination.longitude());
+
         List<ServiceabilityResponses.Option> options = List.of(
-                homeDelivery(destination, measure),
-                pickupPoint(destination, measure),
+                zone.deliverable() ? homeDelivery(destination, measure)
+                        : refused(DeliveryMode.HOME_DELIVERY, zone),
+                zone.deliverable() ? pickupPoint(destination, measure)
+                        : refused(DeliveryMode.PICKUP_POINT, zone),
+                // Untouched by the zone: collecting from the seller happens at
+                // the origin, and a destination the platform does not serve says
+                // nothing about whether the buyer can walk into the shop.
                 vendorPickup(origin));
 
         List<ServiceabilityResponses.NearbyPickupPoint> nearby =
@@ -118,6 +138,18 @@ public class ServiceabilityService {
                 options,
                 nearby,
                 message(deliverable, destination, measure, crossBorder));
+    }
+
+    /**
+     * A mode the platform has decided not to run to this destination.
+     *
+     * <p>Carries the zone's own words rather than a generic refusal, because
+     * "we are not crossing the river this month" is something a shopper can act
+     * on and "unavailable" is not.
+     */
+    private static ServiceabilityResponses.Option refused(DeliveryMode mode,
+                                                          ZoneRegistry.Serviceability zone) {
+        return new ServiceabilityResponses.Option(mode, false, null, null, zone.reason());
     }
 
     /**
@@ -187,23 +219,49 @@ public class ServiceabilityService {
                 ? properties.getDefaultWeightKg()
                 : request.weightKg();
 
-        String target = normaliseCurrency(request.currency(), destination);
-        String card = properties.getCurrency();
+        // The card is resolved against where the goods are going, on today's
+        // date. Re-explaining a figure already charged reads the order's own day
+        // instead — a card written since must not change a price somebody paid.
+        ZoneRegistry.ZoneMatch zone = zones
+                .matchAtDestination(destination.latitude(), destination.longitude())
+                .orElse(null);
+        Long zoneId = zone == null ? null : zone.id();
+        LocalDate today = LocalDate.now();
 
-        BigDecimal rate = BigDecimal.ONE;
+        // Resolved per mode, because a card may name one: a hub run inside
+        // Kanifing can be priced separately from a door delivery there, and that
+        // is most of the point of having cards at all.
+        Map<DeliveryMode, LegRate> byMode = new EnumMap<>(DeliveryMode.class);
+        for (DeliveryMode mode : DeliveryMode.values()) {
+            byMode.put(mode,
+                    rateCards.resolve(zoneId, destination.countryCode(), mode, today).rate());
+        }
+        LegRate basket = rateCards.resolve(zoneId, destination.countryCode(), null, today).rate();
+
+        String target = normaliseCurrency(request.currency(), destination);
+
+        // One rate lookup covering every currency in play, rather than one per
+        // mode. Two cards for one destination in two currencies is unusual but
+        // legal — a national card in dalasi and a cross-border one in euro — and
+        // converting them both at the first card's rate is how a leg comes out an
+        // order of magnitude wrong.
+        Set<String> cardCurrencies = new LinkedHashSet<>();
+        byMode.values().forEach(r -> cardCurrencies.add(r.currency()));
+        cardCurrencies.add(basket.currency());
+        cardCurrencies.removeIf(target::equalsIgnoreCase);
+
+        Map<String, BigDecimal> rates = cardCurrencies.isEmpty()
+                ? Map.of()
+                : exchangeRates.getLatestRates(target, cardCurrencies);
         boolean complete = true;
-        if (!card.equalsIgnoreCase(target)) {
-            Map<String, BigDecimal> rates = exchangeRates.getLatestRates(target, Set.of(card));
-            BigDecimal found = rates == null ? null : rates.get(card);
-            if (found == null) {
+        for (String currency : cardCurrencies) {
+            if (rates == null || rates.get(currency) == null) {
                 // No rate: say so rather than quote the rate card's own currency
                 // under someone else's symbol, which is how a buyer is charged
                 // fifty pounds for a fifty-dalasi delivery.
                 complete = false;
                 log.warn("[Delivery] No exchange rate from {} to {} — per-mode quote is incomplete",
-                        card, target);
-            } else {
-                rate = found;
+                        currency, target);
             }
         }
 
@@ -215,14 +273,18 @@ public class ServiceabilityService {
                 ? DeliveryScope.NATIONAL
                 : DeliveryScope.REGIIONAL;
 
-        BigDecimal threshold = properties.getFreeAbove();
+        BigDecimal threshold = basket.freeAbove();
         boolean freeDelivery = threshold != null && threshold.signum() > 0
                 && request.value() != null
-                && request.value().compareTo(convert(threshold, rate)) >= 0;
+                && request.value().compareTo(
+                        convert(threshold, rateFor(basket.currency(), target, rates))) >= 0;
 
         List<ServiceabilityResponses.ModePrice> prices = new ArrayList<>();
         for (DeliveryMode mode : DeliveryMode.values()) {
-            prices.add(priceMode(mode, measure, weight, scope, rate, destination, freeDelivery, complete));
+            LegRate forMode = byMode.get(mode);
+            prices.add(priceMode(mode, measure, weight, scope,
+                    rateFor(forMode.currency(), target, rates),
+                    destination, freeDelivery, complete, forMode));
         }
 
         return new ServiceabilityResponses.Quote(
@@ -230,10 +292,28 @@ public class ServiceabilityService {
                 weight.setScale(3, RoundingMode.HALF_UP), complete, prices);
     }
 
+    /**
+     * The multiplier that takes one card's currency into the buyer's.
+     *
+     * <p>One when they are the same currency, and one again when no rate could be
+     * found — the {@code complete} flag beside the figures is what says the
+     * second case happened, because a quote that silently substitutes a missing
+     * rate is worse than one that admits it.
+     */
+    private static BigDecimal rateFor(String cardCurrency, String target,
+                                      Map<String, BigDecimal> rates) {
+        if (cardCurrency == null || cardCurrency.equalsIgnoreCase(target)) {
+            return BigDecimal.ONE;
+        }
+        BigDecimal found = rates == null ? null : rates.get(cardCurrency);
+        return found == null ? BigDecimal.ONE : found;
+    }
+
     private ServiceabilityResponses.ModePrice priceMode(DeliveryMode mode, Measure measure,
                                                         BigDecimal weight, DeliveryScope scope,
                                                         BigDecimal rate, Resolved destination,
-                                                        boolean freeDelivery, boolean complete) {
+                                                        boolean freeDelivery, boolean complete,
+                                                        LegRate legRate) {
 
         if (mode == DeliveryMode.HOME_DELIVERY && !destination.known()) {
             return new ServiceabilityResponses.ModePrice(mode, false, null, null, null, null,
@@ -249,7 +329,7 @@ public class ServiceabilityService {
                     "Free delivery on this basket", null);
         }
 
-        BigDecimal cost = convert(properties.priceLeg(measure.km, weight, scope, mode), rate);
+        BigDecimal cost = convert(legRate.priceLeg(measure.km, weight, scope, mode), rate);
         int[] eta = etaFor(measure.km);
         return new ServiceabilityResponses.ModePrice(mode, true, cost, eta[0], eta[1], null,
                 complete ? null : "No exchange rate available — this figure is not final.");

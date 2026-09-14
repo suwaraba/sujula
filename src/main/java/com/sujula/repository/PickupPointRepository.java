@@ -163,4 +163,34 @@ public interface PickupPointRepository extends JpaRepository<PickupPoint, Long> 
          + "AND p.status = com.sujula.model.constant.PartnerStatus.APPROVED "
          + "AND LOWER(p.city) = LOWER(:city) ORDER BY p.name ASC")
     List<PickupPoint> findPublicInCity(@Param("city") String city);
+
+    /**
+     * The back office's counter list.
+     *
+     * <p>Capacity pressure is filtered in the query rather than in Java, because
+     * "show me the counters that are full" is the question an administrator asks
+     * when something is going wrong and paging through every point in the country
+     * to find three of them is not an answer.
+     */
+    @Query("SELECT p FROM PickupPoint p "
+         + "WHERE (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', :q, '%')) "
+         + "   OR LOWER(p.city) LIKE LOWER(CONCAT('%', :q, '%')) "
+         + "   OR LOWER(p.contactPhone) LIKE LOWER(CONCAT('%', :q, '%'))) "
+         + "AND (:status IS NULL OR p.status = :status) "
+         + "AND (:countryCode IS NULL OR UPPER(p.countryCode) = UPPER(:countryCode)) "
+         + "AND (:fullOnly = FALSE OR p.storedParcels >= p.capacity) "
+         + "ORDER BY p.countryCode ASC, p.city ASC, p.name ASC")
+    Page<PickupPoint> adminSearch(@Param("q") String q,
+                                  @Param("status") PartnerStatus status,
+                                  @Param("countryCode") String countryCode,
+                                  @Param("fullOnly") boolean fullOnly,
+                                  Pageable pageable);
+
+    /** True when this name is already taken in that city, ignoring one point. */
+    @Query("SELECT COUNT(p) > 0 FROM PickupPoint p WHERE LOWER(p.name) = LOWER(:name) "
+         + "AND LOWER(p.city) = LOWER(:city) AND UPPER(p.countryCode) = UPPER(:countryCode) "
+         + "AND (:excludeId IS NULL OR p.id <> :excludeId)")
+    boolean nameTakenInCity(@Param("name") String name, @Param("city") String city,
+                            @Param("countryCode") String countryCode,
+                            @Param("excludeId") Long excludeId);
 }

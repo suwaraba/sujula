@@ -67,7 +67,35 @@ public class Driver {
     private String avatarUrl;
 
 
-    private String zone;            // city / district the driver normally covers
+    /**
+     * The area the driver wrote on their own application — "Serrekunda", "Bakau".
+     *
+     * <p>What they say about themselves, kept because it is what they typed and
+     * because a dispatcher reads it. It is <em>not</em> what decides where they
+     * are offered work: {@link #coverage} is, and it is set by an administrator.
+     * The distinction is the same one {@link #available} and {@link #status}
+     * draw — this is the driver's own claim, that is the platform's decision —
+     * and collapsing them would let a driver widen their own coverage by editing
+     * a free-text field.
+     */
+    private String zone;
+
+    /**
+     * The zones an administrator has approved this driver to work in.
+     *
+     * <p>Empty means they have not been given any yet, which is what an approved
+     * driver starts as. Dispatch reads this to decide whom a parcel may be
+     * offered to, so it is a delivery-side fact end to end: a zone is a polygon
+     * round a destination, never round a payer.
+     */
+    @JsonIgnore
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(name = "driver_zone_coverage",
+               joinColumns = @JoinColumn(name = "driver_id"),
+               inverseJoinColumns = @JoinColumn(name = "zone_id"),
+               indexes = @Index(name = "idx_dzc_zone", columnList = "zone_id"))
+    @Builder.Default
+    private java.util.Set<com.sujula.model.logistics.DeliveryZone> coverage = new java.util.LinkedHashSet<>();
 
     @Column(length = 2)
     private String countryCode;     // ISO 3166-1 alpha-2

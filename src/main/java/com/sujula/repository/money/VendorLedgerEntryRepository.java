@@ -26,6 +26,20 @@ import com.sujula.model.money.VendorLedgerEntry;
 public interface VendorLedgerEntryRepository extends JpaRepository<VendorLedgerEntry, Long> {
 
     /**
+     * Every ledger row raised by one order, across all its sellers.
+     *
+     * <p>For the administrative order view, where the question is what happened
+     * to the money on this payment as a whole — which spans several vendors (C3)
+     * and several currencies, and is therefore listed rather than summed.
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT e FROM VendorLedgerEntry e WHERE e.vendorOrder.order.id = :orderId "
+          + "ORDER BY e.occurredAt ASC, e.id ASC")
+    java.util.List<com.sujula.model.money.VendorLedgerEntry> findByOrderId(
+            @org.springframework.data.repository.query.Param("orderId") Long orderId);
+
+
+    /**
      * What is payable now, per currency.
      *
      * <p>Available means posted, released from escrow, and not already committed

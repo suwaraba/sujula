@@ -243,7 +243,13 @@ DELETE FROM pickup_points          WHERE id >= 1000;
 DELETE FROM push_devices           WHERE id >= 1000;
 DELETE FROM notification_preferences WHERE id >= 1000;
 DELETE FROM notifications          WHERE id >= 1000;
+-- Coverage before drivers and before zones, because it is the join between
+-- them and holds a foreign key into each. A rate card before its zone for the
+-- same reason.
+DELETE FROM driver_zone_coverage   WHERE driver_id >= 1000 OR zone_id >= 1000;
 DELETE FROM drivers                WHERE id >= 1000;
+DELETE FROM delivery_rate_cards    WHERE id >= 1000;
+DELETE FROM delivery_zones         WHERE id >= 1000;
 DELETE FROM coupons                WHERE id >= 1000;
 DELETE FROM carts                  WHERE id >= 1000;
 UPDATE sanctions        SET moderation_case_id = NULL WHERE id >= 1000;
@@ -2975,6 +2981,119 @@ VALUES
   'GMD', 8500.00, 8500.00, NULL, NULL,
   0.00, NULL, 0.195, TRUE, 'No exchange rate from GMD to SEK.',
   NULL, NULL, NULL, NULL, NULL, NULL);
+
+-- ── delivery_zones ──────────────────────────────────────────────────────────
+-- Polygons, and the one mistake that would otherwise fail silently.
+--
+-- Coordinates are GeoJSON's own [longitude, latitude], which is the opposite of
+-- how everybody says it out loud. Get it the wrong way round and 13.44,-16.69
+-- becomes -16.69,13.44 — a perfectly legal position in the Gulf of Guinea. The
+-- shape parses, stores, and contains no Gambian address ever, and nobody finds
+-- out for a month. Both the upload endpoint and CountryBounds refuse it; these
+-- rows are here so the right way round has an example to copy.
+--
+-- min/max latitude and longitude are DERIVED from the geometry by ZoneRegistry
+-- on every write. They are listed explicitly here because a raw INSERT bypasses
+-- that, and a box that disagrees with its own polygon silently excludes
+-- addresses that are inside the shape. If you edit a geometry below, edit its
+-- box too — or load it through POST /admin/zones, which does it for you.
+--
+-- Overlap is deliberate: GM-SRK sits inside GM-KOMBO, and priority is what
+-- decides which wins. That is how a denser city rate is expressed, not a
+-- mistake to be prevented.
+
+INSERT INTO delivery_zones
+ (id, code, name, description, country_code, geometry,
+  min_latitude, max_latitude, min_longitude, max_longitude, vertex_count,
+  serviceable, unserviceable_reason, priority, active,
+  last_edited_by_user_id, created_at, updated_at)
+VALUES
+ (2400, 'GM-SRK', 'Serrekunda', 'The dense part of the Kombos — short legs, many of them.', 'GM',
+  '{"type":"Polygon","coordinates":[[[-16.72,13.42],[-16.66,13.42],[-16.66,13.47],[-16.72,13.47],[-16.72,13.42]]]}',
+  13.42, 13.47, -16.72, -16.66, 5,
+  TRUE, NULL, 10, TRUE, 1001, @NOW, @NOW),
+
+ (2401, 'GM-KOMBO', 'Greater Kombo', 'Everything from Banjul out to Brikama.', 'GM',
+  '{"type":"Polygon","coordinates":[[[-16.80,13.30],[-16.50,13.30],[-16.50,13.60],[-16.80,13.60],[-16.80,13.30]]]}',
+  13.30, 13.60, -16.80, -16.50, 5,
+  TRUE, NULL, 1, TRUE, 1001, @NOW, @NOW),
+
+ -- Drawn, priced, and not being delivered to. A zone is how a platform says
+ -- "not here" about somewhere it has looked at; deleting it would lose both the
+ -- shape and the reason, and a shopper would be told "unavailable" rather than
+ -- something they can act on.
+ (2402, 'GM-NBR', 'North Bank', 'Across the river. Ferry-dependent.', 'GM',
+  '{"type":"Polygon","coordinates":[[[-16.60,13.50],[-16.20,13.50],[-16.20,13.80],[-16.60,13.80],[-16.60,13.50]]]}',
+  13.50, 13.80, -16.60, -16.20, 5,
+  FALSE, 'The Barra ferry is out of service. We expect to be delivering again in October.',
+  5, TRUE, 1001, @NOW, @NOW),
+
+ (2403, 'SN-DKR', 'Dakar', 'Teranga Textiles collects here.', 'SN',
+  '{"type":"Polygon","coordinates":[[[-17.55,14.65],[-17.35,14.65],[-17.35,14.80],[-17.55,14.80],[-17.55,14.65]]]}',
+  14.65, 14.80, -17.55, -17.35, 5,
+  TRUE, NULL, 10, TRUE, 1001, @NOW, @NOW);
+
+-- ── driver_zone_coverage ────────────────────────────────────────────────────
+-- What the platform decided about where a driver works, which is not the same
+-- as drivers.zone — that is the free-text area they typed on their own
+-- application. Ebrima wrote "Kombo North"; this says Serrekunda and Greater
+-- Kombo, and this is what dispatch reads. Collapsing the two would let a driver
+-- widen their own coverage by editing a text field.
+
+INSERT INTO driver_zone_coverage (driver_id, zone_id) VALUES
+ (1090, 2400),
+ (1090, 2401);
+
+-- ── delivery_rate_cards ─────────────────────────────────────────────────────
+-- What carriage costs, from a day forward.
+--
+-- Effective-dated for the same reason commission is: an order priced in August
+-- was priced under the August card, and a card written today must not be able
+-- to reach back and make that total something nobody can reproduce. The service
+-- refuses a start date in the past for exactly this reason; these rows are
+-- seeded with one anyway, because a seed with no history has nothing to
+-- demonstrate.
+--
+-- 2410 and 2411 are the same scope on either side of a boundary: the first ran
+-- until the end of August, the second from the first of September with no end.
+-- Ask the platform what a leg cost on the twentieth of August and it answers
+-- from 2410 — which is the whole point, and the thing that breaks the moment
+-- somebody edits a card's numbers instead of writing a new one.
+--
+-- 2412 is denser and more specific: one zone, one mode. Most specific wins, so
+-- a home delivery inside Serrekunda is priced from it rather than from the
+-- national card, and a hub run in the same zone is not.
+--
+-- Currency is the PLATFORM's, not the buyer's and not the vendor's. It is
+-- converted once, at a snapshotted rate, like every other figure somebody is
+-- charged.
+
+INSERT INTO delivery_rate_cards
+ (id, name, zone_id, country_code, mode, currency,
+  base_fee, included_km, per_km, included_kg, per_kg, min_fee, max_fee, free_above,
+  effective_from, effective_until, note, active, created_by_user_id,
+  created_at, updated_at)
+VALUES
+ (2410, 'Gambia standard — opening', NULL, 'GM', NULL, 'GMD',
+  45.00, 0.00, 10.00, 1.00, 20.00, 45.00, NULL, NULL,
+  '2026-06-01', '2026-08-31', 'What we opened with.', TRUE, 1001, @NOW, @NOW),
+
+ (2411, 'Gambia standard', NULL, 'GM', NULL, 'GMD',
+  50.00, 0.00, 12.00, 1.00, 25.00, 50.00, 2500.00, 15000.00,
+  '2026-09-01', NULL, 'Fuel. Free delivery above 15,000 with one seller.',
+  TRUE, 1001, @NOW, @NOW),
+
+ (2412, 'Serrekunda door', 2400, 'GM', 'HOME_DELIVERY', 'GMD',
+  30.00, 2.00, 8.00, 1.00, 20.00, 30.00, 900.00, NULL,
+  '2026-09-01', NULL, 'Short legs, many of them — the national card overcharges here.',
+  TRUE, 1001, @NOW, @NOW),
+
+ -- Senegal has a card in XOF, which has NO minor units. 1250.50 CFA is not an
+ -- amount that exists, so every figure here is whole — and CurrencyCatalogue,
+ -- not this file, is what enforces that when a leg is actually priced.
+ (2413, 'Senegal standard', 2403, 'SN', NULL, 'XOF',
+  1500.00, 0.00, 350.00, 1.00, 700.00, 1500.00, NULL, NULL,
+  '2026-09-01', NULL, 'Dakar and the ring road.', TRUE, 1001, @NOW, @NOW);
 
 COMMIT;
 

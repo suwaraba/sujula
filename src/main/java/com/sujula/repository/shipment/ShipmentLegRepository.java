@@ -39,6 +39,29 @@ public interface ShipmentLegRepository extends JpaRepository<ShipmentLeg, Long> 
     List<ShipmentLeg> findByShipmentIdOrderBySequenceAsc(Long shipmentId);
 
     /**
+     * The leg a dispatcher is about to act on, locked.
+     *
+     * <p>PESSIMISTIC_WRITE, and it is the only lock on this surface. Two
+     * dispatchers assigning the same parcel within a second of each other is the
+     * ordinary race on a busy morning — the loser has to be told rather than
+     * silently overwriting the winner, which would leave two drivers each
+     * believing the job is theirs and one of them driving to a shop for nothing.
+     */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT l FROM ShipmentLeg l WHERE l.shipment.id = :shipmentId "
+         + "AND l.assignmentStatus NOT IN (com.sujula.model.constant.LegAssignmentStatus.COMPLETED, "
+         + "                               com.sujula.model.constant.LegAssignmentStatus.CANCELLED) "
+         + "ORDER BY l.sequence ASC LIMIT 1")
+    Optional<ShipmentLeg> lockNextLeg(@Param("shipmentId") Long shipmentId);
+
+    /** How many parcels a driver is currently answerable for. Ranks the candidates. */
+    @Query("SELECT COUNT(l) FROM ShipmentLeg l WHERE l.driver.id = :driverId "
+         + "AND l.assignmentStatus IN (com.sujula.model.constant.LegAssignmentStatus.OFFERED, "
+         + "                           com.sujula.model.constant.LegAssignmentStatus.ACCEPTED, "
+         + "                           com.sujula.model.constant.LegAssignmentStatus.IN_PROGRESS)")
+    int countOpenJobs(@Param("driverId") Long driverId);
+
+    /**
      * The leg a driver is currently carrying for a shipment.
      *
      * <p>At most one: a parcel is in one pair of hands. Two rows here would mean

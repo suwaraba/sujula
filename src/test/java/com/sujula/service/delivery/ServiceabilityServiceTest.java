@@ -6,6 +6,8 @@ import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.delivery.PickupPoint;
 import com.sujula.repository.PickupPointRepository;
+import com.sujula.repository.logistics.DeliveryRateCardRepository;
+import com.sujula.repository.logistics.DeliveryZoneRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.ExchangeRateService;
 import com.sujula.service.GoogleMapsService;
@@ -57,8 +59,18 @@ class ServiceabilityServiceTest {
 
         when(pickupPoints.findCollectableIn(any())).thenReturn(List.of());
 
+        // No zones drawn and no cards written — which is what every deployment
+        // looks like on its first day, and the case these answers must hold in.
+        DeliveryZoneRepository zoneRows = mock(DeliveryZoneRepository.class);
+        when(zoneRows.findLive()).thenReturn(List.of());
+        ZoneRegistry zones = new ZoneRegistry(zoneRows, new tools.jackson.databind.ObjectMapper());
+
+        DeliveryRateCardRepository cardRows = mock(DeliveryRateCardRepository.class);
+        when(cardRows.findInForceOn(any())).thenReturn(List.of());
+        RateCardRegistry rateCards = new RateCardRegistry(cardRows, properties);
+
         service = new ServiceabilityService(properties, pickupPoints, vendors, geocoding,
-                exchangeRates, contexts);
+                exchangeRates, contexts, zones, rateCards);
     }
 
     private static ServiceabilityRequests.Point at(double lat, double lng, String country) {
