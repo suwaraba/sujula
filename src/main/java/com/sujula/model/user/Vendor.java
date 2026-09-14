@@ -171,10 +171,59 @@ public class Vendor {
     @Builder.Default
     private BigDecimal balance = BigDecimal.ZERO;
 
+    /**
+     * What this store is charged when nothing more specific applies.
+     *
+     * <p>A cache of the live {@code CommissionRate} row rather than the
+     * authority. The rate that settles an order is the one in force on the day
+     * it was placed, snapshotted onto the vendor order at checkout — changing
+     * this number cannot re-price anything that has already happened, which is
+     * the property the commission table exists to give.
+     */
     @Setter(lombok.AccessLevel.NONE)
     @Column(precision = 5, scale = 2)
     @Builder.Default
     private BigDecimal defaultCommissionRate = BigDecimal.valueOf(10.00);
+
+    /**
+     * Set while this store's money is not going out.
+     *
+     * <p>Written when a store is suspended, and read before any payout is
+     * created — so the hold is structural rather than a step somebody remembers.
+     * A suspension that stopped new orders but kept paying out last month's
+     * would be a suspension that costs the platform money on exactly the stores
+     * it has decided not to trust.
+     *
+     * <p>The money is held, not refused. The seller earned it, and a hold that
+     * reads as a cancellation is how a suspension becomes a complaint about
+     * theft.
+     */
+    /**
+     * What the platform decided about this store, in words the seller is shown.
+     *
+     * <p>Carries the rejection or suspension reason. On the store rather than
+     * only in the audit log because the seller reads it: an audit row explains a
+     * decision to the platform, and this explains it to the person it was made
+     * about.
+     */
+    @Column(length = 1000)
+    private String adminNote;
+
+    private LocalDateTime payoutsHeldAt;
+
+    /** Why, in words the seller is shown. */
+    @Column(length = 500)
+    private String payoutsHeldReason;
+
+    /** Whether this store's money is currently held. */
+    public boolean arePayoutsHeld() {
+        return payoutsHeldAt != null;
+    }
+
+    /** Set by the admin commission endpoint after writing an effective-dated row. */
+    public void applyDefaultCommissionRate(BigDecimal rate) {
+        this.defaultCommissionRate = rate;
+    }
 
     @Column(precision = 4, scale = 2)  
     @Builder.Default

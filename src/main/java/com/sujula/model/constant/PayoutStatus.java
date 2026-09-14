@@ -13,6 +13,19 @@ public enum PayoutStatus {
     /** A seller has asked. Nothing has moved and nothing is committed. */
     REQUESTED,
 
+    /**
+     * Asked for, and not going anywhere while something is wrong.
+     *
+     * <p>Distinct from CANCELLED, and the difference is a promise: a cancelled
+     * payout is over and the seller has to ask again, while this one resumes by
+     * itself when the hold comes off. A store suspended mid-cycle has money it
+     * has genuinely earned, and the platform is holding it rather than refusing
+     * it — telling the seller the wrong one of those is how a suspension becomes
+     * a complaint about theft.
+     */
+    ON_HOLD,
+
+
     /** Approved and queued for the next transfer run. */
     PENDING,
 

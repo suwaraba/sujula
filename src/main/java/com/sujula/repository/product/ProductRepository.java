@@ -39,6 +39,29 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      */
     long countByVendorIdAndPriceCurrencyNot(Long vendorId, String priceCurrency);
 
+    /** Every listing a store has, whatever its state. What a suspension cascades over. */
+    java.util.List<com.sujula.model.products.Product> findByVendorId(Long vendorId);
+
+    /** How many of a store's listings a shopper could actually buy right now. */
+    @Query("SELECT COUNT(p) FROM Product p WHERE p.vendor.id = :vendorId "
+         + "AND p.status = com.sujula.model.constant.ProductStatus.PUBLISHED AND p.active = TRUE")
+    long countLiveForVendor(@Param("vendorId") Long vendorId);
+
+    /**
+     * The moderation queue, oldest submission first.
+     *
+     * <p>Oldest first rather than newest, because a queue worked from the top
+     * leaves the bottom untouched forever — and the seller at the bottom is the
+     * one who has been waiting longest to start selling.
+     */
+    @Query("SELECT p FROM Product p WHERE p.status = :status "
+         + "AND (:vendorId IS NULL OR p.vendor.id = :vendorId) "
+         + "ORDER BY p.submittedForReviewAt ASC NULLS LAST, p.id ASC")
+    org.springframework.data.domain.Page<com.sujula.model.products.Product> findModerationQueue(
+            @Param("status") com.sujula.model.constant.ProductStatus status,
+            @Param("vendorId") Long vendorId,
+            org.springframework.data.domain.Pageable pageable);
+
     boolean existsByVendorIdAndNameIgnoreCaseAndIdNot(Long vendorId, String productName, Long productId);
 
     /**

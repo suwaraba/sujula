@@ -54,6 +54,11 @@ public enum ModerationReason {
         return this == IDENTITY_FRAUD || this == NON_DELIVERY || this == PROHIBITED_ITEM;
     }
 
+    /** OTHER where nothing was chosen, so a case always names a reason. */
+    public static ModerationReason orDefault(ModerationReason reason) {
+        return reason == null ? OTHER : reason;
+    }
+
     /** What kind of thing a case of this sort is usually raised against. */
     public String usualSubject() {
         return switch (this) {

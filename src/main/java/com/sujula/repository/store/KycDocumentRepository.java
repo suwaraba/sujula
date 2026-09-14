@@ -46,6 +46,28 @@ public interface KycDocumentRepository extends JpaRepository<KycDocument, Long> 
      * <p>Ownership is the query. A scan of somebody's passport is not a row to
      * fetch by id and check afterwards.
      */
+    /**
+     * The queue: documents waiting for somebody to look at them.
+     *
+     * <p>Oldest first, and superseded documents left out. A seller who uploaded
+     * a clearer photograph of the same licence should not have both in the queue
+     * — the reviewer would read the worse one, reject it, and the seller would
+     * have been refused for a picture they had already replaced.
+     */
+    @Query("SELECT d FROM KycDocument d WHERE d.supersededAt IS NULL "
+         + "AND (:status IS NULL OR d.status = :status) "
+         + "AND (:vendorId IS NULL OR d.vendor.id = :vendorId) "
+         + "ORDER BY d.submittedAt ASC")
+    org.springframework.data.domain.Page<KycDocument> findQueue(
+            @Param("status") com.sujula.model.constant.KycDocumentStatus status,
+            @Param("vendorId") Long vendorId,
+            org.springframework.data.domain.Pageable pageable);
+
+    /** How many are still waiting, for the dashboard. */
+    @Query("SELECT COUNT(d) FROM KycDocument d WHERE d.supersededAt IS NULL "
+         + "AND d.status = com.sujula.model.constant.KycDocumentStatus.SUBMITTED")
+    long countWaiting();
+
     @Query("SELECT d FROM KycDocument d WHERE d.id = :id AND d.vendor.id = :vendorId")
     Optional<KycDocument> findByIdAndVendorId(@Param("id") Long id,
                                               @Param("vendorId") Long vendorId);

@@ -14,6 +14,25 @@ import java.util.List;
 public interface ReviewRepository extends JpaRepository<Review, Long> {
 
     /**
+     * Reviews somebody has reported, most-reported first.
+     *
+     * <p>Ordered by the count rather than by age: a review five people have
+     * flagged is more likely to break a rule than one a seller flagged an hour
+     * ago, and a queue worked by age would put the seller's complaint first.
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT r FROM Review r WHERE r.reportCount > 0 AND r.deletedAt IS NULL
+              AND (:hiddenOnly IS NULL
+                   OR (:hiddenOnly = TRUE AND r.hiddenAt IS NOT NULL)
+                   OR (:hiddenOnly = FALSE AND r.hiddenAt IS NULL))
+            ORDER BY r.reportCount DESC, r.createdAt ASC
+            """)
+    org.springframework.data.domain.Page<com.sujula.model.Review> findReported(
+            @org.springframework.data.repository.query.Param("hiddenOnly") Boolean hiddenOnly,
+            org.springframework.data.domain.Pageable pageable);
+
+
+    /**
      * A product's reviews, with the reviewer fetched.
      *
      * <p>Joined rather than lazily loaded because every row renders a name: a

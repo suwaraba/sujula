@@ -25,6 +25,32 @@ public interface VendorRepository extends JpaRepository<Vendor, Long> {
             """)
     boolean existsByAssociatedEmail(@Param("email") String email);
     Page<Vendor> findByStatus(PartnerStatus status, Pageable pageable);
+
+    /**
+     * The administrative store list, with every filter optional.
+     *
+     * <p>{@code payoutsHeld} is here because it is the question an administrator
+     * asks after a suspension sweep — "whose money are we sitting on" — and it
+     * is the one thing on this screen a seller will telephone about.
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT v FROM Vendor v WHERE
+              (:status IS NULL OR v.status = :status)
+              AND (:country IS NULL OR v.pickupCountryCode = :country)
+              AND (:payoutsHeld IS NULL OR
+                   (:payoutsHeld = TRUE AND v.payoutsHeldAt IS NOT NULL) OR
+                   (:payoutsHeld = FALSE AND v.payoutsHeldAt IS NULL))
+              AND (:q IS NULL OR
+                   LOWER(v.storeName) LIKE LOWER(CONCAT('%', :q, '%')) OR
+                   LOWER(v.storeSlug) LIKE LOWER(CONCAT('%', :q, '%')) OR
+                   LOWER(v.user.email) LIKE LOWER(CONCAT('%', :q, '%')))
+            ORDER BY v.createdAt DESC
+            """)
+    Page<Vendor> adminSearch(@org.springframework.data.repository.query.Param("q") String q,
+                             @org.springframework.data.repository.query.Param("status") PartnerStatus status,
+                             @org.springframework.data.repository.query.Param("country") String country,
+                             @org.springframework.data.repository.query.Param("payoutsHeld") Boolean payoutsHeld,
+                             Pageable pageable);
     long countByStatus(PartnerStatus status);
 
     /**

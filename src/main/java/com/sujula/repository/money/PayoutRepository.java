@@ -43,6 +43,21 @@ public interface PayoutRepository extends JpaRepository<Payout, Long> {
      * claimed would commit the same balance twice, and the ledger would then owe
      * more than it holds.
      */
+    /**
+     * Every payout of a store's that has not settled, in any currency.
+     *
+     * <p>Distinct from {@code findOpenForVendor}, which is about one currency
+     * and exists to stop the same balance being claimed twice. This one is what
+     * a suspension sweeps: a store being stopped has money in flight in whatever
+     * currencies it sells in, and holding only one of them would pay out the
+     * rest.
+     */
+    @Query("SELECT p FROM Payout p WHERE p.vendor.id = :vendorId "
+         + "AND p.status IN (com.sujula.model.constant.PayoutStatus.REQUESTED, "
+         + "                 com.sujula.model.constant.PayoutStatus.PENDING) "
+         + "ORDER BY p.createdAt DESC")
+    List<Payout> findUnsettledForVendor(@Param("vendorId") Long vendorId);
+
     @Query("SELECT p FROM Payout p WHERE p.vendor.id = :vendorId AND p.currency = :currency "
          + "AND p.status IN (com.sujula.model.constant.PayoutStatus.REQUESTED, "
          + "                 com.sujula.model.constant.PayoutStatus.PENDING, "
