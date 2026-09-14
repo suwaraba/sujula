@@ -357,4 +357,23 @@ public class EmailServiceImpl implements EmailService {
                 + "entered, and it expires shortly.\n\n"
                 + "The Sujula Team");
     }
+
+    @Override
+    public void sendNotificationEmail(String toEmail, String firstName, String title, String body,
+                                      String reference) {
+        send(toEmail,
+                title,
+                "Hi " + (firstName == null || firstName.isBlank() ? "there" : firstName) + ",\n\n"
+                + body + "\n\n"
+                + (reference == null || reference.isBlank() ? ""
+                   : "Reference: " + reference + "\n\n")
+                // Named here rather than left for somebody to wonder about: an
+                // email nobody can switch off is one people stop reading, and
+                // the ones that matter are then the ones that get missed.
+                + "You are receiving this because it is switched on in your notification "
+                + "settings. You can change which of these we email you about at any time — "
+                + "except for security warnings, delivery codes, refunds, disputes and failed "
+                + "payouts, which we always send.\n\n"
+                + "The Sujula Team");
+    }
 }

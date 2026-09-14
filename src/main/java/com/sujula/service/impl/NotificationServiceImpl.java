@@ -3,10 +3,17 @@ package com.sujula.service.impl;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.Notification;
+import com.sujula.model.constant.NotificationChannel;
+import com.sujula.model.constant.NotificationEvent;
+import com.sujula.model.notification.PushDevice;
 import com.sujula.model.user.User;
 import com.sujula.repository.NotificationRepository;
+import com.sujula.repository.notification.PushDeviceRepository;
 import com.sujula.repository.user.UserRepository;
+import com.sujula.service.EmailService;
 import com.sujula.service.NotificationService;
+import com.sujula.service.notification.NotificationPreferences;
+import com.sujula.service.notification.PushSender;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +22,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The in-app inbox: one row per thing a user is told about.
@@ -35,11 +45,12 @@ public class NotificationServiceImpl implements NotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationServiceImpl.class);
 
-    /** Bucket for a notification sent without one, so the inbox can always group by type. */
-    private static final String DEFAULT_TYPE = "GENERAL";
-
     private final NotificationRepository notificationRepository;
     private final UserRepository userRepository;
+    private final NotificationPreferences preferences;
+    private final PushDeviceRepository devices;
+    private final PushSender push;
+    private final EmailService email;
 
     @Override
     @Transactional(readOnly = true)
@@ -95,7 +106,8 @@ public class NotificationServiceImpl implements NotificationService {
      */
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Notification send(Long userId, String title, String message, String type, String referenceId) {
+    public Notification send(Long userId, String title, String message, NotificationEvent event,
+                             String referenceId) {
         if (userId == null) {
             throw new BadRequestException("A notification needs a recipient");
         }
@@ -104,17 +116,60 @@ public class NotificationServiceImpl implements NotificationService {
         }
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+        NotificationEvent kind = event != null ? event : NotificationEvent.GENERAL;
+        String body = message != null ? message.trim() : "";
 
-        Notification saved = notificationRepository.save(Notification.builder()
-                .user(user)
-                .title(title.trim())
-                .message(message != null ? message.trim() : "")
-                .type(type != null && !type.isBlank() ? type.trim().toUpperCase() : DEFAULT_TYPE)
-                .referenceId(referenceId)
-                .read(false)
-                .build());
+        List<String> sentOn = new ArrayList<>();
+        Notification saved = null;
 
-        log.debug("[Notification] {} → user {} ({})", saved.getType(), userId, referenceId);
+        // The inbox first, and on its own terms. It is the record rather than a
+        // message: written whenever the user has not switched it off, and always
+        // for an event that matters, so somebody who turned every other channel
+        // off can still find out what happened.
+        if (preferences.isEnabled(userId, kind, NotificationChannel.IN_APP)) {
+            saved = notificationRepository.save(Notification.builder()
+                    .user(user)
+                    .title(title.trim())
+                    .message(body)
+                    .event(kind)
+                    .referenceId(referenceId)
+                    .read(false)
+                    .build());
+            sentOn.add(NotificationChannel.IN_APP.name());
+        }
+
+        if (preferences.isEnabled(userId, kind, NotificationChannel.EMAIL)
+                && user.getEmail() != null) {
+            try {
+                email.sendNotificationEmail(user.getEmail(), user.getFirstName(),
+                        title.trim(), body, referenceId);
+                sentOn.add(NotificationChannel.EMAIL.name());
+            } catch (RuntimeException failed) {
+                // The inbox row is already the record. A send that failed is a
+                // support problem, not a reason to lose the notification.
+                log.warn("[Notification] Could not email user {} about {}: {}",
+                        userId, kind, failed.toString());
+            }
+        }
+
+        if (preferences.isEnabled(userId, kind, NotificationChannel.PUSH)) {
+            List<PushDevice> handsets = devices.findLiveForUser(userId);
+            int reached = push.send(handsets, title.trim(), body, referenceId);
+            if (reached > 0) {
+                sentOn.add(NotificationChannel.PUSH.name());
+            }
+        }
+
+        if (saved != null) {
+            // What actually went out, on the row. "Did he get the email" is the
+            // first thing support asks, and answering it from today's
+            // preferences would be answering a different question.
+            saved.setSentOn(sentOn.isEmpty() ? null : String.join(",", sentOn));
+            saved = notificationRepository.save(saved);
+        }
+
+        log.debug("[Notification] {} → user {} ({}) via {}", kind, userId, referenceId,
+                sentOn.isEmpty() ? "nothing — switched off" : String.join(",", sentOn));
         return saved;
     }
 }

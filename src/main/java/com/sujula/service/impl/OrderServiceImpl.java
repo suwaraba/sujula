@@ -46,6 +46,7 @@ import com.sujula.service.CartService;
 import com.sujula.service.DeliveryPricingService;
 import com.sujula.service.EmailService;
 import com.sujula.service.ExchangeRateService;
+import com.sujula.model.constant.NotificationEvent;
 import com.sujula.service.NotificationService;
 import com.sujula.service.OrderService;
 import com.sujula.service.cart.CartOwner;
@@ -483,7 +484,7 @@ public class OrderServiceImpl implements OrderService {
             try {
                 notificationService.send(saved.getCustomer().getId(), orderStatusTitle(to),
                         "Order " + saved.getOrderNumber() + " " + orderStatusBody(to),
-                        "ORDER", saved.getOrderNumber());
+                        NotificationEvent.ORDER_UPDATE, saved.getOrderNumber());
             } catch (Exception ignored) {
                 // Never let a notification failure roll back the status change
             }
@@ -1463,7 +1464,7 @@ public class OrderServiceImpl implements OrderService {
         try {
             notificationService.send(customer.getId(), "Order Placed Successfully",
                     "Your order " + order.getOrderNumber() + " has been placed and is being processed.",
-                    "ORDER", order.getOrderNumber());
+                    NotificationEvent.ORDER_PLACED, order.getOrderNumber());
             notifyVendors(order, vendorOrders, "New Order Received",
                     "You have a new order (" + order.getOrderNumber() + ") to fulfil.");
         } catch (Exception ignored) {
@@ -1483,7 +1484,11 @@ public class OrderServiceImpl implements OrderService {
             Vendor vendor = vo.getVendor();
             if (vendor.getUser() != null) {
                 emailService.sendVendorOrderNotification(vendor.getUser().getEmail(), vendor.getStoreName(), order.getOrderNumber());
-                notificationService.send(vendor.getUser().getId(), title, message, "ORDER", order.getOrderNumber());
+                // The seller's copy is a different event from the buyer's:
+                // one of them wants to know their money went, and the other has
+                // something to pack. They are switched on and off separately.
+                notificationService.send(vendor.getUser().getId(), title, message,
+                        NotificationEvent.ORDER_TO_FULFIL, order.getOrderNumber());
             }
         }
     }

@@ -305,6 +305,12 @@ public class SecurityConfig {
                         // point id.
                         .requestMatchers("/pickup", "/pickup/**").authenticated()
 
+                        // The user's own inbox, settings and phones. No user id
+                        // appears in any of these paths — every one takes its
+                        // subject from the session — so being signed in is the
+                        // whole of the gate and there is nothing to tamper with.
+                        .requestMatchers("/notifications", "/notifications/**").authenticated()
+
                         // After the sale. Signed in is the outer gate only:
                         // every one of these rows is scoped by putting the
                         // caller into the query, and the two sides of a return

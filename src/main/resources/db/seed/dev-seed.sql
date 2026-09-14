@@ -240,6 +240,8 @@ DELETE FROM payments               WHERE id >= 1000;
 DELETE FROM orders                 WHERE id >= 1000;
 DELETE FROM products               WHERE id >= 1000;
 DELETE FROM pickup_points          WHERE id >= 1000;
+DELETE FROM push_devices           WHERE id >= 1000;
+DELETE FROM notification_preferences WHERE id >= 1000;
 DELETE FROM notifications          WHERE id >= 1000;
 DELETE FROM drivers                WHERE id >= 1000;
 DELETE FROM coupons                WHERE id >= 1000;
@@ -573,12 +575,81 @@ VALUES
 -- The column is `is_read`, not `read`: `read` is reserved in MySQL and the
 -- table would not create.
 
-INSERT INTO notifications (id, user_id, title, message, type, reference_id, is_read, created_at) VALUES
- (1091, 1005, 'Order confirmed',  'Order SJL-SEED-0001 has been confirmed.',           'ORDER',   'SJL-SEED-0001', 1, @NOW),
- (1092, 1005, 'Payment received', 'We received your card payment for SJL-SEED-0001.',  'PAYMENT', 'SJL-SEED-0001', 0, @NOW),
- (1093, 1002, 'New order',        'You have a new order to prepare.',                  'VENDOR',  'SJL-SEED-0001', 0, @NOW),
- (1094, 1003, 'New order',        'You have a new order to prepare.',                  'VENDOR',  'SJL-SEED-0001', 0, @NOW),
- (1095, 1004, 'Order delivered',  'Order SJL-SEED-0003 has been delivered. Enjoy!',    'ORDER',   'SJL-SEED-0003', 1, @NOW);
+-- `type` is an enum now rather than free text. It used to hold whatever the
+-- calling code typed — 'ORDER' here, 'VENDOR' there, 'PAYMENT' somewhere else —
+-- which was harmless until preferences arrived: a user cannot hold an opinion
+-- about a category that half the code spells differently. The column keeps its
+-- name so existing rows keep working.
+--
+-- sent_on records which channels each one actually went out on, which is not
+-- the same question as what the user's settings say today. "Did he get the
+-- email" is the first thing support asks, and answering it from current
+-- preferences would be answering something else.
+
+INSERT INTO notifications (id, user_id, title, message, type, reference_id, sent_on, is_read, created_at) VALUES
+ (1091, 1005, 'Order confirmed',  'Order SJL-SEED-0001 has been confirmed.',           'ORDER_PLACED',     'SJL-SEED-0001', 'IN_APP,EMAIL', 1, @NOW),
+ (1092, 1005, 'Payment received', 'We received your card payment for SJL-SEED-0001.',  'ORDER_UPDATE',     'SJL-SEED-0001', 'IN_APP',       0, @NOW),
+ -- The seller's copy is a different event from the buyer's: one of them wants
+ -- to know their money went, the other has something to pack, and they are
+ -- switched on and off separately.
+ (1093, 1002, 'New order',        'You have a new order to prepare.',                  'ORDER_TO_FULFIL',  'SJL-SEED-0001', 'IN_APP,EMAIL', 0, @NOW),
+ (1094, 1003, 'New order',        'You have a new order to prepare.',                  'ORDER_TO_FULFIL',  'SJL-SEED-0001', 'IN_APP,EMAIL', 0, @NOW),
+ (1095, 1004, 'Order delivered',  'Order SJL-SEED-0003 has been delivered. Enjoy!',    'PARCEL_DELIVERED', 'SJL-SEED-0003', 'IN_APP,EMAIL', 1, @NOW),
+ -- Sent even though Lamin has switched his inbox off for it (2100 below). It is
+ -- one of the five that cannot be suppressed: money held still on a dispute is
+ -- something he would otherwise discover from his balance.
+ (1096, 1002, 'A dispute was raised', 'Money on SJL-SEED-0001 is held while we look at it.',
+  'DISPUTE_UPDATE', 'DSP-9MRT4XKQ2B', 'IN_APP,EMAIL', 0, @NOW),
+ -- Nobody has push. sent_on says IN_APP alone rather than claiming a channel
+ -- that reached nothing, because no provider is configured in this
+ -- installation and LoggedPushSender reports that honestly.
+ (1097, 1005, 'Out for delivery', 'Your parcel is out for delivery today.',
+  'PARCEL_OUT_FOR_DELIVERY', 'PARCQ4T8NHRW6JZY', 'IN_APP', 0, @NOW);
+
+-- ── notification_preferences ────────────────────────────────────────────────
+-- Only the answers that differ from the default are stored, which is why there
+-- are four rows here and not four hundred. A user with no rows has no opinion
+-- and gets whatever NotificationEvent says — so the absence of a row is
+-- meaningful rather than missing, and a default nobody had a view about can be
+-- improved later without rewriting anybody's settings.
+--
+-- Note what is NOT here and could not be: nothing switching off PARCEL_CODE,
+-- DISPUTE_UPDATE, PAYOUT_FAILED, SECURITY_ALERT or REFUND_ISSUED. The service
+-- refuses to store those, and the resolver would ignore them if they somehow
+-- existed — each one is a case where silence costs somebody something they
+-- cannot get back.
+
+INSERT INTO notification_preferences
+ (id, user_id, event, channel, enabled, created_at, updated_at)
+VALUES
+ -- Lamin runs a shop and does not want his inbox full of delivery steps.
+ (2100, 1002, 'PARCEL_COLLECTED',    'IN_APP', FALSE, @NOW, @NOW),
+ (2101, 1002, 'PARCEL_OUT_FOR_DELIVERY', 'EMAIL', FALSE, @NOW, @NOW),
+ -- Oliver wants the offers everybody else has off by default.
+ (2102, 1005, 'PROMOTION',           'EMAIL',  TRUE,  @NOW, @NOW),
+ -- Aminata reads everything in the app and wants no email about messages.
+ (2103, 1004, 'MESSAGE_RECEIVED',    'EMAIL',  FALSE, @NOW, @NOW);
+
+-- ── push_devices ────────────────────────────────────────────────────────────
+-- Handsets that have asked to be told things. The token is the address: anybody
+-- holding one can send that phone a message dressed as ours, so no endpoint
+-- ever returns it and it is not logged.
+--
+-- 2111 is revoked, and the reason matters. Operating systems reassign push
+-- tokens: the same token turning up under a second account means the phone
+-- changed hands or the app was reinstalled by somebody else. Leaving the old
+-- registration live would send the previous owner's delivery codes to whoever
+-- has it now, which on this platform is a parcel handed to a stranger.
+
+INSERT INTO push_devices
+ (id, user_id, token, platform, label, last_seen_at, revoked_at, revoked_reason, created_at)
+VALUES
+ (2110, 1004, 'fcm-seed-aminata-infinix-x669c', 'ANDROID', 'Aminata''s Infinix',
+  @NOW, NULL, NULL, @NOW),
+ (2111, 1005, 'fcm-seed-reassigned-handset',    'ANDROID', 'Old Android',
+  @LAPSED, @NOW, 'Token re-registered by another account', @NOW),
+ (2112, 1007, 'fcm-seed-ebrima-driver-phone',   'ANDROID', 'Ebrima''s phone',
+  @NOW, NULL, NULL, @NOW);
 
 -- ── pickup_points ───────────────────────────────────────────────────────────
 -- An alternative to home delivery: a shorter, cheaper leg to a hub the buyer

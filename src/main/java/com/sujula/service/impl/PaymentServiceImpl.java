@@ -26,6 +26,7 @@ import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.AuditService;
 import com.sujula.service.EmailService;
+import com.sujula.model.constant.NotificationEvent;
 import com.sujula.service.NotificationService;
 import com.sujula.service.PaymentService;
 import com.sujula.service.payment.PaymentGateway;
@@ -711,7 +712,8 @@ public class PaymentServiceImpl implements PaymentService {
             return;   // guests have no in-app inbox
         }
         try {
-            notificationService.send(order.getCustomer().getId(), title, message, "ORDER", order.getOrderNumber());
+            notificationService.send(order.getCustomer().getId(), title, message,
+                    NotificationEvent.ORDER_UPDATE, order.getOrderNumber());
         } catch (Exception ex) {
             log.warn("[Payment] Could not notify the buyer of order {}: {}",
                     order.getOrderNumber(), ex.getMessage());

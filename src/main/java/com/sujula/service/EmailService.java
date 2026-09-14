@@ -81,4 +81,17 @@ public interface EmailService {
     void sendParcelAccessCode(String toEmail, String buyerName, String recipientName,
                               String trackingCode, String code,
                               java.time.LocalDateTime expiresAt);
+
+    /**
+     * The email half of a notification the user has asked to be emailed about.
+     *
+     * <p>Generic on purpose. Every other method here is a specific message with
+     * its own wording, because each one has to say something particular; this is
+     * the one that carries whatever the notification already said, so the inbox
+     * and the email cannot drift into telling somebody two different things.
+     *
+     * @param reference the order number or parcel reference it is about, or null
+     */
+    void sendNotificationEmail(String toEmail, String firstName, String title, String body,
+                               String reference);
 }
