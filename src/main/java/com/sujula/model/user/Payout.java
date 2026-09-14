@@ -102,6 +102,34 @@ public class Payout {
     @JoinColumn(name = "processed_by")
     private User processedBy;
 
+    /**
+     * The run this transfer went out in, when it went out in one.
+     *
+     * <p>Null for a payout a seller asked for on their own. Both kinds live in
+     * this table on purpose: a payout made by a batch and a payout requested by a
+     * seller settle, fail and reverse through exactly one code path, and a second
+     * table for "batch payouts" would be a second way for money to leave the
+     * platform.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "batch_id")
+    private com.sujula.model.finance.PayoutBatch batch;
+
+    /**
+     * How many times the transfer has been attempted.
+     *
+     * <p>A retry is a new attempt on the same payout rather than a new payout,
+     * because the seller is owed one amount and a second row would look like two.
+     * The count is what stops an administrator retrying a bank rejection forever
+     * — after a few, the answer is a different account, not another attempt.
+     */
+    @Column(nullable = false)
+    @Builder.Default
+    private int attempts = 0;
+
+    private LocalDateTime lastAttemptAt;
+
     @CreationTimestamp
     @Column(updatable = false)
     private LocalDateTime createdAt;

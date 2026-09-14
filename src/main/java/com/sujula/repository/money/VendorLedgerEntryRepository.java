@@ -177,4 +177,89 @@ public interface VendorLedgerEntryRepository extends JpaRepository<VendorLedgerE
 
     /** The entries a payout committed, for reversing it when the transfer fails. */
     List<VendorLedgerEntry> findByPayoutId(Long payoutId);
+
+    // ── The platform's own view ──────────────────────────────────────────────
+    //
+    // Everything above answers a question about one seller. These answer
+    // questions about all of them at once, which is what an administrator
+    // reconciling against a bank statement actually needs — and they are kept
+    // apart because a vendor-facing query that forgot its vendor id would
+    // otherwise return the whole platform.
+
+    /**
+     * The journal, across every vendor.
+     *
+     * <p>Filters are all optional and all narrowing. Nothing here converts: a
+     * page spanning two currencies shows both, each row in its own, and the
+     * caller totals per currency or not at all (C2).
+     */
+    @Query(value = "SELECT e FROM VendorLedgerEntry e "
+         + "WHERE (:vendorId IS NULL OR e.vendor.id = :vendorId) "
+         + "AND (:currency IS NULL OR UPPER(e.currency) = UPPER(:currency)) "
+         + "AND (:type IS NULL OR e.type = :type) "
+         + "AND (:orderId IS NULL OR e.vendorOrder.order.id = :orderId) "
+         + "AND (:reference IS NULL OR LOWER(e.reference) LIKE LOWER(CONCAT('%', :reference, '%'))) "
+         + "AND (:from IS NULL OR e.occurredAt >= :from) "
+         + "AND (:to IS NULL OR e.occurredAt <= :to) "
+         + "ORDER BY e.occurredAt DESC, e.id DESC",
+           countQuery = "SELECT COUNT(e) FROM VendorLedgerEntry e "
+         + "WHERE (:vendorId IS NULL OR e.vendor.id = :vendorId) "
+         + "AND (:currency IS NULL OR UPPER(e.currency) = UPPER(:currency)) "
+         + "AND (:type IS NULL OR e.type = :type) "
+         + "AND (:orderId IS NULL OR e.vendorOrder.order.id = :orderId) "
+         + "AND (:reference IS NULL OR LOWER(e.reference) LIKE LOWER(CONCAT('%', :reference, '%'))) "
+         + "AND (:from IS NULL OR e.occurredAt >= :from) "
+         + "AND (:to IS NULL OR e.occurredAt <= :to)")
+    Page<VendorLedgerEntry> explore(@Param("vendorId") Long vendorId,
+                                    @Param("currency") String currency,
+                                    @Param("type") LedgerEntryType type,
+                                    @Param("orderId") Long orderId,
+                                    @Param("reference") String reference,
+                                    @Param("from") java.time.LocalDateTime from,
+                                    @Param("to") java.time.LocalDateTime to,
+                                    Pageable pageable);
+
+    /**
+     * Every vendor's balances at once: vendor id, currency, available, held.
+     *
+     * <p>One row per vendor per currency. A vendor trading in two currencies has
+     * two rows and there is no third that adds them — that is C2 in a GROUP BY
+     * rather than in a comment.
+     */
+    @Query("SELECT e.vendor.id, e.currency, "
+         + "       COALESCE(SUM(CASE WHEN e.availableFrom IS NOT NULL THEN e.amount ELSE 0 END), 0), "
+         + "       COALESCE(SUM(CASE WHEN e.availableFrom IS NULL THEN e.amount ELSE 0 END), 0) "
+         + "FROM VendorLedgerEntry e "
+         + "WHERE (:vendorId IS NULL OR e.vendor.id = :vendorId) "
+         + "AND (:currency IS NULL OR UPPER(e.currency) = UPPER(:currency)) "
+         + "GROUP BY e.vendor.id, e.currency "
+         + "ORDER BY e.currency ASC, e.vendor.id ASC")
+    List<Object[]> allBalances(@Param("vendorId") Long vendorId,
+                               @Param("currency") String currency);
+
+    /**
+     * What the platform holds in escrow, by currency.
+     *
+     * <p>One side of the reconciliation. The other two are what the payment
+     * provider says it took and what has actually been transferred out, and the
+     * point of the report is the difference between them.
+     */
+    @Query("SELECT e.currency, COALESCE(SUM(e.amount), 0) FROM VendorLedgerEntry e "
+         + "WHERE e.availableFrom IS NULL GROUP BY e.currency ORDER BY e.currency ASC")
+    List<Object[]> escrowByCurrency();
+
+    /** What is payable right now and has not left, by currency. */
+    @Query("SELECT e.currency, COALESCE(SUM(e.amount), 0) FROM VendorLedgerEntry e "
+         + "WHERE e.availableFrom IS NOT NULL GROUP BY e.currency ORDER BY e.currency ASC")
+    List<Object[]> availableByCurrency();
+
+    /** Totals by type and currency in a window — the revenue report's raw material. */
+    @Query("SELECT e.type, e.currency, COALESCE(SUM(e.amount), 0), COUNT(e) "
+         + "FROM VendorLedgerEntry e "
+         + "WHERE e.occurredAt >= :from AND e.occurredAt < :to "
+         + "AND (:vendorId IS NULL OR e.vendor.id = :vendorId) "
+         + "GROUP BY e.type, e.currency ORDER BY e.currency ASC, e.type ASC")
+    List<Object[]> platformTotalsByType(@Param("from") java.time.LocalDateTime from,
+                                        @Param("to") java.time.LocalDateTime to,
+                                        @Param("vendorId") Long vendorId);
 }

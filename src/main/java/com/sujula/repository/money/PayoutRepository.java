@@ -67,4 +67,15 @@ public interface PayoutRepository extends JpaRepository<Payout, Long> {
                                    @Param("currency") String currency);
 
     boolean existsByReference(String reference);
+
+    /**
+     * The transfers in one run, in the order they were assembled.
+     *
+     * <p>Stable order because an approver reads this list and then reads it
+     * again after asking a question about row nine, and a list that reshuffles
+     * between the two readings is a list nobody can check.
+     */
+    java.util.List<Payout> findByBatchIdOrderByIdAsc(Long batchId);
+
+    long countByBatchIdAndStatus(Long batchId, com.sujula.model.constant.PayoutStatus status);
 }

@@ -262,6 +262,11 @@ DELETE FROM wishlists              WHERE id >= 1000;
 -- Payouts now carry a vendor, so they go before vendors do. They used to sit
 -- after, which was correct only while the column did not exist.
 DELETE FROM vendor_payouts         WHERE id >= 1000;
+-- Batches after the payouts that point at them, and exports and spreads
+-- wherever: nothing references either.
+DELETE FROM payout_batches         WHERE id >= 1000;
+DELETE FROM report_exports         WHERE id >= 1000;
+DELETE FROM fx_spreads             WHERE id >= 1000;
 DELETE FROM vendors                WHERE id >= 1000;
 DELETE FROM users                  WHERE id >= 1000;
 DELETE FROM gift_cards             WHERE id >= 1000;
@@ -1586,20 +1591,153 @@ VALUES
 -- in: the seller has asked and nobody has decided. Money leaving is the one
 -- action no later call can undo.
 
+-- ── payout_batches ──────────────────────────────────────────────────────────
+-- A run of transfers, prepared by one person and approved by another.
+--
+-- The two people are the point, and the entity refuses one person doing both
+-- rather than leaving it to a procedure somebody follows when they are not in a
+-- hurry. 2500 below was prepared by Fatou and released by Omar; a row where
+-- those two columns held the same id would be a control that exists only in a
+-- comment.
+--
+-- Per currency, always. Sixteen sellers settling in dalasi and four in CFA are
+-- two runs, not one with a mixed total — a figure that added GMD to XOF is a
+-- number somebody would nonetheless reconcile against a bank statement (C2).
+--
+-- total is STORED rather than summed at read time, and the two are checked
+-- against each other before release. A batch whose recorded total and item sum
+-- disagree has been edited underneath, and releasing it would move an amount
+-- nobody approved — which is exactly what the second approver believes they are
+-- preventing. Keep 2500's total equal to the sum of the payouts pointing at it.
+--
+-- exclusions is written once, at assembly. It describes what the batch IS, not
+-- what is true now: an approver who notices a seller missing will otherwise
+-- assume a bug rather than a hold.
+
+INSERT INTO payout_batches
+ (id, version, reference, status, currency, total, item_count,
+  prepared_by_user_id, prepared_at, approved_by_user_id, approved_at,
+  note, cancelled_reason, cancelled_at, exclusions, created_at, updated_at)
+VALUES
+ (2500, 0, 'PB-2026-08-GMD', 'APPROVED', 'GMD', 1000.00, 1,
+  1001, '2026-09-01 09:30:00.000000', 1012, '2026-09-01 09:55:00.000000',
+  'August settlement for the Kombos.', NULL, NULL,
+  'Basse Phone Repair: payouts on hold (three filtered messages in one day) — 2,400.00 GMD is being kept, not lost.',
+  @NOW, @NOW),
+
+ -- Waiting on somebody who is not Fatou. Nothing has moved: no ledger entry is
+ -- written until release, so cancelling this changes no seller's balance.
+ (2501, 0, 'PB-2026-09-XOF', 'AWAITING_APPROVAL', 'XOF', 0.00, 0,
+  1001, @NOW, NULL, NULL,
+  'September run for Senegal.', NULL, NULL,
+  'Teranga Textiles: already has 96000 XOF in flight.',
+  @NOW, @NOW),
+
+ -- Abandoned before release, with the reason on the row rather than in
+ -- somebody's memory.
+ (2502, 0, 'PB-2026-09-GMD-A', 'CANCELLED', 'GMD', 0.00, 0,
+  1012, @NOW, NULL, NULL, NULL,
+  'Assembled against the wrong window.', @NOW, NULL, @NOW, @NOW);
+
+-- ── fx_spreads ──────────────────────────────────────────────────────────────
+-- What the platform adds to a published rate, and from when.
+--
+-- The spread is real revenue and it is the BUYER's money, so it is a record
+-- with a start time and an author rather than a number in a properties file
+-- that changes when somebody redeploys.
+--
+-- Basis points, not a decimal fraction: a spread typed as 0.015 and one typed
+-- as 1.5 are indistinguishable to a form and differ by a factor of a hundred in
+-- what a buyer pays. 150 here is 1.50%.
+--
+-- Rows are APPENDED, never edited. 2510 is the opening platform-wide spread and
+-- 2511 supersedes it for GMD→EUR only; both survive, because an order converted
+-- in July has to stay explicable in December. Most specific wins, so a Gambian
+-- seller's goods bought in euro use 2511 and the same goods bought in sterling
+-- use 2510.
+--
+-- A NULL currency on either side is a wildcard.
+
+INSERT INTO fx_spreads
+ (id, from_currency, to_currency, basis_points, effective_from, set_by_user_id,
+  reason, created_at)
+VALUES
+ (2510, NULL, NULL, 100, '2026-06-01 00:00:00.000000', 1001,
+  'Opening platform spread — 1.00% on every conversion.', @NOW),
+
+ (2511, 'GMD', 'EUR', 150, '2026-09-01 00:00:00.000000', 1001,
+  'The dalasi moved twice in August. 1.50% on this pair only.', @NOW);
+
+-- ── report_exports ──────────────────────────────────────────────────────────
+-- Somebody asked for a file of the platform's money.
+--
+-- A row rather than only an access-log line, because this is the most sensitive
+-- read on the platform: every seller's earnings and every buyer's spend, in one
+-- file that leaves the building. "Who exported every seller's earnings in
+-- March" has to stay answerable, which is why an expired export keeps its row
+-- and loses only its link.
+--
+-- That is what 2522 is. READY with a lapsed result_expires_at would be a row
+-- telling a lie, so the worker moves it to EXPIRED and the URL stops being
+-- offered. The row, and the name on it, remain.
+
+INSERT INTO report_exports
+ (id, reference, type, status, requested_by_user_id, requested_by_email,
+  from_date, to_date, currency, vendor_id, format, result_url, row_count,
+  result_expires_at, failure_reason, created_at, started_at, finished_at, updated_at)
+VALUES
+ (2520, 'EXP-4K7MQ2BVNXRT', 'LEDGER', 'READY', 1001, 'fatou.admin@sujula.gm',
+  '2026-08-01', '2026-08-31', NULL, NULL, 'CSV',
+  'https://media.example.invalid/finance-exports/exp-4k7mq2bvnxrt.csv', 412,
+  -- Relative to now rather than to @NOW, which is a fixed date in this file.
+  -- A READY export is one whose link works TODAY; anchoring its expiry to the
+  -- seed's own clock made it a row saying READY about a file that had gone,
+  -- which is the exact lie the EXPIRED state exists to prevent.
+  DATEADD('HOUR', 20, CURRENT_TIMESTAMP), NULL, @NOW, @NOW, @NOW, @NOW),
+
+ (2521, 'EXP-9QRT4XKM2BHV', 'RECONCILIATION', 'QUEUED', 1001, 'fatou.admin@sujula.gm',
+  '2026-09-01', '2026-09-14', 'GMD', NULL, 'CSV',
+  NULL, NULL, NULL, NULL, @NOW, NULL, NULL, @NOW),
+
+ (2522, 'EXP-2MHB6VXQ4TWK', 'PAYOUTS', 'EXPIRED', 1012, 'ousman.support@sujula.gm',
+  '2026-07-01', '2026-07-31', NULL, 1101, 'CSV',
+  'https://media.example.invalid/finance-exports/exp-2mhb6vxq4twk.csv', 18,
+  DATEADD('HOUR', -6, @NOW), NULL, @NOW, @NOW, @NOW, @NOW),
+
+ -- It did not build, and the reason is on the row. The person who asked is
+ -- waiting on a file, and a job stuck in BUILDING saying nothing is the worst
+ -- of both.
+ (2523, 'EXP-7XK4MQ2BVN3D', 'REVENUE', 'FAILED', 1001, 'fatou.admin@sujula.gm',
+  '2026-01-01', '2026-09-14', NULL, NULL, 'CSV',
+  NULL, NULL, NULL,
+  'That window holds 241,880 rows, above the 200,000 limit. Narrow the dates or name a single seller — a truncated finance file reconciles to the wrong answer.',
+  @NOW, @NOW, @NOW, @NOW);
+
 INSERT INTO vendor_payouts
  (id, user_id, vendor_id, amount, currency, status, reference, notes, period,
   requested_by_user_id, requested_at, failure_reason, processed_by, processed_at,
-  created_at, updated_at)
+  batch_id, attempts, last_attempt_at, created_at, updated_at)
 VALUES
+ -- Sent in a run, which is why it carries a batch. attempts counts the
+ -- transfers actually made rather than the rows: a retry is a second attempt on
+ -- the same payout, because the seller is owed one amount and a second row
+ -- would look like two.
  (1030, 1002, 1101, 1000.00, 'GMD', 'COMPLETED', 'PO-2026-08-KOMBO',
   'August settlement', '2026-08', NULL, NULL, NULL,
-  1001, '2026-09-01 10:00:00.000000', @NOW, @NOW),
+  1001, '2026-09-01 10:00:00.000000', 2500, 1, '2026-09-01 10:00:00.000000', @NOW, @NOW),
+
+ -- Asked for by the seller rather than assembled by anybody: no batch. Both
+ -- kinds live in this table on purpose — a second table for "batch payouts"
+ -- would be a second way for money to leave the platform.
  (1031, 1002, 1101,  250.00, 'GMD', 'REQUESTED', 'PO-2026-09-KOMBO',
   'Asked for on the 13th', NULL, 1002, @NOW, NULL,
-  NULL, NULL, @NOW, @NOW),
+  NULL, NULL, NULL, 0, NULL, @NOW, @NOW),
+
+ -- Two attempts and the bank refused both. A third is allowed; after that the
+ -- answer is a different destination account, not another attempt.
  (1032, 1003, 1102, 96000.00, 'XOF', 'FAILED', 'PO-2026-09-TERANGA',
   NULL, '2026-08', NULL, NULL, 'The bank rejected the account number',
-  NULL, NULL, @NOW, @NOW);
+  NULL, NULL, NULL, 2, @NOW, @NOW, @NOW);
 
 -- ── vendor_ledger_entries ───────────────────────────────────────────────────
 -- Every movement of a seller's money. Nothing stores a balance: a balance is

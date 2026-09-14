@@ -230,4 +230,22 @@ public interface VendorOrderRepository extends JpaRepository<VendorOrder, Long> 
     List<Object[]> readyToDelivered(@Param("vendorId") Long vendorId,
                                     @Param("from") LocalDateTime from,
                                     @Param("to") LocalDateTime to);
+
+    /**
+     * Sub-orders placed in a window, for the revenue report's FX margin.
+     *
+     * <p>Reads each slice's own snapshotted rate — which is why this exists at
+     * all rather than a SUM in the database. The margin on a converted order
+     * depends on the spread that was in force when it was placed, and that is a
+     * join no aggregate query here can make.
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT v FROM VendorOrder v WHERE v.createdAt >= :from AND v.createdAt < :to "
+          + "AND (:vendorId IS NULL OR v.vendor.id = :vendorId) "
+          + "AND v.cancelledAt IS NULL "
+          + "ORDER BY v.createdAt ASC")
+    java.util.List<VendorOrder> findPlacedBetween(
+            @org.springframework.data.repository.query.Param("from") java.time.LocalDateTime from,
+            @org.springframework.data.repository.query.Param("to") java.time.LocalDateTime to,
+            @org.springframework.data.repository.query.Param("vendorId") Long vendorId);
 }
