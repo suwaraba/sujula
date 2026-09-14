@@ -376,4 +376,26 @@ public class EmailServiceImpl implements EmailService {
                 + "payouts, which we always send.\n\n"
                 + "The Sujula Team");
     }
+
+    @Async
+    @Override
+    public void sendAccountSetupEmail(String toEmail, String firstName, String role,
+                                      String createdBy) {
+        send(toEmail,
+                "An account has been opened for you on Sujula",
+                "Hi " + (firstName == null || firstName.isBlank() ? "there" : firstName) + ",\n\n"
+                + createdBy + " has opened a Sujula account for you as a "
+                + role.toLowerCase(java.util.Locale.ROOT).replace('_', ' ') + ".\n\n"
+                // No password in this message, and none exists: the account was
+                // created with a random secret nobody holds. Sending them to set
+                // their own is the only way the password is theirs alone.
+                + "To get in, set your own password using the \"forgotten password\" link:\n"
+                + frontendUrl + "/forgot-password\n\n"
+                + "Use this email address — " + toEmail + " — when you do.\n\n"
+                + "Nobody here knows or can see your password, including whoever opened the "
+                + "account.\n\n"
+                + "If you were not expecting this, reply and tell us. An account opened for "
+                + "somebody who did not ask for one is worth looking at.\n\n"
+                + "The Sujula Team");
+    }
 }

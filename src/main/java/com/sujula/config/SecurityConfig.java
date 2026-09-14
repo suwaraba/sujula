@@ -373,6 +373,15 @@ public class SecurityConfig {
                                          "/api/guest/orders/*/cancel",
                                          "/api/guest/orders/*/payment",
                                          "/api/guest/orders/*/payment/methods").permitAll()
+                        // The administrative surface. Staff only at the outer
+                        // gate; which of the two staff roles may do what is
+                        // decided inside, by StaffCaller, because the split is
+                        // per endpoint rather than per path — a read and a write
+                        // sit next to each other under the same prefix, and a
+                        // path rule could not tell them apart.
+                        .requestMatchers("/admin", "/admin/**")
+                                .hasAnyRole("ADMIN", "SUPPORT")
+
                         .anyRequest().authenticated();
                 })
                 // Runs before the username/password filter so a bearer token is

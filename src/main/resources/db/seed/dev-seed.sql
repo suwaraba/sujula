@@ -246,6 +246,10 @@ DELETE FROM notifications          WHERE id >= 1000;
 DELETE FROM drivers                WHERE id >= 1000;
 DELETE FROM coupons                WHERE id >= 1000;
 DELETE FROM carts                  WHERE id >= 1000;
+UPDATE sanctions        SET moderation_case_id = NULL WHERE id >= 1000;
+UPDATE moderation_cases SET sanction_id = NULL         WHERE id >= 1000;
+DELETE FROM sanctions              WHERE id >= 1000;
+DELETE FROM moderation_cases       WHERE id >= 1000;
 DELETE FROM audit_logs             WHERE id >= 1000;
 DELETE FROM addresses              WHERE id >= 1000;
 DELETE FROM wishlists              WHERE id >= 1000;
@@ -338,7 +342,22 @@ VALUES
  (1010, 'Mariama','Jarju',   'mariama.jarju@example.gm',   @PW, '+2203100010', 'VENDOR',
   1, 1, 1, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
  (1011, 'Ndeye',  'Sarr',    'ndeye.sarr@example.sn',      @PW, '+2217700011', 'CUSTOMER',
-  1, 1, 1, 0, 0, 0, 0, NULL, 0, 'XOF', 'fr', 'SN', @NOW, @NOW);
+  1, 1, 1, 0, 0, 0, 0, NULL, 0, 'XOF', 'fr', 'SN', @NOW, @NOW),
+ -- Support, not an administrator, and the difference is the point. 1012 reads
+ -- every queue on /admin and can decide nothing on it: no suspension, no role
+ -- change, no impersonation, no refund. Written as a role rather than as a
+ -- permission on ADMIN so the default for a new member of staff is the safe
+ -- one — a system where the safe option has to be remembered is a system where
+ -- everybody ends up an administrator.
+ (1012, 'Binta',  'Njie',    'binta.support@sujula.gm',    @PW, '+2203100012', 'SUPPORT',
+  1, 1, 1, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW),
+ -- Locked out, and NOT by a flag. users.enabled is 0 here because sanction
+ -- 2200 below says so; SanctionRegistry recomputes the column from the rows,
+ -- and nothing else in the codebase can set it. An account that cannot sign in
+ -- always has a row saying who decided that and why — which is what somebody
+ -- asks for when it is their livelihood.
+ (1013, 'Alieu',  'Manneh',  'alieu.suspended@example.gm', @PW, '+2203100013', 'VENDOR',
+  0, 1, 1, 0, 0, 0, 0, NULL, 0, 'GMD', 'en', 'GM', @NOW, @NOW);
 
 -- ── vendors ─────────────────────────────────────────────────────────────────
 -- Coordinates matter: they are the despatch origin every delivery leg is
@@ -2456,6 +2475,108 @@ VALUES
  (2012, 2001, 1006, 'BUYER',
   'Does the A16 take two sim cards, or one sim and a memory card?',
   NULL, FALSE, NULL, NULL, @NOW);
+
+-- ── sanctions ───────────────────────────────────────────────────────────────
+-- Why an account is locked, rather than the fact that it is. The same shape as
+-- the custody chain and the money ledger: the sanction is the record and
+-- users.enabled is the consequence, recomputed from these rows by
+-- SanctionRegistry. There is no other way to disable an account, so there is no
+-- account disabled for a reason nobody wrote down.
+--
+-- 2200 is why user 1013 has enabled = 0. Note expires_at: the suspension is
+-- over on that date whether or not anything sweeps it, because every gate
+-- resolves against these rows rather than against the flag. An outage cannot
+-- leave somebody locked out for an extra week.
+--
+-- 2201 is lifted rather than deleted, and that is deliberate. "We suspended you
+-- for a week and then agreed we should not have" is a different history from
+-- "nothing happened", and the person it was applied to knows which.
+--
+-- 2202 is a restriction rather than a lock: Mariama can still sign in, answer
+-- her buyers and fulfil what she has already sold — she just cannot list
+-- anything new while the case is open. Locking the whole account would have
+-- punished her existing buyers for something she is only accused of.
+
+INSERT INTO sanctions
+ (id, user_id, type, reason, reason_text, restricted_permission,
+  expires_at, lifted_at, lifted_by_user_id, lifted_reason,
+  moderation_case_id, issued_by_user_id, created_at)
+VALUES
+ -- moderation_case_id is filled by the UPDATE below, once 2300 exists. The two
+ -- tables reference each other — a sanction names the case it came out of, and
+ -- the case names the sanction it issued — so no insert order satisfies both.
+ (2200, 1013, 'SUSPENSION', 'OFF_PLATFORM_PAYMENT',
+  'Asking buyers to complete payment by mobile money outside Sujula. Three messages on 11 September were filtered for contact details before this was raised.',
+  NULL, @FUTURE, NULL, NULL, NULL, NULL, 1001, @NOW),
+ (2201, 1009, 'WARNING', 'ABUSIVE_CONDUCT',
+  'Language used in a message to a seller.',
+  NULL, NULL, @NOW, 1001, 'The message was in Wolof and was mistranslated by the reporting tool. Nothing abusive was said.',
+  NULL, 1001, @NOW),
+ (2202, 1010, 'FEATURE_RESTRICTION', 'MISLEADING_LISTING',
+  'New listings held for review while an open case about product descriptions is decided.',
+  'CATALOGUE_WRITE', @FUTURE, NULL, NULL, NULL, NULL, 1001, @NOW);
+
+-- ── moderation_cases ────────────────────────────────────────────────────────
+-- One queue for every allegation, whatever raised it: a buyer's report, a
+-- seller's, a support agent noticing a pattern, or a rule firing on its own.
+-- Having one rather than four is what makes "this seller has two open cases" a
+-- fact rather than something somebody happens to remember.
+--
+-- subject_type and subject_id are a polymorphic reference, which is the one
+-- place in this schema that earns itself: a product can be deleted and a review
+-- hidden, and a case that vanished with its subject would take the reason
+-- somebody was banned with it. subject_label is carried for the same reason —
+-- it still reads correctly after the listing is gone.
+--
+-- due_by is frozen when the case is raised rather than computed from today's
+-- policy. A queue sorted by a deadline that moves with policy is one where the
+-- oldest case is never the most urgent. 2301's is in the past on purpose: it is
+-- the overdue row the queue must surface first.
+
+INSERT INTO moderation_cases
+ (id, version, reference, status, reason,
+  subject_type, subject_id, subject_label, accountable_user_id, vendor_id,
+  raised_by_user_id, source, description, evidence_urls,
+  assigned_to_user_id, assigned_at, due_by,
+  resolved_by_user_id, resolved_at, outcome, resolution_note, sanction_id,
+  created_at, updated_at)
+VALUES
+ (2300, 0, 'CASE-7XK4MQ2BVN', 'RESOLVED', 'OFF_PLATFORM_PAYMENT',
+  'USER', 1013, 'Alieu Manneh — Basse Phone Repair', 1013, NULL,
+  NULL, 'AUTOMATED',
+  'Three messages filtered for contact details in one day, all to different buyers on unpaid orders.',
+  NULL,
+  1001, @NOW, @NOW,
+  1001, @NOW, 'UPHELD',
+  'Pattern is clear from the filtered originals. Thirty days, and the account comes back by itself.',
+  NULL, @NOW, @NOW),
+
+ -- Open, overdue, and assigned to support — who can read it and add to it, and
+ -- cannot resolve it. Only an administrator issues a sanction.
+ (2301, 0, 'CASE-9QRT4XKM2B', 'IN_REVIEW', 'MISLEADING_LISTING',
+  'PRODUCT', 1305, 'Wax Print — Six Yards, Indigo (Teranga Mobile)', 1010, 1102,
+  1005, 'USER_REPORT',
+  'Buyer says the cloth that arrived is five yards, not six, and that two other buyers have said the same in the reviews.',
+  'https://media.example.invalid/cases/wax-measured.jpg',
+  1012, @NOW, @LAPSED,
+  NULL, NULL, NULL, NULL, NULL, @NOW, @NOW),
+
+ -- Raised and untouched. What an empty queue looks like when it is not empty.
+ (2302, 0, 'CASE-2MHB6VXQ4T', 'OPEN', 'RATING_MANIPULATION',
+  'REVIEW', 1313, 'Four-star review on the Nokia 105 by Modou Sanneh', 1006, NULL,
+  1002, 'USER_REPORT',
+  'Seller says the reviewer never bought this product. reviews.verified is 0 on that row, which is worth checking rather than acting on.',
+  NULL,
+  NULL, NULL, @FUTURE,
+  NULL, NULL, NULL, NULL, NULL, @NOW, @NOW);
+
+-- The two halves of the link, now that both sides exist. Written as updates for
+-- the same reason the return/dispute pair is: neither table can be inserted
+-- with both ends filled, and the services do exactly this — raise one, then
+-- point the other at it.
+UPDATE sanctions        SET moderation_case_id = 2300 WHERE id = 2200;
+UPDATE sanctions        SET moderation_case_id = 2301 WHERE id = 2202;
+UPDATE moderation_cases SET sanction_id = 2200        WHERE id = 2300;
 
 -- ── delivery_routes ─────────────────────────────────────────────────────────
 -- A driver's run for one day. delivery_ids and optimized_order are TEXT lists,

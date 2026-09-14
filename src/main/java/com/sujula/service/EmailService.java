@@ -94,4 +94,18 @@ public interface EmailService {
      */
     void sendNotificationEmail(String toEmail, String firstName, String title, String body,
                                String reference);
+
+    /**
+     * Tells somebody an account has been opened for them.
+     *
+     * <p>Deliberately not {@link #sendAdminPasswordResetEmail}, which prints its
+     * argument as a temporary password. There is no password to print here: the
+     * account is created with a random secret nobody has, and this sends the
+     * person to set their own — because a password an administrator chose is one
+     * an administrator knows, and an account whose creator knows the password is
+     * one they can act as without leaving an impersonation row.
+     *
+     * @param createdBy who opened it, so an unexpected message can be questioned
+     */
+    void sendAccountSetupEmail(String toEmail, String firstName, String role, String createdBy);
 }
