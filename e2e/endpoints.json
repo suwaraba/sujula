@@ -1,0 +1,3301 @@
+{
+  "capturedFrom": "http://localhost:8080",
+  "operations": 432,
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/admin/announcements",
+      "operationId": "announce",
+      "summary": "Tell a role, or a country, or everybody",
+      "body": "Announce"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/audit-log",
+      "operationId": "auditLog",
+      "summary": "Who did what, and when",
+      "query": [
+        "actorUserId",
+        "action",
+        "targetType",
+        "targetId",
+        "q",
+        "from",
+        "to",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/admin/balances",
+      "operationId": "balances",
+      "summary": "Every seller's balances, in every currency they hold",
+      "query": [
+        "vendorId",
+        "currency",
+        "payableOnly",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/admin/callbacks",
+      "operationId": "callbacks",
+      "summary": "Calls somebody still owes, soonest deadline first",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/callbacks/{callbackId}/outcome",
+      "operationId": "recordCallback",
+      "summary": "Record what came of a call",
+      "body": "RecordCallback"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/dashboard",
+      "operationId": "dashboard",
+      "summary": "The platform at a glance"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/disputes",
+      "operationId": "disputes",
+      "summary": "The dispute queue, sorted by deadline rather than age",
+      "query": [
+        "status",
+        "openOnly",
+        "assignedTo",
+        "unassignedOnly",
+        "vendorId",
+        "reason",
+        "overdueOnly",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/admin/disputes/{disputeId}",
+      "operationId": "dispute",
+      "summary": "One dispute, with both currencies and both clocks"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/disputes/{disputeId}/assign",
+      "operationId": "assign_1",
+      "summary": "Take a dispute, or give it to somebody",
+      "body": "AssignDispute"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/disputes/{disputeId}/notes",
+      "operationId": "addNote",
+      "summary": "A note for the next agent, never for the parties",
+      "body": "AddNote"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/disputes/{disputeId}/request-callback",
+      "operationId": "requestCallback",
+      "summary": "Arrange for somebody to be telephoned",
+      "body": "RequestCallback"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/disputes/{disputeId}/resolve",
+      "operationId": "resolve",
+      "summary": "Decide it, and move the money that follows",
+      "body": "ResolveDispute"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/drivers",
+      "operationId": "drivers",
+      "summary": "Drivers, with what they are carrying and how they answer",
+      "query": [
+        "q",
+        "status",
+        "countryCode",
+        "zoneCode",
+        "availableOnly",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/drivers/{driverId}/approve",
+      "operationId": "approveDriver",
+      "summary": "Let a driver start carrying",
+      "body": "ApproveDriver"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/drivers/{driverId}/suspend",
+      "operationId": "suspendDriver",
+      "summary": "Stop offering a driver work",
+      "body": "SuspendDriver"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/drivers/{driverId}/zones",
+      "operationId": "driverZones",
+      "summary": "Set where a driver may be offered work",
+      "body": "SetDriverZones"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/feature-flags",
+      "operationId": "flags",
+      "summary": "The switches, and who last moved each one"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/feature-flags/{flagKey}",
+      "operationId": "setFlag",
+      "summary": "Move a switch, with a reason",
+      "body": "SetFeatureFlag"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/fx/rates",
+      "operationId": "rates",
+      "summary": "Rate history, with the spread that applied on each day",
+      "query": [
+        "currency",
+        "from",
+        "to",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/fx/refresh",
+      "operationId": "refreshRates",
+      "summary": "Pull rates now",
+      "body": "RefreshRates"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/fx/spread",
+      "operationId": "spreads",
+      "summary": "Every spread ever set, and which one is live"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/fx/spread",
+      "operationId": "setSpread",
+      "summary": "Set the platform's spread from a moment",
+      "body": "SetSpread"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/jobs",
+      "operationId": "jobs",
+      "summary": "What runs in the background, and whether it is still running"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/jobs/history",
+      "operationId": "jobHistory",
+      "summary": "Every pass, including the ones that found nothing",
+      "query": [
+        "jobName",
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/jobs/{jobName}/run",
+      "operationId": "triggerJob",
+      "summary": "Run a job now",
+      "body": "TriggerJob"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/kyc/queue",
+      "operationId": "kycQueue",
+      "summary": "Documents waiting to be read",
+      "query": [
+        "status",
+        "vendorId",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/kyc/{documentId}/approve",
+      "operationId": "approveKyc",
+      "summary": "Accept a document",
+      "body": "ApproveKyc"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/kyc/{documentId}/reject",
+      "operationId": "rejectKyc",
+      "summary": "Refuse a document, saying what is wrong with it",
+      "body": "RejectKyc"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/ledger",
+      "operationId": "ledger",
+      "summary": "The journal, across every seller",
+      "query": [
+        "vendorId",
+        "currency",
+        "type",
+        "orderId",
+        "reference",
+        "from",
+        "to",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/admin/ledger/reconciliation",
+      "operationId": "reconciliation",
+      "summary": "Escrow against payments against what has been paid out",
+      "query": [
+        "asOf"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/admin/moderation/cases",
+      "operationId": "cases",
+      "summary": "Every policy case, soonest deadline first",
+      "query": [
+        "status",
+        "reason",
+        "assigneeId",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/moderation/cases/{caseId}/resolve",
+      "operationId": "resolveCase",
+      "summary": "Decide a case, and issue what it warrants",
+      "body": "ResolveCase"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/moderation/products",
+      "operationId": "productQueue",
+      "summary": "Listings waiting for review",
+      "query": [
+        "status",
+        "vendorId",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/admin/moderation/reviews",
+      "operationId": "reviewQueue",
+      "summary": "Reviews somebody has reported",
+      "query": [
+        "hiddenOnly",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/notifications/send",
+      "operationId": "notify",
+      "summary": "Message one person",
+      "body": "SendNotification"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/orders",
+      "operationId": "orders",
+      "summary": "Search orders",
+      "query": [
+        "q",
+        "status",
+        "destinationCountry",
+        "vendorId",
+        "stuckForHours",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/orders",
+      "operationId": "placeOnBehalf",
+      "summary": "Place an order for somebody who telephoned",
+      "body": "PlaceOrderOnBehalf"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/orders/{orderId}",
+      "operationId": "order",
+      "summary": "One order: its slices, its ledger and its parcels"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/orders/{orderId}/cancel",
+      "operationId": "forceCancel",
+      "summary": "Cancel over the top of whatever it was doing",
+      "body": "ForceCancelOrder"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/orders/{orderId}/vendor-orders/{vendorOrderId}/force-status",
+      "operationId": "forceStatus",
+      "summary": "Break-glass: set a status by hand",
+      "body": "ForceStatus"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/payments",
+      "operationId": "payments",
+      "summary": "Search payments, including by the provider's own reference",
+      "query": [
+        "q",
+        "status",
+        "currency",
+        "transactionId",
+        "from",
+        "to",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/admin/payments/{paymentId}",
+      "operationId": "payment",
+      "summary": "One payment and its sub-orders"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/payments/{paymentId}/refund",
+      "operationId": "refund_1",
+      "summary": "Refund one seller's part of a payment",
+      "body": "Refund"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/payouts/batches",
+      "operationId": "batches",
+      "summary": "Payout runs, and what is in them",
+      "query": [
+        "status",
+        "currency",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/payouts/batches",
+      "operationId": "prepareBatch",
+      "summary": "Assemble a run for one currency",
+      "body": "PrepareBatch"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/payouts/batches/{batchId}",
+      "operationId": "batch",
+      "summary": "One run, item by item"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/payouts/batches/{batchId}/approve",
+      "operationId": "approveBatch",
+      "summary": "Release a run — never your own",
+      "body": "ApproveBatch"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/payouts/batches/{batchId}/cancel",
+      "operationId": "cancelBatch",
+      "summary": "Abandon a run before it is released",
+      "body": "CancelBatch"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/payouts/items/{payoutId}/retry",
+      "operationId": "retryPayout",
+      "summary": "Try a failed transfer again",
+      "body": "RetryPayoutItem"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/pickup-points",
+      "operationId": "pickupPoints",
+      "summary": "Collection points, with what is sitting on each shelf",
+      "query": [
+        "q",
+        "status",
+        "countryCode",
+        "overdueOnly",
+        "fullOnly",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/pickup-points",
+      "operationId": "createPickupPoint",
+      "summary": "Open a counter",
+      "body": "CreatePickupPoint"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/pickup-points/{pointId}",
+      "operationId": "patchPickupPoint",
+      "summary": "Edit a counter",
+      "body": "PatchPickupPoint"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/pickup-points/{pointId}/suspend",
+      "operationId": "suspendPickupPoint",
+      "summary": "Stop new parcels going to a counter",
+      "body": "SuspendPickupPoint"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/products",
+      "operationId": "createProduct",
+      "summary": "List something on a seller's behalf",
+      "body": "CreateProduct"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/products/{productId}",
+      "operationId": "patchProduct",
+      "summary": "Edit somebody else's listing, with a reason",
+      "body": "PatchProduct"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/products/{productId}/approve",
+      "operationId": "approveProduct",
+      "summary": "Publish a listing",
+      "body": "ApproveProduct"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/products/{productId}/reject",
+      "operationId": "rejectProduct",
+      "summary": "Refuse a listing, with a reason code and words",
+      "body": "RejectProduct"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/products/{productId}/suspend",
+      "operationId": "suspendProduct",
+      "summary": "Take a listing down for breaking a rule",
+      "body": "SuspendProduct"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/rate-cards",
+      "operationId": "rateCards",
+      "summary": "What carriage costs, and from when",
+      "query": [
+        "zoneId",
+        "countryCode",
+        "mode",
+        "activeOnly",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/rate-cards",
+      "operationId": "createRateCard",
+      "summary": "Write a card, effective from a date",
+      "body": "CreateRateCard"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/rate-cards/preview",
+      "operationId": "previewRates",
+      "summary": "What the live cards would charge for three sample legs",
+      "query": [
+        "zoneId",
+        "countryCode"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/rate-cards/{cardId}",
+      "operationId": "patchRateCard",
+      "summary": "Rename a card, note it, or close it from a date",
+      "body": "PatchRateCard"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/reports/exports",
+      "operationId": "exports",
+      "summary": "Who has exported what",
+      "query": [
+        "requestedBy",
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/admin/reports/revenue",
+      "operationId": "revenue",
+      "summary": "Commission, refunds and FX margin, per settlement currency",
+      "query": [
+        "from",
+        "to",
+        "vendorId"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/reports/{type}/export",
+      "operationId": "requestExport_1",
+      "summary": "Ask for a finance file",
+      "body": "RequestExport"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/reviews/{reviewId}/publish",
+      "operationId": "publishReview",
+      "summary": "Leave a reported review up",
+      "body": "ModerateReview"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/reviews/{reviewId}/reject",
+      "operationId": "rejectReview",
+      "summary": "Take a review down",
+      "body": "ModerateReview"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/shipments",
+      "operationId": "shipments",
+      "summary": "The dispatch board",
+      "query": [
+        "status",
+        "country",
+        "driverId",
+        "waitingOverHours",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/admin/shipments/unassigned",
+      "operationId": "unassigned",
+      "summary": "Parcels nobody is carrying, with who could",
+      "query": [
+        "limit"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/shipments/{shipmentId}/assign",
+      "operationId": "assign",
+      "summary": "Offer a parcel to a driver",
+      "body": "AssignShipment"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/shipments/{shipmentId}/cancel",
+      "operationId": "cancelShipment",
+      "summary": "Stop a parcel and every open leg with it",
+      "body": "CancelShipment"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/shipments/{shipmentId}/custody-chain",
+      "operationId": "custodyChain",
+      "summary": "The whole chain, with its evidence"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/shipments/{shipmentId}/override-handoff",
+      "operationId": "overrideHandoff",
+      "summary": "Record a handover that could not be proven the ordinary way",
+      "body": "OverrideHandoff"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/shipments/{shipmentId}/reassign",
+      "operationId": "reassign",
+      "summary": "Move a parcel to a different driver",
+      "body": "ReassignShipment"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/shipments/{shipmentId}/unassign",
+      "operationId": "unassign",
+      "summary": "Take a parcel back off a driver",
+      "body": "UnassignShipment"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/stores",
+      "operationId": "stores",
+      "summary": "The stores, with what is holding each of them up",
+      "query": [
+        "q",
+        "status",
+        "country",
+        "payoutsHeld",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/stores/{vendorId}/approve",
+      "operationId": "approveStore",
+      "summary": "Let a store trade",
+      "body": "ApproveStore"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/stores/{vendorId}/commission",
+      "operationId": "changeCommission",
+      "summary": "Change what a store is charged, from a date",
+      "body": "ChangeCommission"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/stores/{vendorId}/reject",
+      "operationId": "rejectStore",
+      "summary": "Refuse an application, with a reason they can act on",
+      "body": "RejectStore"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/stores/{vendorId}/suspend",
+      "operationId": "suspendStore",
+      "summary": "Stop a store, and everything that follows",
+      "body": "SuspendStore"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/users",
+      "operationId": "search",
+      "summary": "Search accounts",
+      "query": [
+        "q",
+        "role",
+        "country",
+        "blocked",
+        "lockedOut",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/users",
+      "operationId": "create_10",
+      "summary": "Create an actor by hand",
+      "body": "CreateUser"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/users/{userId}",
+      "operationId": "detail",
+      "summary": "One account, with the shape of its history"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/users/{userId}",
+      "operationId": "patch_1",
+      "summary": "Edit a profile on somebody's behalf",
+      "body": "PatchUser"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/users/{userId}/activate",
+      "operationId": "activate_1",
+      "summary": "Lift whatever is holding an account out",
+      "body": "Activate"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/users/{userId}/deactivate",
+      "operationId": "deactivate",
+      "summary": "Shut an account indefinitely",
+      "body": "Deactivate"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/users/{userId}/force-logout",
+      "operationId": "forceLogout",
+      "summary": "End every session an account has open",
+      "body": "ForceLogout"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/users/{userId}/impersonate",
+      "operationId": "impersonate",
+      "summary": "Open a short session as somebody else",
+      "body": "Impersonate"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/users/{userId}/reset-mfa",
+      "operationId": "resetMfa",
+      "summary": "Clear somebody's second factor",
+      "body": "ResetMfa"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/users/{userId}/roles",
+      "operationId": "changeRole",
+      "summary": "Change what kind of actor an account is",
+      "body": "ChangeRole"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/users/{userId}/suspend",
+      "operationId": "suspend",
+      "summary": "Shut an account for a stated number of days",
+      "body": "Suspend"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/zones",
+      "operationId": "zones",
+      "summary": "Zones, without their polygons",
+      "query": [
+        "q",
+        "countryCode",
+        "active",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/admin/zones",
+      "operationId": "createZone",
+      "summary": "Draw a zone",
+      "body": "CreateZone"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/zones/{zoneId}",
+      "operationId": "zone",
+      "summary": "One zone, with the GeoJSON exactly as it was uploaded"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/zones/{zoneId}",
+      "operationId": "patchZone",
+      "summary": "Edit a zone, and reload the serviceability cache",
+      "body": "PatchZone"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/audit-logs",
+      "operationId": "find",
+      "query": [
+        "action",
+        "actorId",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/audit-logs/{targetType}/{targetId}",
+      "operationId": "findForTarget",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/orders",
+      "operationId": "findAll",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/orders",
+      "operationId": "createForCustomer",
+      "query": [
+        "customerId!"
+      ],
+      "body": "CreateOrderRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/orders/status",
+      "operationId": "findByStatus_1",
+      "query": [
+        "status!",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/orders/vendor/{vendorId}",
+      "operationId": "findByVendor_1",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/orders/{id}",
+      "operationId": "findById"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/orders/{id}/history",
+      "operationId": "history_1"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/orders/{id}/status",
+      "operationId": "updateStatus_2",
+      "body": "UpdateOrderStatusRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/orders/{orderId}/payment",
+      "operationId": "adminPayment"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/orders/{orderId}/payment/cancel",
+      "operationId": "cancel_1",
+      "query": [
+        "reason"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/orders/{orderId}/payment/confirm-transfer",
+      "operationId": "confirmTransfer",
+      "body": "ConfirmPaymentRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/orders/{orderId}/payment/fail",
+      "operationId": "fail",
+      "query": [
+        "reason"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/orders/{orderId}/payment/refund",
+      "operationId": "refund",
+      "body": "RefundPaymentRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/payments",
+      "operationId": "findAll_3",
+      "query": [
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/payments/vendor/{vendorId}",
+      "operationId": "findByVendor",
+      "query": [
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/cart",
+      "operationId": "cart",
+      "query": [
+        "currency"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/cart",
+      "operationId": "clear"
+    },
+    {
+      "method": "POST",
+      "path": "/api/cart/coupons",
+      "operationId": "applyCoupon_1",
+      "query": [
+        "currency"
+      ],
+      "body": "ApplyCouponRequest"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/cart/coupons",
+      "operationId": "removeCoupon",
+      "query": [
+        "vendorId",
+        "currency"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/cart/currency",
+      "operationId": "setCurrency_1",
+      "query": [
+        "currency!"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/cart/items",
+      "operationId": "addItem_1",
+      "query": [
+        "currency"
+      ],
+      "body": "CartItemRequest"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/cart/items/{cartItemId}",
+      "operationId": "updateItem",
+      "query": [
+        "currency"
+      ],
+      "body": "CartItemRequest"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/cart/items/{cartItemId}",
+      "operationId": "removeItem",
+      "query": [
+        "currency"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/cart/merge",
+      "operationId": "mergeGuestCart",
+      "query": [
+        "currency"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/categories",
+      "operationId": "getAllPaged_1",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/categories",
+      "operationId": "create_9",
+      "body": "CreateCategoryRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/categories/{id}",
+      "operationId": "getById_2"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/categories/{id}",
+      "operationId": "update_4",
+      "body": "CreateCategoryRequest"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/categories/{id}",
+      "operationId": "delete_3"
+    },
+    {
+      "method": "POST",
+      "path": "/api/delivery/quote",
+      "operationId": "quote_2",
+      "body": "DeliveryQuoteRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/exchange-rates",
+      "operationId": "getAllPaged",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/exchange-rates",
+      "operationId": "create_8",
+      "body": "ExchangeRateRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/exchange-rates/{id}",
+      "operationId": "getById_1"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/exchange-rates/{id}",
+      "operationId": "update_3",
+      "body": "ExchangeRateRequest"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/exchange-rates/{id}",
+      "operationId": "delete_2"
+    },
+    {
+      "method": "POST",
+      "path": "/api/guest/orders",
+      "operationId": "guestCheckout",
+      "body": "GuestCheckoutRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/guest/orders/lookup",
+      "operationId": "lookupGuestOrder",
+      "query": [
+        "orderNumber!",
+        "email!"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/guest/orders/{orderNumber}/cancel",
+      "operationId": "cancelGuestOrder",
+      "query": [
+        "email!"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/guest/orders/{orderNumber}/payment",
+      "operationId": "guestPayment",
+      "query": [
+        "email!"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/guest/orders/{orderNumber}/payment",
+      "operationId": "guestPay",
+      "query": [
+        "email!"
+      ],
+      "body": "InitiatePaymentRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/guest/orders/{orderNumber}/payment/methods",
+      "operationId": "guestMethods",
+      "query": [
+        "email!"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/payments/callback",
+      "operationId": "callback",
+      "body": "PaymentCallbackRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/products",
+      "operationId": "create_7",
+      "body": "ProductRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/best-sellers",
+      "operationId": "bestSellers",
+      "query": [
+        "deliveryCountry",
+        "currency",
+        "deliveryLat",
+        "deliveryLng",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/category/{categoryId}",
+      "operationId": "byCategory",
+      "query": [
+        "deliveryCountry",
+        "currency",
+        "deliveryLat",
+        "deliveryLng",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/featured",
+      "operationId": "featured",
+      "query": [
+        "deliveryCountry",
+        "currency",
+        "deliveryLat",
+        "deliveryLng",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/products/images/presign",
+      "operationId": "presignImageUpload",
+      "query": [
+        "contentType!"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/products/images/{imageId}",
+      "operationId": "deleteImage"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/products/images/{imageId}/default",
+      "operationId": "setDefaultImage"
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/mine",
+      "operationId": "myProducts",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/mine/{productId}",
+      "operationId": "myProduct"
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/new-arrivals",
+      "operationId": "newArrivals",
+      "query": [
+        "deliveryCountry",
+        "currency",
+        "deliveryLat",
+        "deliveryLng",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/search",
+      "operationId": "search_3",
+      "query": [
+        "q",
+        "deliveryCountry",
+        "currency",
+        "deliveryLat",
+        "deliveryLng",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/{productId}",
+      "operationId": "get"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/products/{productId}",
+      "operationId": "update_2",
+      "body": "ProductRequest"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/products/{productId}",
+      "operationId": "delete_1"
+    },
+    {
+      "method": "POST",
+      "path": "/api/products/{productId}/images",
+      "operationId": "addImage",
+      "body": "ProductImageRequest"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/products/{productId}/images/order",
+      "operationId": "reorderImages",
+      "body": "ImageOrderRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/products/{productId}/similar",
+      "operationId": "similar",
+      "query": [
+        "deliveryCountry",
+        "currency",
+        "deliveryLat",
+        "deliveryLng",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/staff/orders/{orderId}/payment/collect",
+      "operationId": "collect_1",
+      "body": "ConfirmPaymentRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/user/addresses",
+      "operationId": "myAddresses"
+    },
+    {
+      "method": "POST",
+      "path": "/api/user/addresses",
+      "operationId": "create_6",
+      "body": "AddressRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/user/addresses/default",
+      "operationId": "defaultAddress"
+    },
+    {
+      "method": "GET",
+      "path": "/api/user/addresses/{addressId}",
+      "operationId": "one"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/user/addresses/{addressId}",
+      "operationId": "update_1",
+      "body": "AddressRequest"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/user/addresses/{addressId}",
+      "operationId": "delete"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/user/addresses/{addressId}/default",
+      "operationId": "makeDefault"
+    },
+    {
+      "method": "GET",
+      "path": "/api/user/orders",
+      "operationId": "myOrders",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/user/orders",
+      "operationId": "checkout_1",
+      "body": "UserCheckoutRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/user/orders/checkout-cart",
+      "operationId": "checkoutCart",
+      "query": [
+        "shippingAddressId!",
+        "notes",
+        "currency"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/user/orders/{orderId}/cancel",
+      "operationId": "cancelMyOrder"
+    },
+    {
+      "method": "GET",
+      "path": "/api/user/orders/{orderId}/payment",
+      "operationId": "myPayment"
+    },
+    {
+      "method": "POST",
+      "path": "/api/user/orders/{orderId}/payment",
+      "operationId": "pay",
+      "body": "InitiatePaymentRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/user/orders/{orderId}/payment/methods",
+      "operationId": "methods"
+    },
+    {
+      "method": "GET",
+      "path": "/api/user/orders/{orderNumber}",
+      "operationId": "myOrder_1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/user/orders/{orderNumber}/history",
+      "operationId": "myOrderHistory"
+    },
+    {
+      "method": "POST",
+      "path": "/api/user/orders/{orderNumber}/reorder",
+      "operationId": "reorder"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/user/orders/{orderNumber}/schedule",
+      "operationId": "updateSchedule",
+      "body": "OrderScheduleRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users",
+      "operationId": "findAll_2",
+      "query": [
+        "role!",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/by-email",
+      "operationId": "findByEmail",
+      "query": [
+        "email!"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/login",
+      "operationId": "login_1",
+      "body": "LoginRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/logout",
+      "operationId": "logout_1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/me",
+      "operationId": "getCurrentUser"
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/password/forgot",
+      "operationId": "forgotPassword_1",
+      "body": "ForgotPasswordRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/password/reset",
+      "operationId": "resetPassword_1",
+      "body": "ResetPasswordRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/register",
+      "operationId": "register_2",
+      "body": "UserRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/resend-verification",
+      "operationId": "resendVerification_1",
+      "body": "ResendVerificationRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/verify-email",
+      "operationId": "verifyEmail_1",
+      "body": "VerifyEmailRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/users/{id}",
+      "operationId": "getById"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/users/{id}",
+      "operationId": "update",
+      "body": "UserRequest"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/users/{id}",
+      "operationId": "deleteById"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/users/{id}/block",
+      "operationId": "block",
+      "body": "BlockUserRequest"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/users/{id}/disable",
+      "operationId": "disable"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/users/{id}/enable",
+      "operationId": "enable"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/users/{id}/fraud",
+      "operationId": "markFraud",
+      "query": [
+        "fraud!"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/users/{id}/password",
+      "operationId": "changePassword",
+      "body": "ChangePasswordRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/api/users/{id}/password/verify",
+      "operationId": "verifyPassword",
+      "body": "VerifyPasswordRequest"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/users/{id}/permanent",
+      "operationId": "deletePermanently"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/users/{id}/preferences",
+      "operationId": "updatePreferences_1",
+      "body": "UpdatePreferencesRequest"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/users/{id}/unblock",
+      "operationId": "unblock"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/users/{id}/unlock",
+      "operationId": "unlock"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vendors",
+      "operationId": "findAll_1",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/vendors/apply",
+      "operationId": "apply_2",
+      "query": [
+        "language"
+      ],
+      "body": "VendorApplicationRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vendors/by-slug/{slug}",
+      "operationId": "getByStoreSlug"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vendors/me",
+      "operationId": "getMyVendorProfile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vendors/status",
+      "operationId": "findByStatus",
+      "query": [
+        "status!",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/vendors/storefront",
+      "operationId": "browseStores",
+      "query": [
+        "q",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/vendors/storefront/{slug}",
+      "operationId": "storefront"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vendors/user/{userId}",
+      "operationId": "getByUserId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/vendors/user/{userId}/banner/presign",
+      "operationId": "presignBannerUpload",
+      "query": [
+        "contentType!"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/vendors/user/{userId}/logo/presign",
+      "operationId": "presignLogoUpload",
+      "query": [
+        "contentType!"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/vendors/user/{userId}/profile",
+      "operationId": "updateProfile",
+      "query": [
+        "language"
+      ],
+      "body": "VendorUpdateProfileRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vendors/{id}",
+      "operationId": "getById_3"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/vendors/{id}/settlement-currency",
+      "operationId": "updateSettlementCurrency",
+      "query": [
+        "currency!"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/vendors/{id}/status",
+      "operationId": "updateStatus_1",
+      "query": [
+        "status!",
+        "reason!"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/auth/login",
+      "operationId": "login",
+      "summary": "Sign in",
+      "body": "Login"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/logout",
+      "operationId": "logout",
+      "summary": "Sign out this device",
+      "body": "Logout"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/logout-all",
+      "operationId": "logoutAll",
+      "summary": "Sign out everywhere, including here"
+    },
+    {
+      "method": "DELETE",
+      "path": "/auth/mfa",
+      "operationId": "disableMfa",
+      "summary": "Turn multi-factor off",
+      "body": "MfaConfirm"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/mfa/activate",
+      "operationId": "activateMfa",
+      "summary": "Turn multi-factor on",
+      "body": "MfaActivate"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/mfa/recovery-codes",
+      "operationId": "regenerateRecoveryCodes",
+      "summary": "Replace the recovery codes",
+      "body": "MfaConfirm"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/mfa/setup",
+      "operationId": "beginMfaSetup",
+      "summary": "Begin authenticator enrolment"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/oauth/{provider}/callback",
+      "operationId": "oauthCallback",
+      "summary": "Complete a Google or Apple sign-in",
+      "body": "OAuthCallback"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/password/change",
+      "operationId": "changePassword_1",
+      "summary": "Change a password while signed in",
+      "body": "ChangePassword"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/password/forgot",
+      "operationId": "forgotPassword",
+      "summary": "Start password recovery",
+      "body": "ForgotPassword"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/password/reset",
+      "operationId": "resetPassword",
+      "summary": "Set a new password from a reset link",
+      "body": "ResetPassword"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/refresh",
+      "operationId": "refresh",
+      "summary": "Exchange a refresh token for a new pair",
+      "body": "Refresh"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/register",
+      "operationId": "register_1",
+      "summary": "Create a customer account and sign in",
+      "body": "Register"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/verify-email",
+      "operationId": "verifyEmail",
+      "summary": "Confirm an email address from its link",
+      "body": "VerifyEmail"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/verify-email/resend",
+      "operationId": "resendVerification",
+      "summary": "Send the verification link again",
+      "body": "ResendVerification"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/verify-phone/confirm",
+      "operationId": "confirmPhoneVerification",
+      "summary": "Confirm a phone code",
+      "body": "PhoneVerificationConfirm"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/verify-phone/request",
+      "operationId": "requestPhoneVerification",
+      "summary": "Send a code to a phone number",
+      "body": "PhoneVerificationRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/brands",
+      "operationId": "brands",
+      "summary": "Brands with something to buy"
+    },
+    {
+      "method": "POST",
+      "path": "/carts",
+      "operationId": "create_5",
+      "summary": "Open a cart",
+      "body": "Create"
+    },
+    {
+      "method": "GET",
+      "path": "/carts/{cartToken}",
+      "operationId": "get_4",
+      "summary": "Read a cart"
+    },
+    {
+      "method": "POST",
+      "path": "/carts/{cartToken}/coupons",
+      "operationId": "applyCoupon",
+      "summary": "Apply a coupon",
+      "body": "ApplyCoupon"
+    },
+    {
+      "method": "DELETE",
+      "path": "/carts/{cartToken}/coupons/{code}",
+      "operationId": "removeCoupon_1",
+      "summary": "Remove a coupon"
+    },
+    {
+      "method": "PUT",
+      "path": "/carts/{cartToken}/currency",
+      "operationId": "setCurrency",
+      "summary": "Say what the prices should read as",
+      "body": "SetCurrency"
+    },
+    {
+      "method": "PUT",
+      "path": "/carts/{cartToken}/delivery-context",
+      "operationId": "setDeliveryContext",
+      "summary": "Say where the goods are going",
+      "body": "SetDeliveryContext"
+    },
+    {
+      "method": "POST",
+      "path": "/carts/{cartToken}/items",
+      "operationId": "addItem",
+      "summary": "Add an item",
+      "body": "AddItem"
+    },
+    {
+      "method": "PATCH",
+      "path": "/carts/{cartToken}/items/{itemId}",
+      "operationId": "updateQuantity",
+      "summary": "Change a quantity",
+      "body": "UpdateQuantity"
+    },
+    {
+      "method": "DELETE",
+      "path": "/carts/{cartToken}/items/{itemId}",
+      "operationId": "removeItem_1",
+      "summary": "Remove a line"
+    },
+    {
+      "method": "POST",
+      "path": "/carts/{cartToken}/merge",
+      "operationId": "merge",
+      "summary": "Take over an anonymous cart on sign-in",
+      "body": "Merge"
+    },
+    {
+      "method": "POST",
+      "path": "/carts/{cartToken}/quote",
+      "operationId": "quote_1",
+      "summary": "Price the cart and hold the figures",
+      "body": "Quote"
+    },
+    {
+      "method": "GET",
+      "path": "/categories",
+      "operationId": "categories",
+      "summary": "The category tree"
+    },
+    {
+      "method": "GET",
+      "path": "/categories/{slug}",
+      "operationId": "category",
+      "summary": "One category, with the filters it can offer",
+      "query": [
+        "deliverableTo",
+        "deliveryLat",
+        "deliveryLng",
+        "deliveryCountry",
+        "currency"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/checkout",
+      "operationId": "checkout",
+      "summary": "Place the order",
+      "body": "Checkout"
+    },
+    {
+      "method": "POST",
+      "path": "/checkout/{orderId}/retry-payment",
+      "operationId": "retryPayment",
+      "summary": "A fresh payment intent after a failed attempt",
+      "body": "RetryPayment"
+    },
+    {
+      "method": "GET",
+      "path": "/checkout/{orderId}/status",
+      "operationId": "status",
+      "summary": "Has the payment settled"
+    },
+    {
+      "method": "GET",
+      "path": "/config/public",
+      "operationId": "publicConfig",
+      "summary": "Feature flags, minimum app versions and support contacts"
+    },
+    {
+      "method": "GET",
+      "path": "/countries",
+      "operationId": "countries",
+      "summary": "Countries this marketplace buys from and ships to"
+    },
+    {
+      "method": "GET",
+      "path": "/currencies",
+      "operationId": "currencies",
+      "summary": "Currencies this marketplace prices in"
+    },
+    {
+      "method": "POST",
+      "path": "/currencies/quote",
+      "operationId": "createQuote",
+      "summary": "Hold a rate for checkout",
+      "body": "FxQuoteRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/currencies/quote/{quoteId}",
+      "operationId": "quote_3",
+      "summary": "Read a held rate back"
+    },
+    {
+      "method": "GET",
+      "path": "/currencies/rates",
+      "operationId": "rate",
+      "summary": "What a pair was last published at",
+      "query": [
+        "base!",
+        "quote!"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/delivery-contexts",
+      "operationId": "create_4",
+      "summary": "Resolve a destination and get its id",
+      "body": "Create"
+    },
+    {
+      "method": "GET",
+      "path": "/delivery-contexts/{contextId}",
+      "operationId": "get_3",
+      "summary": "Read a delivery context"
+    },
+    {
+      "method": "POST",
+      "path": "/delivery/quote",
+      "operationId": "quote",
+      "summary": "What shipping costs, per mode",
+      "body": "Quote"
+    },
+    {
+      "method": "POST",
+      "path": "/delivery/serviceability",
+      "operationId": "serviceability",
+      "summary": "Whether goods can get from there to here",
+      "body": "Serviceability"
+    },
+    {
+      "method": "GET",
+      "path": "/disputes",
+      "operationId": "listDisputes",
+      "summary": "Your disputes, from either side",
+      "query": [
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/disputes",
+      "operationId": "openDispute",
+      "summary": "Raise a dispute",
+      "body": "OpenDispute"
+    },
+    {
+      "method": "GET",
+      "path": "/disputes/{disputeId}",
+      "operationId": "disputeDetail",
+      "summary": "One dispute, with its case file"
+    },
+    {
+      "method": "POST",
+      "path": "/disputes/{disputeId}/evidence",
+      "operationId": "disputeEvidence",
+      "summary": "Put a file in",
+      "body": "DisputeEvidence"
+    },
+    {
+      "method": "POST",
+      "path": "/disputes/{disputeId}/messages",
+      "operationId": "disputeMessage",
+      "summary": "Say something on a dispute",
+      "body": "DisputeMessage"
+    },
+    {
+      "method": "POST",
+      "path": "/disputes/{disputeId}/withdraw",
+      "operationId": "withdrawDispute",
+      "summary": "Take it back, which lifts the freeze",
+      "body": "WithdrawDispute"
+    },
+    {
+      "method": "GET",
+      "path": "/driver/assignments",
+      "operationId": "assignments",
+      "summary": "Offers and accepted work"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/assignments/{legId}/accept",
+      "operationId": "accept_2",
+      "summary": "Take a job"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/assignments/{legId}/decline",
+      "operationId": "decline",
+      "summary": "Turn a job down",
+      "body": "Decline"
+    },
+    {
+      "method": "PUT",
+      "path": "/driver/availability",
+      "operationId": "availability",
+      "summary": "Go online or off",
+      "body": "SetAvailability"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/custody-events/sync",
+      "operationId": "sync",
+      "summary": "Upload what happened while I had no signal",
+      "body": "SyncBatch"
+    },
+    {
+      "method": "GET",
+      "path": "/driver/earnings",
+      "operationId": "earnings_1",
+      "summary": "What I have earned",
+      "query": [
+        "from",
+        "to"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/driver/history",
+      "operationId": "history",
+      "summary": "Jobs I have finished",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/driver/location",
+      "operationId": "ping",
+      "summary": "Where I am",
+      "body": "Ping"
+    },
+    {
+      "method": "GET",
+      "path": "/driver/profile",
+      "operationId": "myProfile",
+      "summary": "My profile and where my application has got to"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/profile",
+      "operationId": "apply_1",
+      "summary": "Apply to carry parcels",
+      "body": "Apply"
+    },
+    {
+      "method": "PATCH",
+      "path": "/driver/profile",
+      "operationId": "updateProfile_1",
+      "summary": "Change my vehicle or the area I cover",
+      "body": "UpdateProfile"
+    },
+    {
+      "method": "GET",
+      "path": "/driver/shipments/{id}",
+      "operationId": "shipment",
+      "summary": "One parcel"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/shipments/{id}/arrived-at-origin",
+      "operationId": "arrived",
+      "summary": "I am at the shop",
+      "body": "Arrived"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/shipments/{id}/collect",
+      "operationId": "collect",
+      "summary": "Collect from the seller",
+      "body": "Handover"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/shipments/{id}/deliver",
+      "operationId": "deliver",
+      "summary": "The recipient has it",
+      "body": "Handover"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/shipments/{id}/delivery-failed",
+      "operationId": "deliveryFailed",
+      "summary": "It did not work",
+      "body": "DeliveryFailed"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/shipments/{id}/deposit-at-pickup",
+      "operationId": "deposit",
+      "summary": "Leave it at a pickup point",
+      "body": "Handover"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/shipments/{id}/request-recipient-code",
+      "operationId": "requestCode_1",
+      "summary": "Have the collection code sent"
+    },
+    {
+      "method": "POST",
+      "path": "/driver/shipments/{id}/transfer",
+      "operationId": "transfer",
+      "summary": "Hand it to another driver",
+      "body": "Transfer"
+    },
+    {
+      "method": "GET",
+      "path": "/geo/resolve-context",
+      "operationId": "resolveContext",
+      "summary": "Where this shopper appears to be"
+    },
+    {
+      "method": "POST",
+      "path": "/geo/reverse",
+      "operationId": "reverse",
+      "summary": "Name a point on the map",
+      "body": "Reverse"
+    },
+    {
+      "method": "POST",
+      "path": "/geo/validate-address",
+      "operationId": "validateAddress",
+      "summary": "Check an address without saving it",
+      "body": "ValidateAddress"
+    },
+    {
+      "method": "GET",
+      "path": "/health/liveness",
+      "operationId": "liveness",
+      "summary": "Is this process worth keeping"
+    },
+    {
+      "method": "GET",
+      "path": "/health/readiness",
+      "operationId": "readiness",
+      "summary": "Should this instance be sent traffic"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{token}",
+      "operationId": "download",
+      "summary": "Download an invoice"
+    },
+    {
+      "method": "GET",
+      "path": "/locales",
+      "operationId": "locales",
+      "summary": "Languages this marketplace speaks"
+    },
+    {
+      "method": "GET",
+      "path": "/me",
+      "operationId": "me",
+      "summary": "Profile, roles, permissions and resolved currency"
+    },
+    {
+      "method": "PATCH",
+      "path": "/me",
+      "operationId": "updateMe",
+      "summary": "Update the profile",
+      "body": "UpdateProfile"
+    },
+    {
+      "method": "DELETE",
+      "path": "/me",
+      "operationId": "requestErasure",
+      "summary": "Ask for the account to be erased"
+    },
+    {
+      "method": "GET",
+      "path": "/me/addresses",
+      "operationId": "list_2",
+      "summary": "Every saved address"
+    },
+    {
+      "method": "POST",
+      "path": "/me/addresses",
+      "operationId": "create_3",
+      "summary": "Save an address",
+      "body": "Create"
+    },
+    {
+      "method": "GET",
+      "path": "/me/addresses/{addressId}",
+      "operationId": "one_1",
+      "summary": "One saved address"
+    },
+    {
+      "method": "PATCH",
+      "path": "/me/addresses/{addressId}",
+      "operationId": "patch",
+      "summary": "Change part of an address",
+      "body": "Patch"
+    },
+    {
+      "method": "DELETE",
+      "path": "/me/addresses/{addressId}",
+      "operationId": "delete_5",
+      "summary": "Remove an address"
+    },
+    {
+      "method": "POST",
+      "path": "/me/addresses/{addressId}/confirm-pin",
+      "operationId": "confirmPin",
+      "summary": "Confirm where this address actually is",
+      "body": "ConfirmPin"
+    },
+    {
+      "method": "GET",
+      "path": "/me/export",
+      "operationId": "latestExport",
+      "summary": "The state of the latest export"
+    },
+    {
+      "method": "POST",
+      "path": "/me/export",
+      "operationId": "requestExport",
+      "summary": "Ask for a copy of everything held"
+    },
+    {
+      "method": "GET",
+      "path": "/me/permissions",
+      "operationId": "permissions",
+      "summary": "What this account may do"
+    },
+    {
+      "method": "GET",
+      "path": "/me/sessions",
+      "operationId": "sessions",
+      "summary": "Every device signed in to this account"
+    },
+    {
+      "method": "DELETE",
+      "path": "/me/sessions/{sessionId}",
+      "operationId": "revokeSession",
+      "summary": "Sign a device out remotely"
+    },
+    {
+      "method": "GET",
+      "path": "/messages/threads",
+      "operationId": "threads",
+      "summary": "Your conversations",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/messages/threads",
+      "operationId": "openThread",
+      "summary": "Start a conversation about an order or a product",
+      "body": "OpenThread"
+    },
+    {
+      "method": "GET",
+      "path": "/messages/threads/{threadId}",
+      "operationId": "thread",
+      "summary": "One conversation",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/messages/threads/{threadId}/messages",
+      "operationId": "sendMessage",
+      "summary": "Say something",
+      "body": "SendMessage"
+    },
+    {
+      "method": "GET",
+      "path": "/notifications",
+      "operationId": "inbox",
+      "summary": "What you have been told, newest first",
+      "query": [
+        "unreadOnly",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/notifications/devices",
+      "operationId": "registerDevice",
+      "summary": "Register a phone for push",
+      "body": "RegisterDevice"
+    },
+    {
+      "method": "DELETE",
+      "path": "/notifications/devices/{deviceId}",
+      "operationId": "removeDevice",
+      "summary": "Stop sending to a phone"
+    },
+    {
+      "method": "GET",
+      "path": "/notifications/preferences",
+      "operationId": "preferences",
+      "summary": "Every event on every channel"
+    },
+    {
+      "method": "PUT",
+      "path": "/notifications/preferences",
+      "operationId": "updatePreferences",
+      "summary": "Change some of the switches",
+      "body": "UpdatePreferences"
+    },
+    {
+      "method": "POST",
+      "path": "/notifications/read-all",
+      "operationId": "markAllRead",
+      "summary": "Mark everything as read"
+    },
+    {
+      "method": "POST",
+      "path": "/notifications/{notificationId}/read",
+      "operationId": "markRead",
+      "summary": "Mark one as read"
+    },
+    {
+      "method": "GET",
+      "path": "/orders",
+      "operationId": "list_4",
+      "summary": "My orders",
+      "query": [
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/orders/{orderId}",
+      "operationId": "detail_1",
+      "summary": "One order"
+    },
+    {
+      "method": "POST",
+      "path": "/orders/{orderId}/cancel",
+      "operationId": "cancel",
+      "summary": "Cancel the whole order",
+      "body": "Cancel"
+    },
+    {
+      "method": "GET",
+      "path": "/orders/{orderId}/invoice",
+      "operationId": "invoice",
+      "summary": "A link to the invoice PDF"
+    },
+    {
+      "method": "POST",
+      "path": "/orders/{orderId}/lines/{lineId}/reviews",
+      "operationId": "review",
+      "summary": "Review something you received",
+      "body": "PostReview"
+    },
+    {
+      "method": "GET",
+      "path": "/orders/{orderId}/tracking",
+      "operationId": "tracking",
+      "summary": "Where everything is"
+    },
+    {
+      "method": "POST",
+      "path": "/orders/{orderId}/vendor-orders/{vendorOrderId}/cancel",
+      "operationId": "cancelVendorOrder",
+      "summary": "Cancel one seller's items",
+      "body": "Cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/orders/{orderId}/vendor-orders/{vendorOrderId}/confirm-receipt",
+      "operationId": "confirmReceipt",
+      "summary": "Confirm these items arrived",
+      "body": "ConfirmReceipt"
+    },
+    {
+      "method": "GET",
+      "path": "/parcels/{trackingCode}",
+      "operationId": "parcel",
+      "summary": "One parcel, as the person waiting for it sees it"
+    },
+    {
+      "method": "POST",
+      "path": "/parcels/{trackingCode}/authorise-safe-drop",
+      "operationId": "authoriseSafeDrop",
+      "summary": "Leave it with the neighbour",
+      "body": "AuthoriseSafeDrop"
+    },
+    {
+      "method": "POST",
+      "path": "/parcels/{trackingCode}/choose-pickup-point",
+      "operationId": "choosePickupPoint",
+      "summary": "Send it to a counter instead of the door",
+      "body": "ChoosePickupPoint"
+    },
+    {
+      "method": "POST",
+      "path": "/parcels/{trackingCode}/request-code",
+      "operationId": "requestCode",
+      "summary": "Ask for the six digits"
+    },
+    {
+      "method": "POST",
+      "path": "/parcels/{trackingCode}/reschedule",
+      "operationId": "reschedule",
+      "summary": "Come on a different day",
+      "body": "Reschedule"
+    },
+    {
+      "method": "GET",
+      "path": "/pickup-points",
+      "operationId": "search_2",
+      "summary": "Counters near a place",
+      "query": [
+        "lat",
+        "lng",
+        "radius",
+        "city"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/pickup-points/{id}",
+      "operationId": "point",
+      "summary": "One counter"
+    },
+    {
+      "method": "POST",
+      "path": "/pickup/applications",
+      "operationId": "apply",
+      "summary": "Apply to run a counter",
+      "body": "Apply"
+    },
+    {
+      "method": "GET",
+      "path": "/pickup/points",
+      "operationId": "myPoints",
+      "summary": "The counters I run"
+    },
+    {
+      "method": "PATCH",
+      "path": "/pickup/points/{id}",
+      "operationId": "updatePoint",
+      "summary": "Change hours, capacity or close for a while",
+      "body": "UpdatePoint"
+    },
+    {
+      "method": "GET",
+      "path": "/pickup/points/{id}/earnings",
+      "operationId": "earnings",
+      "summary": "What this counter has earned",
+      "query": [
+        "from",
+        "to"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/pickup/points/{id}/parcels",
+      "operationId": "parcels",
+      "summary": "What is coming, what is here, and what has to go back"
+    },
+    {
+      "method": "POST",
+      "path": "/pickup/points/{id}/parcels/{shipmentId}/accept",
+      "operationId": "accept_1",
+      "summary": "Take a parcel in from a driver",
+      "body": "AcceptParcel"
+    },
+    {
+      "method": "POST",
+      "path": "/pickup/points/{id}/parcels/{shipmentId}/reject",
+      "operationId": "reject_1",
+      "summary": "Turn a parcel away",
+      "body": "RejectParcel"
+    },
+    {
+      "method": "POST",
+      "path": "/pickup/points/{id}/parcels/{shipmentId}/release",
+      "operationId": "release",
+      "summary": "Hand a parcel to the person collecting",
+      "body": "ReleaseParcel"
+    },
+    {
+      "method": "POST",
+      "path": "/pickup/points/{id}/parcels/{shipmentId}/resend-code",
+      "operationId": "resendCode",
+      "summary": "Have the collection code sent again"
+    },
+    {
+      "method": "POST",
+      "path": "/pickup/points/{id}/parcels/{shipmentId}/return",
+      "operationId": "returnParcel",
+      "summary": "Send an uncollected parcel back",
+      "body": "ReturnParcel"
+    },
+    {
+      "method": "GET",
+      "path": "/products",
+      "operationId": "products_1",
+      "summary": "Browse products",
+      "query": [
+        "q",
+        "category",
+        "brand",
+        "store",
+        "condition",
+        "minPrice",
+        "maxPrice",
+        "minRating",
+        "inStockOnly",
+        "deliverableTo",
+        "deliveryLat",
+        "deliveryLng",
+        "deliveryCountry",
+        "currency",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/products/{productId}/questions",
+      "operationId": "questions",
+      "summary": "Questions and answers on a listing",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/products/{productId}/questions",
+      "operationId": "ask",
+      "summary": "Ask a question about a product",
+      "body": "AskQuestion"
+    },
+    {
+      "method": "GET",
+      "path": "/products/{productId}/related",
+      "operationId": "related",
+      "summary": "What else this shopper might consider",
+      "query": [
+        "deliverableTo",
+        "deliveryLat",
+        "deliveryLng",
+        "deliveryCountry",
+        "currency",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/products/{productId}/reviews",
+      "operationId": "reviews",
+      "summary": "A product's reviews",
+      "query": [
+        "page",
+        "size",
+        "sort"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/products/{productId}/variants",
+      "operationId": "variants",
+      "summary": "A product's variants, priced in the buyer's currency",
+      "query": [
+        "currency"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/products/{slug}",
+      "operationId": "product",
+      "summary": "One product",
+      "query": [
+        "deliverableTo",
+        "deliveryLat",
+        "deliveryLng",
+        "deliveryCountry",
+        "currency"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/returns",
+      "operationId": "listReturns",
+      "summary": "Your returns, from whichever side you are on",
+      "query": [
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/returns",
+      "operationId": "openReturn",
+      "summary": "Ask to send something back",
+      "body": "OpenReturn"
+    },
+    {
+      "method": "GET",
+      "path": "/returns/{returnId}",
+      "operationId": "returnDetail",
+      "summary": "One return"
+    },
+    {
+      "method": "POST",
+      "path": "/returns/{returnId}/accept-offer",
+      "operationId": "acceptOffer",
+      "summary": "Buyer: take the offer"
+    },
+    {
+      "method": "POST",
+      "path": "/returns/{returnId}/approve",
+      "operationId": "approveReturn",
+      "summary": "Seller: yes, send it back",
+      "body": "ApproveReturn"
+    },
+    {
+      "method": "POST",
+      "path": "/returns/{returnId}/escalate",
+      "operationId": "escalate",
+      "summary": "Buyer: ask us to decide",
+      "body": "EscalateReturn"
+    },
+    {
+      "method": "POST",
+      "path": "/returns/{returnId}/offer-partial-refund",
+      "operationId": "offerPartialRefund",
+      "summary": "Seller: keep it, and have some money back",
+      "body": "OfferPartialRefund"
+    },
+    {
+      "method": "POST",
+      "path": "/returns/{returnId}/received",
+      "operationId": "markReceived",
+      "summary": "Seller: the goods are back",
+      "body": "ReturnReceived"
+    },
+    {
+      "method": "POST",
+      "path": "/returns/{returnId}/reject",
+      "operationId": "rejectReturn",
+      "summary": "Seller: no, and why",
+      "body": "RejectReturn"
+    },
+    {
+      "method": "PATCH",
+      "path": "/reviews/{reviewId}",
+      "operationId": "editReview",
+      "summary": "Change your own review, inside the window",
+      "body": "EditReview"
+    },
+    {
+      "method": "DELETE",
+      "path": "/reviews/{reviewId}",
+      "operationId": "deleteReview",
+      "summary": "Take your own review down, inside the same window"
+    },
+    {
+      "method": "POST",
+      "path": "/reviews/{reviewId}/reply",
+      "operationId": "replyToReview",
+      "summary": "Seller: answer a review, once",
+      "body": "ReplyToReview"
+    },
+    {
+      "method": "POST",
+      "path": "/reviews/{reviewId}/report",
+      "operationId": "reportReview",
+      "summary": "Flag a review for somebody to read",
+      "body": "ReportReview"
+    },
+    {
+      "method": "GET",
+      "path": "/search",
+      "operationId": "search_1",
+      "summary": "Search the catalogue",
+      "query": [
+        "q!",
+        "category",
+        "brand",
+        "store",
+        "condition",
+        "minPrice",
+        "maxPrice",
+        "minRating",
+        "inStockOnly",
+        "deliverableTo",
+        "deliveryLat",
+        "deliveryLng",
+        "deliveryCountry",
+        "currency",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/search/suggest",
+      "operationId": "suggest",
+      "summary": "Typeahead",
+      "query": [
+        "q!",
+        "deliverableTo",
+        "deliveryCountry",
+        "limit"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/stores/{slug}",
+      "operationId": "store",
+      "summary": "A public storefront"
+    },
+    {
+      "method": "GET",
+      "path": "/stores/{slug}/products",
+      "operationId": "storeProducts",
+      "summary": "What one store sells, ranked against the delivery location",
+      "query": [
+        "q",
+        "category",
+        "condition",
+        "minPrice",
+        "maxPrice",
+        "inStockOnly",
+        "deliverableTo",
+        "deliveryLat",
+        "deliveryLng",
+        "deliveryCountry",
+        "currency",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/track/{trackingCode}",
+      "operationId": "track",
+      "summary": "Track a parcel by code"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/analytics/customers",
+      "operationId": "customers",
+      "summary": "New against returning, and where parcels go",
+      "query": [
+        "from",
+        "to"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/analytics/delivery",
+      "operationId": "delivery",
+      "summary": "How deliveries went",
+      "query": [
+        "from",
+        "to"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/analytics/overview",
+      "operationId": "overview",
+      "summary": "Headline figures",
+      "query": [
+        "from",
+        "to"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/analytics/products",
+      "operationId": "products",
+      "summary": "What sold, and what was only looked at",
+      "query": [
+        "from",
+        "to",
+        "limit"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/analytics/sales",
+      "operationId": "sales",
+      "summary": "Sales over time",
+      "query": [
+        "from",
+        "to",
+        "groupBy"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/balance",
+      "operationId": "balance",
+      "summary": "What I am owed"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/coupons",
+      "operationId": "coupons",
+      "summary": "My coupons",
+      "query": [
+        "activeOnly",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/coupons",
+      "operationId": "createCoupon",
+      "summary": "Issue a coupon",
+      "body": "CreateCoupon"
+    },
+    {
+      "method": "PATCH",
+      "path": "/vendor/coupons/{couponId}",
+      "operationId": "updateCoupon",
+      "summary": "Edit a coupon",
+      "body": "UpdateCoupon"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/coupons/{couponId}/redemptions",
+      "operationId": "redemptions",
+      "summary": "Who used it",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/imei-units",
+      "operationId": "handsets",
+      "summary": "My handsets",
+      "query": [
+        "variantId",
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/imei-units",
+      "operationId": "register",
+      "summary": "Register handsets to a variant",
+      "body": "RegisterImeiUnits"
+    },
+    {
+      "method": "PATCH",
+      "path": "/vendor/imei-units/{unitId}",
+      "operationId": "updateHandset",
+      "summary": "Re-grade a handset, or move it",
+      "body": "UpdateImeiUnit"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/imports/{reference}",
+      "operationId": "job",
+      "summary": "How an import went",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/inventory",
+      "operationId": "list_3",
+      "summary": "What I have",
+      "query": [
+        "lowStock",
+        "outOfStock",
+        "search",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/inventory/bulk",
+      "operationId": "bulkAdjust",
+      "summary": "Change several at once",
+      "body": "BulkAdjust"
+    },
+    {
+      "method": "PATCH",
+      "path": "/vendor/inventory/{variantId}",
+      "operationId": "adjust",
+      "summary": "Change one item's stock",
+      "body": "AdjustStock"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/inventory/{variantId}/movements",
+      "operationId": "movements",
+      "summary": "What happened to this item's stock",
+      "query": [
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/orders",
+      "operationId": "myOrders_1",
+      "query": [
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/orders/stats",
+      "operationId": "stats"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/orders/{vendorOrderId}",
+      "operationId": "myOrder"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/orders/{vendorOrderId}/accept",
+      "operationId": "accept",
+      "summary": "Accept an order"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/orders/{vendorOrderId}/handoff-code",
+      "operationId": "handoffCode",
+      "summary": "The collection code"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/orders/{vendorOrderId}/handoff-code/regenerate",
+      "operationId": "regenerate",
+      "summary": "Issue a new collection code"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/orders/{vendorOrderId}/label",
+      "operationId": "label",
+      "summary": "The parcel label"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/orders/{vendorOrderId}/lines/{lineId}/assign-imei",
+      "operationId": "assignImei",
+      "summary": "Scan a handset onto a line",
+      "body": "AssignImei"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/orders/{vendorOrderId}/ready",
+      "operationId": "ready",
+      "summary": "Packed and waiting for a driver"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/orders/{vendorOrderId}/reject",
+      "operationId": "reject",
+      "summary": "Turn an order down",
+      "body": "Reject"
+    },
+    {
+      "method": "PATCH",
+      "path": "/vendor/orders/{vendorOrderId}/status",
+      "operationId": "updateStatus",
+      "query": [
+        "status!"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/payouts",
+      "operationId": "payouts",
+      "summary": "Transfers, past and pending",
+      "query": [
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/payouts/request",
+      "operationId": "requestPayout",
+      "summary": "Ask to be paid",
+      "body": "RequestPayout"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/products",
+      "operationId": "list_1",
+      "summary": "My listings",
+      "query": [
+        "status",
+        "search",
+        "includeArchived",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/products",
+      "operationId": "create_2",
+      "summary": "Write a listing",
+      "body": "CreateProduct"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/products/bulk-import",
+      "operationId": "bulkImport",
+      "summary": "Import a spreadsheet",
+      "body": "BulkImport"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/products/export",
+      "operationId": "export",
+      "summary": "Export the catalogue",
+      "query": [
+        "includeArchived"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/products/import-template",
+      "operationId": "template",
+      "summary": "Which columns an import understands"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/products/{productId}",
+      "operationId": "get_2",
+      "summary": "One listing"
+    },
+    {
+      "method": "PATCH",
+      "path": "/vendor/products/{productId}",
+      "operationId": "update_7",
+      "summary": "Edit a listing",
+      "body": "UpdateProduct"
+    },
+    {
+      "method": "DELETE",
+      "path": "/vendor/products/{productId}",
+      "operationId": "remove",
+      "summary": "Archive a listing"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/products/{productId}/media",
+      "operationId": "confirmMedia",
+      "summary": "Confirm an uploaded image",
+      "body": "ConfirmMedia"
+    },
+    {
+      "method": "PATCH",
+      "path": "/vendor/products/{productId}/media/reorder",
+      "operationId": "reorderMedia",
+      "summary": "Reorder the gallery",
+      "body": "ReorderMedia"
+    },
+    {
+      "method": "DELETE",
+      "path": "/vendor/products/{productId}/media/{mediaId}",
+      "operationId": "removeMedia",
+      "summary": "Remove an image"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/products/{productId}/publish",
+      "operationId": "publish",
+      "summary": "Put it on sale"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/products/{productId}/submit-for-review",
+      "operationId": "submitForReview",
+      "summary": "Send it to be reviewed",
+      "body": "SubmitForReview"
+    },
+    {
+      "method": "PUT",
+      "path": "/vendor/products/{productId}/translations/{locale}",
+      "operationId": "putTranslation",
+      "summary": "Write the listing in another language",
+      "body": "PutTranslation"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/products/{productId}/unpublish",
+      "operationId": "unpublish",
+      "summary": "Take it off sale"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/products/{productId}/variants",
+      "operationId": "addVariant",
+      "summary": "Add a variant",
+      "body": "CreateVariant"
+    },
+    {
+      "method": "PATCH",
+      "path": "/vendor/products/{productId}/variants/{variantId}",
+      "operationId": "updateVariant",
+      "summary": "Edit a variant",
+      "body": "UpdateVariant"
+    },
+    {
+      "method": "DELETE",
+      "path": "/vendor/products/{productId}/variants/{variantId}",
+      "operationId": "removeVariant",
+      "summary": "Remove a variant"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/promotions",
+      "operationId": "list",
+      "summary": "My promotions",
+      "query": [
+        "status",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/promotions",
+      "operationId": "create_1",
+      "summary": "Draft a promotion",
+      "body": "CreatePromotion"
+    },
+    {
+      "method": "PATCH",
+      "path": "/vendor/promotions/{promotionId}",
+      "operationId": "update_6",
+      "summary": "Edit a promotion",
+      "body": "UpdatePromotion"
+    },
+    {
+      "method": "DELETE",
+      "path": "/vendor/promotions/{promotionId}",
+      "operationId": "delete_4",
+      "summary": "Remove a promotion"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/promotions/{promotionId}/activate",
+      "operationId": "activate",
+      "summary": "Turn it on"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/statements/{period}",
+      "operationId": "statement",
+      "summary": "A month's statement",
+      "query": [
+        "currency",
+        "format"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/stores",
+      "operationId": "create",
+      "summary": "Open a store",
+      "body": "CreateStore"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/stores/{storeId}",
+      "operationId": "get_1",
+      "summary": "My store"
+    },
+    {
+      "method": "PATCH",
+      "path": "/vendor/stores/{storeId}",
+      "operationId": "update_5",
+      "summary": "Edit the store",
+      "body": "UpdateStore"
+    },
+    {
+      "method": "PUT",
+      "path": "/vendor/stores/{storeId}/bank-account",
+      "operationId": "putBankAccount",
+      "summary": "Where this store's money goes",
+      "body": "PutBankAccount"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/stores/{storeId}/kyc",
+      "operationId": "kyc_1",
+      "summary": "Where verification has got to"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/stores/{storeId}/kyc",
+      "operationId": "submitKyc",
+      "summary": "Send identity and business documents",
+      "body": "SubmitKyc"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/stores/{storeId}/staff",
+      "operationId": "staff",
+      "summary": "Who works here"
+    },
+    {
+      "method": "POST",
+      "path": "/vendor/stores/{storeId}/staff",
+      "operationId": "invite",
+      "summary": "Invite somebody",
+      "body": "InviteStaff"
+    },
+    {
+      "method": "PATCH",
+      "path": "/vendor/stores/{storeId}/staff/{staffUserId}",
+      "operationId": "updateStaff",
+      "summary": "Change what somebody may do",
+      "body": "UpdateStaff"
+    },
+    {
+      "method": "DELETE",
+      "path": "/vendor/stores/{storeId}/staff/{staffUserId}",
+      "operationId": "removeStaff",
+      "summary": "Remove somebody"
+    },
+    {
+      "method": "GET",
+      "path": "/vendor/transactions",
+      "operationId": "transactions",
+      "summary": "The ledger",
+      "query": [
+        "currency",
+        "type",
+        "from",
+        "to",
+        "page",
+        "size"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks/kyc/{provider}",
+      "operationId": "kyc",
+      "summary": "An outsourced identity check coming back",
+      "body": "(not json)"
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks/messaging/{provider}",
+      "operationId": "messaging",
+      "summary": "Delivery receipts for messages this platform sent",
+      "body": "(not json)"
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks/psp/{provider}",
+      "operationId": "psp",
+      "summary": "A payment provider reporting what happened to a payment",
+      "body": "(not json)"
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks/sms/{provider}",
+      "operationId": "sms",
+      "summary": "SMS delivery receipts, for a deployment that sends SMS",
+      "body": "(not json)"
+    }
+  ]
+}

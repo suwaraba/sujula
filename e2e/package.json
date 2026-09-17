@@ -1,0 +1,14 @@
+{
+  "name": "sujula-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Endpoint collection for Sujula: every surface, every role, run against a live server.",
+  "scripts": {
+    "build": "node build.js",
+    "capture": "node capture-openapi.js",
+    "test": "node build.js && newman run sujula.postman_collection.json -e sujula.postman_environment.json --insecure"
+  },
+  "devDependencies": {
+    "newman": "^6.2.2"
+  }
+}

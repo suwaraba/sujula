@@ -121,11 +121,19 @@
             and a context-load test that never runs is the one check that would
             have caught a broken entity mapping or an invalid repository query
             before the application tried to start.
+
+            `provided` rather than `test`, for one reason: the e2e profile boots
+            the real server on this driver, and `spring-boot:run` puts provided
+            dependencies on the classpath while `test` ones are left off. The
+            packaged WAR is unaffected — the war plugin excludes provided scope
+            exactly as it does for the Tomcat starter above — so this is not H2
+            shipping to production, it is H2 being reachable from `mvn
+            spring-boot:run -Dspring-boot.run.profiles=e2e`.
         -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>test</scope>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
