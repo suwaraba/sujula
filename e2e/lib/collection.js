@@ -10,8 +10,23 @@
 
 const { personas } = require('./personas');
 
-/** Written into every generated script, so assertions share one implementation. */
-const HELPERS_PRELUDE = "const H = eval(pm.collectionVariables.get('helpers'));\n";
+/**
+ * Written into every generated script, so assertions share one implementation.
+ *
+ * Two names, and both are in scope for a hand-written `script` as well:
+ *
+ *   H       the assertion helpers — H.get, H.matches, H.text
+ *   $body   the response parsed as JSON, or null when it is not JSON
+ *
+ * The dollar sign is not decoration. A generated script and a hand-written one
+ * are concatenated into a single program, so a `const body` in each is a
+ * SyntaxError that kills the whole script — including the captures at the
+ * bottom, which is how one duplicate declaration silently unset a variable
+ * five later requests depended on. A prefixed name cannot collide with
+ * anything a suite would naturally call its own.
+ */
+const HELPERS_PRELUDE = "const H = eval(pm.collectionVariables.get('helpers'));\n"
+  + 'const $body = H.json(pm.response);\n';
 
 /**
  * Paths the application exempts from CSRF, as SecurityConfig lists them.
@@ -97,13 +112,21 @@ function script(item, expect) {
   }
 
   if (expect.json) {
-    lines.push('const body = H.json(pm.response);');
     Object.entries(expect.json).forEach(([path, value]) => {
+      // A value written as {{something}} is a variable captured by an earlier
+      // request. Postman substitutes those in URLs and bodies but NOT inside a
+      // test script, so it has to be resolved here — otherwise the assertion
+      // compares the response against the literal seven characters "{{id}}"
+      // and fails on a correct answer.
+      const expected = typeof value === 'string' && value.includes('{{')
+        ? `pm.variables.replaceIn(${JSON.stringify(value)})`
+        : JSON.stringify(value);
       lines.push(
         `pm.test(${title(path + ' ' + descriptionOf(value))}, function () {`,
-        `  const actual = H.get(body, ${JSON.stringify(path)});`,
-        `  pm.expect(H.matches(actual, ${JSON.stringify(value)}),`,
-        `    ${JSON.stringify(path)} + ' was ' + H.show(actual) + ', expected ' + H.describe(${JSON.stringify(value)})).to.be.true;`,
+        `  const actual = H.get($body, ${JSON.stringify(path)});`,
+        `  const expected = ${expected};`,
+        `  pm.expect(H.matches(actual, expected),`,
+        `    ${JSON.stringify(path)} + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;`,
         '});');
     });
   }
@@ -114,7 +137,7 @@ function script(item, expect) {
     expect.absent.forEach((path) => {
       lines.push(
         `pm.test(${title(path + ' is withheld')}, function () {`,
-        `  const actual = H.get(H.json(pm.response), ${JSON.stringify(path)});`,
+        `  const actual = H.get($body, ${JSON.stringify(path)});`,
         `  pm.expect(actual === undefined || actual === null, ${JSON.stringify(path)} + ' was ' + H.show(actual)).to.be.true;`,
         '});');
     });
@@ -143,11 +166,10 @@ function script(item, expect) {
     // Captures run outside pm.test: a later request needing this value should
     // fail on the value being missing, not be skipped because an assertion
     // above it went red first.
-    lines.push('const captured = H.json(pm.response);');
     Object.entries(expect.capture).forEach(([variable, path]) => {
       lines.push(
         `pm.collectionVariables.set(${JSON.stringify(variable)},`,
-        `  H.get(captured, ${JSON.stringify(path)}));`);
+        `  H.get($body, ${JSON.stringify(path)}));`);
     });
   }
 

@@ -94,8 +94,7 @@ pm.collectionVariables.set('csrfToken', cookie);
       status: 200,
       json: { base: 'GM', 'countries.0.code': 'GM' },
       script: `
-const H2 = eval(pm.collectionVariables.get('helpers'));
-const list = H2.json(pm.response).countries;
+const list = $body.countries;
 const gb = list.find(function (c) { return c.code === 'GB'; });
 const gm = list.find(function (c) { return c.code === 'GM'; });
 pm.test("Countries — Great Britain buys but does not ship", function () {
@@ -116,8 +115,7 @@ pm.test("Countries — The Gambia does both", function () {
       status: 200,
       json: { defaultLocale: 'en-GM' },
       script: `
-const H2 = eval(pm.collectionVariables.get('helpers'));
-const locales = H2.json(pm.response).locales;
+const locales = $body.locales;
 pm.test("Locales — Arabic is marked right to left", function () {
   const ar = locales.find(function (l) { return l.tag === 'ar'; });
   pm.expect(ar, 'Arabic missing from the locale list').to.be.an('object');

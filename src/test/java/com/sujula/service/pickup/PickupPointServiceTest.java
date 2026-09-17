@@ -266,6 +266,41 @@ class PickupPointServiceTest {
     }
 
     @Test
+    void aClosedCounterIsHiddenFromEveryListAShopperPicksFrom() {
+        // Three queries answer "where could I collect this": the radius search,
+        // the search by town, and the one behind POST /delivery/serviceability.
+        // Only the first excluded a counter closed for the week, so the public
+        // search hid this point while serviceability went on offering it — two
+        // code paths answering one question two different ways, and the one that
+        // was wrong is the one a buyer actually chooses a counter from.
+        point.setClosedUntil(LocalDateTime.now().plusDays(3));
+        point.setClosureReason("Away for a funeral");
+        points.save(point);
+        entityManager.flush();
+
+        assertTrue(pickup.search(new PickupRequests.NearbySearch(LAT, LNG, 5.0, null))
+                .points().isEmpty(), "the radius search offered a shuttered counter");
+        assertTrue(pickup.search(new PickupRequests.NearbySearch(null, null, null, "Serekunda"))
+                .points().isEmpty(), "the search by town offered a shuttered counter");
+        assertTrue(points.findCollectableIn("GM").isEmpty(),
+                "serviceability would offer a shuttered counter as a collection option");
+    }
+
+    @Test
+    void aCounterWhoseClosureHasLapsedIsOfferedAgain() {
+        // The condition is a date rather than a flag, so nobody has to remember
+        // to switch the counter back on when they reopen.
+        point.setClosedUntil(LocalDateTime.now().minusDays(1));
+        point.setClosureReason("Was away for a funeral");
+        points.save(point);
+        entityManager.flush();
+
+        assertEquals(1, pickup.search(new PickupRequests.NearbySearch(LAT, LNG, 5.0, null))
+                .points().size());
+        assertEquals(1, points.findCollectableIn("GM").size());
+    }
+
+    @Test
     void aSuspendedCounterIsNotFoundAtAllRatherThanShownAsUnavailable() {
         point.setStatus(PartnerStatus.SUSPENDED);
         points.save(point);

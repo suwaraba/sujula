@@ -76,10 +76,19 @@ public interface PickupPointRepository extends JpaRepository<PickupPoint, Long> 
      * exists on this table, and for a country with tens of hubs the ranking is
      * cheaper in memory than a bounding-box scan would be. That stops being true
      * at a few thousand, which is the point to add one.
+     *
+     * <p>A counter closed for the week is excluded, for the same reason
+     * {@link #findNear} excludes it: this list is what a shopper picks a
+     * collection point FROM, and offering one that is shut is worse than
+     * offering nothing. That condition was missing here while
+     * {@code findNear} had it, so the public search hid Latrikunda while
+     * POST /delivery/serviceability went on offering it — two code paths
+     * answering the same question two ways.
      */
     @Query("SELECT p FROM PickupPoint p WHERE p.active = true AND p.countryCode = :countryCode "
          + "AND p.status IN (com.sujula.model.constant.PartnerStatus.APPROVED, "
          + "                 com.sujula.model.constant.PartnerStatus.ACTIVE) "
+         + "AND (p.closedUntil IS NULL OR p.closedUntil < CURRENT_TIMESTAMP) "
          + "AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL")
     List<PickupPoint> findCollectableIn(@Param("countryCode") String countryCode);
 
@@ -158,9 +167,16 @@ public interface PickupPointRepository extends JpaRepository<PickupPoint, Long> 
          + "AND p.status = com.sujula.model.constant.PartnerStatus.APPROVED")
     Optional<PickupPoint> findPublicById(@Param("id") Long id);
 
-    /** Points in a town, for a shopper who gave a place rather than a position. */
+    /**
+     * Points in a town, for a shopper who gave a place rather than a position.
+     *
+     * <p>Same closure condition as the two searches above. A shopper who typed
+     * "Latrikunda" instead of dropping a pin is the same shopper and must not
+     * get a different answer.
+     */
     @Query("SELECT p FROM PickupPoint p WHERE p.active = TRUE "
          + "AND p.status = com.sujula.model.constant.PartnerStatus.APPROVED "
+         + "AND (p.closedUntil IS NULL OR p.closedUntil < CURRENT_TIMESTAMP) "
          + "AND LOWER(p.city) = LOWER(:city) ORDER BY p.name ASC")
     List<PickupPoint> findPublicInCity(@Param("city") String city);
 

@@ -219,21 +219,19 @@ pm.collectionVariables.set('aminataStaleTotp', truncated.toString().padStart(6, 
           + 'the alternative, which is a collection that can only ever be run once.',
       status: [200, 401],
       script: `
-const H2 = eval(pm.collectionVariables.get('helpers'));
-const body = H2.json(pm.response);
 if (pm.response.code === 200) {
   pm.test("Seeded refresh — a fresh seed: the token is accepted and rotated", function () {
-    pm.expect(H2.get(body, 'user.id'), 'wrong account').to.eql(${seed.users.oliver.id});
-    pm.expect(H2.get(body, 'accessToken'), 'no access token').to.be.a('string');
-    pm.expect(H2.get(body, 'refreshToken'), 'no rotated refresh token').to.be.a('string');
-    pm.expect(H2.get(body, 'refreshToken'), 'the token came back unrotated')
+    pm.expect(H.get($body, 'user.id'), 'wrong account').to.eql(${seed.users.oliver.id});
+    pm.expect(H.get($body, 'accessToken'), 'no access token').to.be.a('string');
+    pm.expect(H.get($body, 'refreshToken'), 'no rotated refresh token').to.be.a('string');
+    pm.expect(H.get($body, 'refreshToken'), 'the token came back unrotated')
       .to.not.eql(${JSON.stringify(seed.refreshTokens.oliverLondon)});
   });
-  pm.collectionVariables.set('oliverRotatedRefresh', H2.get(body, 'refreshToken'));
+  pm.collectionVariables.set('oliverRotatedRefresh', H.get($body, 'refreshToken'));
 } else {
   pm.test("Seeded refresh — already spent on this server, so replaying it is refused", function () {
     pm.expect(pm.response.code, 'a spent refresh token must never be accepted twice').to.eql(401);
-    pm.expect(H2.get(body, 'accessToken'), 'a refused refresh handed out a token').to.be.undefined;
+    pm.expect(H.get($body, 'accessToken'), 'a refused refresh handed out a token').to.be.undefined;
   });
 }
 `,
@@ -259,9 +257,7 @@ if (pm.response.code === 200) {
           + 'bare "revoked": somebody is going to ask why they were signed out.',
       status: 200,
       script: `
-const H2 = eval(pm.collectionVariables.get('helpers'));
-const body = H2.json(pm.response);
-const sessions = Array.isArray(body) ? body : (body.sessions || body.content || []);
+const sessions = Array.isArray($body) ? $body : ($body.sessions || $body.content || []);
 pm.test("Sessions — 1805 is revoked and says TOKEN_REPLAY", function () {
   const replayed = sessions.find(function (s) { return s.id === ${seed.sessions.replayed}; });
   pm.expect(replayed, 'session ${seed.sessions.replayed} is not in Aminata\\'s list').to.be.an('object');
@@ -480,10 +476,9 @@ pm.collectionVariables.set('freshEmail', 'collection.' + Date.now() + '@example.
           + 'it had been used would not be a verification of anything.',
       status: [200, 204, 400],
       script: `
-const H2 = eval(pm.collectionVariables.get('helpers'));
 if (pm.response.code === 400) {
   pm.test("Modou's challenge — already spent, and a spent code is not a code", function () {
-    pm.expect(H2.text(pm.response)).to.include('No verification is outstanding');
+    pm.expect(H.text(pm.response)).to.include('No verification is outstanding');
   });
 } else {
   pm.test("Modou's challenge — the seeded code verifies his number", function () {
