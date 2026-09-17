@@ -83,6 +83,7 @@ module.exports = {
   deliveryContexts: {
     aminataHome: 'seed-ctx-aminata-home',
     guestBrikama: 'seed-ctx-guest-brikama',
+    guestSerrekunda: 'seed-ctx-guest-serrekunda',
     guestPickup: 'seed-ctx-guest-pickup',
     oliverLondon: 'seed-ctx-oliver-london',
     expired: 'seed-ctx-expired',
@@ -136,9 +137,18 @@ module.exports = {
   },
 
   promotions: { active: 1470, activatable: 1471, conflicting: 1472, freeShipping: 1473 },
-  coupons: { platformFunded: 1080, vendorFunded: 1081 },
+  coupons: {
+    platformFunded: { id: 1080, code: 'TERANGA10', type: 'PERCENTAGE' },
+    vendorFunded: { id: 1081, code: 'KOMBO500', type: 'FIXED_AMOUNT', vendor: 1101 },
+    freeShipping: { id: 1082, code: 'FREESHIP', type: 'FREE_SHIPPING' },
+    /** Lapsed, kept so the refusal can be exercised. */
+    expired: { id: 1083, code: 'EXPIRED20', type: 'PERCENTAGE' },
+  },
 
-  carts: { guestGbp: 'seed-cart-guest-gbp' },
+  carts: {
+    guestGbp: 'seed-cart-guest-gbp',
+    aminata: 'seed-cart-aminata',
+  },
   cartQuotes: {
     live: 'seed-quote-live',
     consumed: 'seed-quote-consumed',

@@ -2,8 +2,11 @@ package com.sujula.dto.response.order;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.sujula.model.constant.CartIssueType;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -20,10 +23,49 @@ import java.util.List;
  */
 @Data
 @Builder
+// Both constructors, because this class is not only serialised.
+//
+// @Builder suppresses the default constructor, so Jackson could write a
+// CartResponse and not read one back. That matters in exactly one place and it
+// is a place that matters: the idempotency records store a serialised response
+// and replay it on a retry, and POST /carts/{token}/items is idempotent by
+// design — its own description says "send an Idempotency-Key so a retried tap
+// does not add the item twice". The retry the key exists for answered 500.
+//
+// Every other idempotent response on this platform is a record, which Jackson
+// constructs from its components. This was the only class among them, so it was
+// the only one that broke.
+@NoArgsConstructor
+// Private, and that is load-bearing. @Builder needs an all-args constructor and
+// @NoArgsConstructor suppresses the implicit one, so both have to be declared —
+// but a PUBLIC all-args constructor is picked up by Jackson's parameter-names
+// module as a properties-based creator, and it then maps every absent field to
+// null and fails on the first primitive. Private leaves the builder working and
+// leaves Jackson with the default constructor and the setters, which is the
+// binding that actually reads a stored response back.
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class CartResponse {
 
     private Long cartId;
+
+    /**
+     * How every later request addresses this cart.
+     *
+     * <p>256 bits of secure random, and the whole credential: a cart holds a
+     * destination, a list of what somebody is buying and for whom, and what they
+     * are about to spend. It is returned because it has to be — without it a
+     * guest who opens a basket cannot add a line to it, price it or pay for it,
+     * and this surface is addressed by a token rather than reached through a
+     * cookie precisely so that a native client with no cookie jar can use it.
+     *
+     * <p>It was missing, and POST /carts was unusable for a new guest as a
+     * result: the endpoint's own description said "returns the cart with its
+     * token" and the response carried a numeric id that GET /carts/&#123;token&#125;
+     * does not resolve. Nothing noticed because every test and every seeded
+     * cart used a token written by hand.
+     */
+    private String token;
 
     /** Populated for guest carts only. */
     private String sessionId;
@@ -89,6 +131,8 @@ public class CartResponse {
     /** One vendor's slice of the cart. */
     @Data
     @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor(access = AccessLevel.PRIVATE)
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class VendorGroup {
 
@@ -153,6 +197,8 @@ public class CartResponse {
     /** A single cart line. */
     @Data
     @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor(access = AccessLevel.PRIVATE)
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class CartItemResponse {
 
@@ -216,6 +262,8 @@ public class CartResponse {
     /** A machine-readable explanation of something the cart changed or blocked. */
     @Data
     @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor(access = AccessLevel.PRIVATE)
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static class CartIssue {
 

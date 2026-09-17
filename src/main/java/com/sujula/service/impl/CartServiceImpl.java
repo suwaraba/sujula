@@ -847,6 +847,10 @@ public class CartServiceImpl implements CartService {
 
         return CartResponse.builder()
                 .cartId(cart.getId())
+                // The credential, and the only way the caller can come back to
+                // this cart. Safe to echo: they had to present it to get here,
+                // or they have just been issued it.
+                .token(cart.getToken())
                 .sessionId(cart.isGuestCart() ? cart.getSessionId() : null)
                 .guest(cart.isGuestCart() ? Boolean.TRUE : null)
                 .displayCurrency(currency)

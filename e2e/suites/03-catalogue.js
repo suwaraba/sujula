@@ -517,8 +517,23 @@ pm.test("Questions — only a first name is published, never an address", functi
       path: `/products/${seed.products.phone}/questions`,
       as: 'ndeye',
       body: { question: 'Est-ce que la garantie couvre un écran cassé à Dakar ?' },
-      status: [200, 201, 202],
-      json: { status: { $matches: 'PENDING' } },
+      note: 'One question per person per listing, so this is one-shot against a server '
+          + 'that has already had a run: the second attempt is refused, and that '
+          + 'refusal is worth asserting on its own — without it the same person could '
+          + 'fill a seller\'s page with the same question while a moderator is '
+          + 'looking at the first copy.',
+      status: [200, 201, 202, 400],
+      script: `
+if (pm.response.code === 400) {
+  pm.test("Asking again — refused, and the reason says the first is still in the queue", function () {
+    pm.expect(H.text(pm.response)).to.match(/already asked/i);
+  });
+} else {
+  pm.test("Asking — it goes to the queue rather than onto the page", function () {
+    pm.expect(JSON.stringify($body)).to.match(/PENDING/);
+  });
+}
+`,
     }),
 
     req({

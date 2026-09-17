@@ -650,11 +650,27 @@ public class OrderServiceImpl implements OrderService {
         CheckoutResult result = new CheckoutResult();
         result.subtotal = quote.getSubtotal();
         result.discount = quote.getDiscount();
-        result.total = quote.getTotal();
+        // Goods only, deliberately NOT quote.getTotal(). The cart's total
+        // already has shipping in it, and applyDeliveryPricing — which every
+        // caller of this method runs next — re-prices the legs against the
+        // chosen address and adds them. Taking the cart's total here charged
+        // shipping twice: a basket quoted at 82.62 became an order of 119.18,
+        // and reconcile() then refused the checkout over the 36.56 difference.
+        //
+        // Which is the one mercy in it. The guard meant nobody was ever
+        // overcharged; what it meant instead was that no basket carrying
+        // shipping could be paid for at all, and the message a buyer got said
+        // the price had changed when nothing had.
+        result.total = nonNull(quote.getSubtotal()).subtract(nonNull(quote.getDiscount()));
         result.currency = quote.getDisplayCurrency();
         result.platformCoupon = platformCoupon;
         result.vendorOrders = vendorOrders;
         return result;
+    }
+
+    /** Zero for an absent amount, so a total is never poisoned by one missing field. */
+    private static BigDecimal nonNull(BigDecimal amount) {
+        return amount == null ? BigDecimal.ZERO : amount;
     }
 
     private OrderItem lockAndBuildItem(CartResponse.CartItemResponse itemResp) {
@@ -1200,9 +1216,11 @@ public class OrderServiceImpl implements OrderService {
         Order savedOrder = orderRepository.save(order);
 
         List<OrderItem> allItems = new ArrayList<>();
+        List<VendorOrder> savedSlices = new ArrayList<>();
         for (VendorOrder vo : result.vendorOrders) {
             vo.setOrder(savedOrder);
             VendorOrder savedVo = vendorOrderRepository.save(vo);
+            savedSlices.add(savedVo);
             for (OrderItem item : savedVo.getItems()) {
                 item.setOrder(savedOrder);
                 item.setVendorOrder(savedVo);
@@ -1210,6 +1228,16 @@ public class OrderServiceImpl implements OrderService {
             }
         }
         savedOrder.setItems(allItems);
+        // Both sides, not just the items. The slices were saved and the order
+        // still came back with an empty vendorOrders collection, so anything
+        // reading the order it was handed saw none of them — POST /checkout
+        // answered with "vendorOrders": [] on an order that had two, which is
+        // exactly the shape a client must not be told this platform has. C3
+        // says a payment splits into sub-orders that ship, cancel, refund and
+        // pay out independently; a client rendering one order with one status
+        // will eventually be wrong about half of it, and this response was
+        // inviting it to.
+        savedOrder.setVendorOrders(savedSlices);
         Order finalOrder = orderRepository.save(savedOrder);
 
         statusHistoryRepository.save(OrderStatusHistory.builder()

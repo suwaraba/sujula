@@ -35,7 +35,7 @@ const BY_NAME = {
   unitId: seed.imei.writtenOff,
   categoryId: 'phones',
   promotionId: seed.promotions.active,
-  couponId: seed.coupons.vendorFunded,
+  couponId: seed.coupons.vendorFunded.id,
   reference: seed.imports.withRowErrors,
   locale: 'fr-SN',
   mediaId: 1,

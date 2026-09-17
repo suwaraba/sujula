@@ -80,6 +80,17 @@ module.exports = `(function () {
         default: throw new Error('unknown matcher ' + key);
       }
     }
+    // A captured variable arrives as a string, because that is all a Postman
+    // variable can hold — so an assertion written as {{orderId}} is compared
+    // against a JSON number and fails on a correct answer. Coerced only when
+    // exactly one side is a number and the other is a string that reads as the
+    // same number, which cannot turn a genuine mismatch into a pass.
+    if (typeof actual === 'number' && typeof expected === 'string') {
+      return String(actual) === expected.trim();
+    }
+    if (typeof actual === 'string' && typeof expected === 'number') {
+      return actual.trim() === String(expected);
+    }
     return JSON.stringify(actual) === JSON.stringify(expected);
   }
 
