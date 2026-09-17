@@ -25,7 +25,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Component
-public class CatalogueJobWorker {
+public class CatalogueJobWorker implements com.sujula.service.platform.ManagedJob {
 
     /** One pass, so a seller with a backlog cannot monopolise the thread. */
     private static final int BATCH = 3;
@@ -36,20 +36,45 @@ public class CatalogueJobWorker {
     @Value("${sujula.catalogue.jobs.enabled:true}")
     private boolean enabled;
 
-    public CatalogueJobWorker(CatalogueJobRepository jobs, CatalogueJobProcessor processor) {
+    /** Records each pass; see {@code JobRegistry} for why this is not a cycle. */
+    private final com.sujula.service.platform.JobRegistry registry;
+
+    public CatalogueJobWorker(CatalogueJobRepository jobs, CatalogueJobProcessor processor,
+                                                            com.sujula.service.platform.JobRegistry registry) {
         this.jobs = jobs;
         this.processor = processor;
+        this.registry = registry;
     }
+
+    @Override public String jobName() { return "catalogue-jobs"; }
+
+    @Override
+    public String description() {
+        return "Runs sellers' bulk imports and exports. A seller is watching a progress bar on "
+                + "the other end of each of these.";
+    }
+
+    @Override public long intervalMs() { return java.time.Duration.ofSeconds(30).toMillis(); }
+
+    @Override public boolean isEnabled() { return enabled; }
 
     @Scheduled(fixedDelayString = "${sujula.catalogue.jobs.interval-ms:30000}")
     public void process() {
         if (!enabled) {
             return;
         }
+        // Through the registry, so each pass leaves a row an operator can query.
+        registry.run(this, null);
+    }
+
+    @Override
+    public int runOnce() {
+        int handled = 0;
         List<CatalogueJob> queued = jobs.findQueued(CatalogueJobStatus.QUEUED, BATCH);
         for (CatalogueJob job : queued) {
             try {
                 processor.runOne(job.getId());
+                handled++;
             } catch (Exception failed) {
                 // One bad job must not stop the queue, and the reason has to
                 // survive for the seller who is polling it.
@@ -62,5 +87,6 @@ public class CatalogueJobWorker {
                 }
             }
         }
+        return handled;
     }
 }

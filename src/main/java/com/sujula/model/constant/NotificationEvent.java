@@ -122,6 +122,17 @@ public enum NotificationEvent {
     /** Offers and campaigns. The one most people switch off, and rightly. */
     PROMOTION,
 
+    /**
+     * The platform telling everybody something: holiday hours, an outage, a
+     * change to how returns work.
+     *
+     * <p>Kept apart from {@link #PROMOTION}, and the distinction is the whole
+     * reason it exists. A seller who switched marketing off has not asked to be
+     * the last to know the platform is closed on Koriteh, and sending an
+     * announcement as a promotion is how that happens.
+     */
+    PLATFORM_NOTICE,
+
     /** Anything that does not fit above. */
     GENERAL;
 
@@ -180,7 +191,7 @@ public enum NotificationEvent {
             case ORDER_PLACED, ORDER_CANCELLED, PARCEL_ATTEMPT_FAILED, PARCEL_AT_PICKUP_POINT,
                  PARCEL_DELIVERED, RETURN_UPDATE, MESSAGE_RECEIVED, SALE_MADE, ORDER_TO_FULFIL,
                  PAYOUT_SENT, DELIVERY_OFFERED, PICKUP_PARCEL_ARRIVED, PICKUP_PARCEL_OVERDUE,
-                 ACCOUNT_UPDATE -> true;
+                 ACCOUNT_UPDATE, PLATFORM_NOTICE -> true;
             default -> false;
         };
     }
@@ -195,6 +206,7 @@ public enum NotificationEvent {
             case SALE_MADE, ORDER_TO_FULFIL, PAYOUT_SENT, PAYOUT_FAILED, LOW_STOCK -> "Selling";
             case DELIVERY_OFFERED, PICKUP_PARCEL_ARRIVED, PICKUP_PARCEL_OVERDUE -> "Delivering";
             case SECURITY_ALERT, ACCOUNT_UPDATE -> "Account";
+            case PLATFORM_NOTICE -> "From Sujula";
             case PROMOTION, GENERAL -> "Everything else";
         };
     }

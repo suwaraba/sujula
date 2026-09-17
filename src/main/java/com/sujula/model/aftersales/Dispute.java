@@ -173,6 +173,40 @@ public class Dispute {
 
     private LocalDateTime withdrawnAt;
 
+    // ── The queue ────────────────────────────────────────────────────────────
+
+    /**
+     * The agent this is somebody's job.
+     *
+     * <p>Null means nobody has picked it up, which is not the same as nobody
+     * having looked — a queue where "unassigned" and "untouched" are the same
+     * field is one where two agents work the same dispute and neither knows.
+     */
+    private Long assignedToUserId;
+
+    private LocalDateTime assignedAt;
+
+    /**
+     * When this should have been answered by, frozen when it was raised.
+     *
+     * <p>Frozen rather than computed from today's policy, for the same reason a
+     * moderation case's is: a queue sorted by a deadline that moves with policy
+     * is one where the oldest dispute is never the most urgent. Both parties
+     * have money tied up behind this — the buyer's payment and the seller's
+     * balance — and the deadline is the promise about how long that lasts.
+     */
+    private LocalDateTime dueBy;
+
+    /**
+     * Set when somebody asked for a person to telephone them.
+     *
+     * <p>Some disputes cannot be settled in writing. A recipient in Serrekunda
+     * whose parcel arrived open, describing it in a second language through a
+     * form, is a case that a two-minute call resolves and a week of messages
+     * does not.
+     */
+    private LocalDateTime callbackRequestedAt;
+
     /** The refund this ended in, when the buyer was owed something. */
     @Column(length = 40)
     private String refundReference;

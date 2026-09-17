@@ -318,6 +318,7 @@ public class NotificationInboxServiceImpl implements NotificationInboxService {
             case PICKUP_PARCEL_OVERDUE -> "A parcel is overdue on your shelf";
             case SECURITY_ALERT -> "Security warnings";
             case ACCOUNT_UPDATE -> "Your account";
+            case PLATFORM_NOTICE -> "Notices from Sujula";
             case PROMOTION -> "Offers";
             case GENERAL -> "Everything else";
         };
@@ -331,6 +332,9 @@ public class NotificationInboxServiceImpl implements NotificationInboxService {
             case PAYOUT_FAILED -> "A transfer your bank or mobile money provider sent back.";
             case SECURITY_ALERT -> "A sign-in from somewhere new, or a password change.";
             case REFUND_ISSUED -> "Money on its way back to you.";
+            case PLATFORM_NOTICE -> "Holiday hours, outages, changes to how the platform "
+                    + "works. Kept apart from offers on purpose: switching marketing off should "
+                    + "not make you the last to know we are closed.";
             case PROMOTION -> "Offers and campaigns. Off unless you switch it on.";
             case MESSAGE_RECEIVED -> "When a buyer or a seller writes to you about an order.";
             case PARCEL_ATTEMPT_FAILED -> "When nobody was there and the driver will try again.";

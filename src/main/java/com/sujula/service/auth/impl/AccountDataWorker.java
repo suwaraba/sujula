@@ -23,7 +23,7 @@ import java.util.List;
  */
 @Slf4j
 @Component
-public class AccountDataWorker {
+public class AccountDataWorker implements com.sujula.service.platform.ManagedJob {
 
     /** How many requests one pass handles, so a backlog cannot monopolise a thread. */
     private static final int BATCH = 5;
@@ -34,20 +34,47 @@ public class AccountDataWorker {
     @Value("${sujula.auth.data-requests.enabled:true}")
     private boolean enabled;
 
-    public AccountDataWorker(AccountDataRequestRepository requests, AccountDataProcessor processor) {
+    /** Records each pass; see {@code JobRegistry} for why this is not a cycle. */
+    private final com.sujula.service.platform.JobRegistry registry;
+
+    public AccountDataWorker(AccountDataRequestRepository requests, AccountDataProcessor processor,
+                                                          com.sujula.service.platform.JobRegistry registry) {
         this.requests = requests;
         this.processor = processor;
+        this.registry = registry;
     }
+
+    @Override public String jobName() { return "account-data-requests"; }
+
+    @Override
+    public String description() {
+        return "Builds exports and carries out erasures for data-protection requests. A person "
+                + "asked for their own data or asked to be forgotten, and there is a legal clock "
+                + "on both.";
+    }
+
+    @Override public long intervalMs() { return java.time.Duration.ofMinutes(1).toMillis(); }
+
+    @Override public boolean isEnabled() { return enabled; }
 
     @Scheduled(fixedDelayString = "${sujula.auth.data-requests.interval-ms:60000}")
     public void process() {
         if (!enabled) {
             return;
         }
+        // Through the registry, so the pass leaves a row. A job that only logs
+        // its own failures is one nobody notices has stopped.
+        registry.run(this, null);
+    }
+
+    @Override
+    public int runOnce() {
+        int handled = 0;
         List<AccountDataRequest> queued = requests.findQueued(DataRequestStatus.PENDING, BATCH);
         for (AccountDataRequest request : queued) {
             try {
                 processor.runOne(request.getId());
+                handled++;
             } catch (Exception e) {
                 // One bad request must not stop the queue, and the reason has to
                 // survive for the person who asked.
@@ -59,5 +86,6 @@ public class AccountDataWorker {
                 }
             }
         }
+        return handled;
     }
 }

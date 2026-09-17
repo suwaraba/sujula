@@ -21,7 +21,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Component
-public class ReportExportWorker {
+public class ReportExportWorker implements com.sujula.service.platform.ManagedJob {
 
     private static final int BATCH = 2;
 
@@ -31,20 +31,45 @@ public class ReportExportWorker {
     @Value("${sujula.money.exports.enabled:true}")
     private boolean enabled;
 
-    public ReportExportWorker(ReportExportRepository exports, ReportExportProcessor processor) {
+    /** Records each pass; see {@code JobRegistry} for why this is not a cycle. */
+    private final com.sujula.service.platform.JobRegistry registry;
+
+    public ReportExportWorker(ReportExportRepository exports, ReportExportProcessor processor,
+                                                            com.sujula.service.platform.JobRegistry registry) {
         this.exports = exports;
         this.processor = processor;
+        this.registry = registry;
     }
+
+    @Override public String jobName() { return "finance-exports"; }
+
+    @Override
+    public String description() {
+        return "Builds the finance files administrators ask for, and retires links that have "
+                + "lapsed. The heaviest reads on the platform, which is why it takes two at a "
+                + "time.";
+    }
+
+    @Override public long intervalMs() { return java.time.Duration.ofSeconds(45).toMillis(); }
+
+    @Override public boolean isEnabled() { return enabled; }
 
     @Scheduled(fixedDelayString = "${sujula.money.exports.interval-ms:45000}")
     public void process() {
         if (!enabled) {
             return;
         }
+        registry.run(this, null);
+    }
+
+    @Override
+    public int runOnce() {
+        int handled = 0;
         List<ReportExport> queued = exports.findQueued(ReportExportStatus.QUEUED, BATCH);
         for (ReportExport export : queued) {
             try {
                 processor.runOne(export.getId());
+                handled++;
             } catch (Exception e) {
                 // One bad export must not stop the queue, and the reason has to
                 // survive for the person who asked — they are waiting on a file.
@@ -69,5 +94,6 @@ public class ReportExportWorker {
         } catch (Exception e) {
             log.warn("[Money] Could not retire lapsed export links: {}", e.getMessage());
         }
+        return handled;
     }
 }
