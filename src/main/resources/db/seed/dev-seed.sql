@@ -273,6 +273,7 @@ DELETE FROM callback_requests      WHERE id >= 1000;
 DELETE FROM announcements          WHERE id >= 1000;
 DELETE FROM feature_flags          WHERE id >= 1000;
 DELETE FROM job_runs               WHERE id >= 1000;
+DELETE FROM webhook_events         WHERE id >= 1000;
 DELETE FROM vendors                WHERE id >= 1000;
 DELETE FROM users                  WHERE id >= 1000;
 DELETE FROM gift_cards             WHERE id >= 1000;
@@ -3411,6 +3412,96 @@ VALUES
   'Still marked running 168 hours after it started. The process almost certainly died mid-pass.',
   NULL, @LAPSED),
  (2635, 'platform-sweeper', 'SUCCEEDED', @NOW, @NOW, 1, NULL, 1001, @NOW);
+
+-- ── webhook_events ──────────────────────────────────────────────────────────
+-- Things providers told us, and what we did about them.
+--
+-- The row is written BEFORE the event is acted on, and that ordering is the
+-- design. A payment provider saying "this succeeded" is the only record that it
+-- did; acting first and storing afterwards means a crash between the two loses
+-- the fact that a buyer paid.
+--
+-- Replay protection is the unique constraint on (provider, event_id), not a
+-- check in code — two deliveries arriving at once would both pass a check.
+-- 2700 and 2701 below are the same event from the same provider arriving twice,
+-- which is providers working correctly: the second is DUPLICATE and was
+-- answered 200 so they stop, because a 4xx would make them retry harder.
+--
+-- 2702 is REJECTED and is KEPT rather than discarded. One refusal is a clock
+-- drifting; fifty in a minute is somebody trying signatures, and a platform
+-- that threw them away would have nothing to count. Its event_id carries a
+-- :rejected: suffix so a forged attempt cannot squat on the id the genuine
+-- event will later need.
+--
+-- 2703 is the one worth reading twice. The provider said a 132.16 EUR payment
+-- was settled for 1.00, and the platform refused to credit it. That is a bug or
+-- an attack and crediting it is the same mistake either way — a provider does
+-- not get to decide what an order cost.
+--
+-- 2705 is a bounce. The recipient's release code reaches the BUYER by email for
+-- them to pass on, the way a remittance reference does, so an address that
+-- bounced is somebody standing in front of a driver with nothing to read out.
+--
+-- payload is stored in full and verbatim. The signature was computed over those
+-- bytes, and when a figure disagrees with a provider's dashboard in six months
+-- the thing that settles it is what they actually sent.
+
+INSERT INTO webhook_events
+ (id, kind, provider, event_id, event_type, status, payload,
+  signature_valid, rejection_reason, provider_timestamp, received_at, processed_at,
+  attempts, failure_reason, subject_reference, outcome, created_at, updated_at)
+VALUES
+ (2700, 'PSP', 'wave', 'evt_7K3M9QXB2VDH', 'payment.succeeded', 'PROCESSED',
+  '{"id":"evt_7K3M9QXB2VDH","type":"payment.succeeded","reference":"PAY-SEED0000003","amount":"132.16","currency":"EUR"}',
+  TRUE, NULL, @NOW, @NOW, @NOW,
+  1, NULL, 'PAY-SEED0000003',
+  'Marked paid, at the amount and currency the payment was created for.', @NOW, @NOW),
+
+ -- The same event again. Not an error: this is a provider retrying, and the
+ -- answer that makes them stop is 200.
+ (2701, 'PSP', 'wave', 'evt_7K3M9QXB2VDH:redelivery', 'payment.succeeded', 'DUPLICATE',
+  '{"id":"evt_7K3M9QXB2VDH","type":"payment.succeeded","reference":"PAY-SEED0000003","amount":"132.16","currency":"EUR"}',
+  TRUE, NULL, @NOW, @NOW, @NOW,
+  0, NULL, 'PAY-SEED0000003',
+  'Already received — answered 200 so the provider stops retrying.', @NOW, @NOW),
+
+ -- Refused, and kept. signature_valid is FALSE and nothing was acted on.
+ (2702, 'PSP', 'wave', 'evt_9MRT4XKQ2B:rejected:3f1c8a2e5b7d4906', 'payment.succeeded', 'REJECTED',
+  '{"id":"evt_9MRT4XKQ2B","type":"payment.succeeded","reference":"PAY-SEED0000003","amount":"132.16"}',
+  FALSE, 'The signature does not match the body.', @NOW, @NOW, NULL,
+  0, NULL, NULL, NULL, @NOW, @NOW),
+
+ -- The provider said the order cost something it did not.
+ (2703, 'PSP', 'wave', 'evt_2MHB6VXQ4TWK', 'payment.succeeded', 'FAILED',
+  '{"id":"evt_2MHB6VXQ4TWK","type":"payment.succeeded","reference":"PAY-SEED0000003","amount":"1.00","currency":"EUR"}',
+  TRUE, NULL, @NOW, @NOW, @NOW,
+  1,
+  'The event says 1.00 and the payment is for 132.16. Not marking it paid — a provider cannot decide an order cost something else.',
+  'PAY-SEED0000003',
+  'The event says 1.00 and the payment is for 132.16. Not marking it paid — a provider cannot decide an order cost something else.',
+  @NOW, @NOW),
+
+ -- Understood and deliberately nothing to do. Recording that stops somebody
+ -- later assuming a missing effect was a bug.
+ (2704, 'PSP', 'wave', 'evt_4KQ7MXB2VN9P', 'payout.updated', 'IGNORED',
+  '{"id":"evt_4KQ7MXB2VN9P","type":"payout.updated","reference":"PO-2026-08-KOMBO"}',
+  TRUE, NULL, @NOW, @NOW, @NOW,
+  1, NULL, 'PO-2026-08-KOMBO',
+  'Nothing on this platform acts on "payout.updated".', @NOW, @NOW),
+
+ (2705, 'MESSAGING', 'ses', 'evt_6VXQ4TWK2MHB', 'bounce', 'PROCESSED',
+  '{"id":"evt_6VXQ4TWK2MHB","type":"bounce","recipient":"sulayman.blocked@example.gm","reason":"mailbox does not exist"}',
+  TRUE, NULL, @NOW, @NOW, @NOW,
+  1, NULL, 'sulayman.blocked@example.gm',
+  'Recorded a bounce. Anything time-sensitive sent to that address did not arrive — a release code that bounced is somebody unable to collect.',
+  @NOW, @NOW),
+
+ -- Waiting for the worker. Stored and verified; nothing has acted on it yet,
+ -- which is exactly the state the store-before-act ordering creates.
+ (2706, 'KYC', 'smile', 'evt_QRT4XKM2BHV9', 'check.completed', 'RECEIVED',
+  '{"id":"evt_QRT4XKM2BHV9","type":"check.completed","reference":"1600","result":"clear"}',
+  TRUE, NULL, @NOW, @NOW, NULL,
+  0, NULL, NULL, NULL, @NOW, @NOW);
 
 
 COMMIT;

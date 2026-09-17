@@ -106,7 +106,14 @@ public class SecurityConfig {
                         // nothing that a forged request could exploit, and a CSRF
                         // token cannot be required of a shopper who has no
                         // session yet.
-                        .ignoringRequestMatchers("/api/payments/callback", "/auth/**", "/me/**",
+                        // Every /webhooks path is a machine in somebody else's
+                        // data centre with no session and no token to present.
+                        // They are authenticated by a signature over the body
+                        // and a signed timestamp, which is strictly stronger
+                        // than a CSRF token: it proves the sender knows a secret
+                        // AND that the body was not altered on the way.
+                        .ignoringRequestMatchers("/webhooks/**",
+                                                 "/api/payments/callback", "/auth/**", "/me/**",
                                                  "/geo/**", "/delivery/**", "/delivery-contexts",
                                                  "/delivery-contexts/**",
                                                  "/currencies", "/currencies/**",
@@ -115,9 +122,39 @@ public class SecurityConfig {
                     if (docsEnabled) {
                         auth.requestMatchers(
                                 "/swagger-ui.html", "/swagger-ui/**",
-                                "/v3/api-docs", "/v3/api-docs/**").permitAll();
+                                "/v3/api-docs", "/v3/api-docs/**",
+                                // The spec's own path for the same document.
+                                // Gated by the same flag: in production this
+                                // block does not run, and a full description of
+                                // every endpoint is not handed to anybody who
+                                // asks.
+                                "/openapi.json").permitAll();
                     }
                     auth
+                        // ── Machines and probes ──────────────────────────────
+                        //
+                        // Open at the filter chain and defended inside the
+                        // handler. A webhook carries no session because its
+                        // sender has no account here; what it carries instead is
+                        // an HMAC over its own body and a signed timestamp, and
+                        // an unsigned or stale request is refused there.
+                        .requestMatchers(HttpMethod.POST, "/webhooks/**").permitAll()
+
+                        // Probes have to answer before anything is ready,
+                        // including before a database connection exists — which
+                        // is the moment an orchestrator most needs an answer.
+                        // Neither returns anything a stranger can use.
+                        .requestMatchers(HttpMethod.GET,
+                                "/health/liveness", "/health/readiness").permitAll()
+
+                        // The metrics scrape is NOT public. It carries request
+                        // counts, error rates and timings per endpoint — enough
+                        // to tell somebody outside when the platform is
+                        // struggling and which path to press on. Restrict it at
+                        // the network as well; this is the second lock, not the
+                        // only one.
+                        .requestMatchers("/actuator/**").hasRole("ADMIN")
+
                         // ── Token authentication ─────────────────────────────
                         // Getting in, proving an address, or recovering a lost
                         // password all have to work before there is an identity.
