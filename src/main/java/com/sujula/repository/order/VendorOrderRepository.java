@@ -248,4 +248,26 @@ public interface VendorOrderRepository extends JpaRepository<VendorOrder, Long> 
             @org.springframework.data.repository.query.Param("from") java.time.LocalDateTime from,
             @org.springframework.data.repository.query.Param("to") java.time.LocalDateTime to,
             @org.springframework.data.repository.query.Param("vendorId") Long vendorId);
+
+    /**
+     * Gross merchandise value per settlement currency, for the dashboard.
+     *
+     * <p>Per currency and never totalled. A platform whose sellers settle in
+     * dalasi and CFA has two GMV figures; one that added them would put a number
+     * on a screen that means nothing and that somebody would quote in a meeting
+     * (C2).
+     *
+     * <p>Cancelled slices are excluded — goods that went back are not goods that
+     * were sold.
+     */
+    @org.springframework.data.jpa.repository.Query(
+            "SELECT v.nativeCurrency, "
+          + "       COALESCE(SUM(CASE WHEN v.createdAt >= :monthStart THEN v.totalNative ELSE 0 END), 0), "
+          + "       COALESCE(SUM(CASE WHEN v.createdAt >= :dayStart THEN v.totalNative ELSE 0 END), 0), "
+          + "       COUNT(CASE WHEN v.createdAt >= :monthStart THEN 1 END) "
+          + "FROM VendorOrder v WHERE v.cancelledAt IS NULL AND v.nativeCurrency IS NOT NULL "
+          + "GROUP BY v.nativeCurrency ORDER BY v.nativeCurrency ASC")
+    java.util.List<Object[]> gmvByCurrency(
+            @org.springframework.data.repository.query.Param("monthStart") java.time.LocalDateTime monthStart,
+            @org.springframework.data.repository.query.Param("dayStart") java.time.LocalDateTime dayStart);
 }

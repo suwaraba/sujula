@@ -409,7 +409,7 @@ public class AuthServiceImpl implements AuthService {
         user.setPassword(passwordEncoder.encode(request.newPassword()));
         users.save(user);
 
-        if (!request.keepOtherSessions()) {
+        if (!request.keepOthers()) {
             // Every other device, but not this one: the person who just proved
             // the old password stays where they are.
             int ended = sessions.revokeAllForUser(user.getId(),

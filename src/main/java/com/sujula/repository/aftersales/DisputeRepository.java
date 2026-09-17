@@ -48,4 +48,60 @@ public interface DisputeRepository extends JpaRepository<Dispute, Long> {
          + "AND d.status IN (com.sujula.model.constant.DisputeStatus.OPEN, "
          + "                 com.sujula.model.constant.DisputeStatus.UNDER_REVIEW)")
     List<Dispute> findFreezingSlice(@Param("vendorOrderId") Long vendorOrderId);
+
+    /**
+     * The support queue, sorted by how close each one is to its deadline.
+     *
+     * <p>Deadline first, not age. A dispute raised this morning with a
+     * four-hour promise on it is more urgent than one from Tuesday with a week
+     * — and both parties have money tied up behind the answer, so the sort
+     * order is the promise rather than the arrival time.
+     *
+     * <p>Rows with no deadline sort last rather than first: they are the ones
+     * raised before deadlines existed, and putting them at the top would bury
+     * every live promise underneath them.
+     */
+    @Query(value = "SELECT d FROM Dispute d "
+         + "WHERE (:status IS NULL OR d.status = :status) "
+         + "AND (:openOnly = FALSE OR d.status IN ("
+         + "     com.sujula.model.constant.DisputeStatus.OPEN, "
+         + "     com.sujula.model.constant.DisputeStatus.UNDER_REVIEW)) "
+         + "AND (:assigneeId IS NULL OR d.assignedToUserId = :assigneeId) "
+         + "AND (:unassignedOnly = FALSE OR d.assignedToUserId IS NULL) "
+         + "AND (:vendorId IS NULL OR d.vendorOrder.vendor.id = :vendorId) "
+         + "AND (:reason IS NULL OR d.reason = :reason) "
+         + "AND (:overdueOnly = FALSE OR (d.dueBy IS NOT NULL AND d.dueBy < :now)) "
+         + "ORDER BY d.dueBy ASC NULLS LAST, d.createdAt ASC",
+           countQuery = "SELECT COUNT(d) FROM Dispute d "
+         + "WHERE (:status IS NULL OR d.status = :status) "
+         + "AND (:openOnly = FALSE OR d.status IN ("
+         + "     com.sujula.model.constant.DisputeStatus.OPEN, "
+         + "     com.sujula.model.constant.DisputeStatus.UNDER_REVIEW)) "
+         + "AND (:assigneeId IS NULL OR d.assignedToUserId = :assigneeId) "
+         + "AND (:unassignedOnly = FALSE OR d.assignedToUserId IS NULL) "
+         + "AND (:vendorId IS NULL OR d.vendorOrder.vendor.id = :vendorId) "
+         + "AND (:reason IS NULL OR d.reason = :reason) "
+         + "AND (:overdueOnly = FALSE OR (d.dueBy IS NOT NULL AND d.dueBy < :now))")
+    Page<Dispute> queue(@Param("status") com.sujula.model.constant.DisputeStatus status,
+                        @Param("openOnly") boolean openOnly,
+                        @Param("assigneeId") Long assigneeId,
+                        @Param("unassignedOnly") boolean unassignedOnly,
+                        @Param("vendorId") Long vendorId,
+                        @Param("reason") com.sujula.model.constant.DisputeReason reason,
+                        @Param("overdueOnly") boolean overdueOnly,
+                        @Param("now") java.time.LocalDateTime now,
+                        Pageable pageable);
+
+    /** How many are still open, for the dashboard. */
+    @Query("SELECT COUNT(d) FROM Dispute d WHERE d.status IN ("
+         + "  com.sujula.model.constant.DisputeStatus.OPEN, "
+         + "  com.sujula.model.constant.DisputeStatus.UNDER_REVIEW)")
+    long countOpen();
+
+    /** How many have missed the promise made when they were raised. */
+    @Query("SELECT COUNT(d) FROM Dispute d WHERE d.status IN ("
+         + "  com.sujula.model.constant.DisputeStatus.OPEN, "
+         + "  com.sujula.model.constant.DisputeStatus.UNDER_REVIEW) "
+         + "AND d.dueBy IS NOT NULL AND d.dueBy < :now")
+    long countOverdue(@Param("now") java.time.LocalDateTime now);
 }

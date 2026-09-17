@@ -78,4 +78,7 @@ public interface PayoutRepository extends JpaRepository<Payout, Long> {
     java.util.List<Payout> findByBatchIdOrderByIdAsc(Long batchId);
 
     long countByBatchIdAndStatus(Long batchId, com.sujula.model.constant.PayoutStatus status);
+
+    /** How many transfers are in a state, platform-wide. For the dashboard. */
+    long countByStatus(com.sujula.model.constant.PayoutStatus status);
 }

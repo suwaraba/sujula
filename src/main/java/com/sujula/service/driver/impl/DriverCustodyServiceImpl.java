@@ -33,6 +33,7 @@ import com.sujula.repository.shipment.ShipmentLegRepository;
 import com.sujula.repository.shipment.ShipmentRepository;
 import com.sujula.service.EmailService;
 import com.sujula.service.driver.DriverCustodyService;
+import com.sujula.service.platform.FeatureFlags;
 import com.sujula.service.shipment.CustodyChain;
 import com.sujula.service.shipment.Geofence;
 
@@ -81,10 +82,13 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     private final CustodyChain chain;
     private final EmailService email;
 
+    private final com.sujula.service.platform.FeatureFlags flags;
+
     public DriverCustodyServiceImpl(ShipmentRepository shipments, ShipmentLegRepository legs,
                                     CustodyEventRepository events, HandoverCodeRepository codes,
                                     DriverRepository drivers, CustodyChain chain,
-                                    EmailService email) {
+                                    EmailService email,
+                                    com.sujula.service.platform.FeatureFlags flags) {
         this.shipments = shipments;
         this.legs = legs;
         this.events = events;
@@ -92,6 +96,7 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
         this.drivers = drivers;
         this.chain = chain;
         this.email = email;
+        this.flags = flags;
     }
 
     // ── Reading a parcel ─────────────────────────────────────────────────────
@@ -353,8 +358,14 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
      * path even when a safe drop is authorised, because a code that was actually
      * read out is better evidence than a standing permission.
      */
-    private static boolean isSafeDrop(Shipment shipment, DriverRequests.Handover request) {
-        return shipment.isSafeDropAuthorised()
+    private boolean isSafeDrop(Shipment shipment, DriverRequests.Handover request) {
+        // The flag is checked here rather than where the recipient authorises it,
+        // so switching it off stops drops happening TODAY without erasing the
+        // instruction she already gave. She said what she wanted; the platform
+        // has stopped honouring it for now, which is a different fact and one
+        // she can be told.
+        return flags.isOn(FeatureFlags.SAFE_DROP)
+                && shipment.isSafeDropAuthorised()
                 && (request.cleanedCode() == null || request.cleanedCode().isBlank());
     }
 

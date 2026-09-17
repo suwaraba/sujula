@@ -66,15 +66,27 @@ public final class AdminPlatformRequests {
              * condition on an outcome rather than an outcome: "for the buyer,
              * once she returns it" and "for the buyer" are the same decision with
              * different timing.
+             *
+             * <p>Boxed, not primitive. A missing primitive makes this binder
+             * reject the WHOLE body as "not valid JSON", which is both wrong and
+             * unhelpful — and omitting an optional flag is the most ordinary
+             * thing a client does. Absent means false here, which is what
+             * {@link #returnRequired()} says.
              */
-            boolean requireReturn,
+            Boolean requireReturn,
 
             @NotBlank(message = "Say why — both parties are shown this")
             @Size(max = 2000) String resolutionNote,
 
             @NotBlank(message = "Your password — this moves money")
             String password,
-            String totpCode) {}
+            String totpCode) {
+
+        /** Absent and false are the same answer: no return is required. */
+        public boolean returnRequired() {
+            return Boolean.TRUE.equals(requireReturn);
+        }
+    }
 
     public record RequestCallback(
             /**

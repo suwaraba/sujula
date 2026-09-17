@@ -75,7 +75,10 @@ import static org.mockito.Mockito.verify;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
-@Import({DriverCustodyServiceImpl.class, CustodyChain.class, RecipientDirectives.class})
+// FeatureFlags is real rather than mocked: safe drop is behind a flag, and a
+// stub that always said "on" would pass whether or not the flag was ever read.
+@Import({DriverCustodyServiceImpl.class, CustodyChain.class, RecipientDirectives.class,
+         com.sujula.service.platform.FeatureFlags.class})
 class DriverCustodyServiceTest {
 
     @Autowired private DriverCustodyServiceImpl custody;
@@ -92,6 +95,9 @@ class DriverCustodyServiceTest {
     @Autowired private RecipientDirectives recipientDirectives;
 
     @MockitoBean private EmailService email;
+
+    @Autowired private com.sujula.repository.platform.FeatureFlagRepository featureFlags;
+    @Autowired private com.sujula.service.platform.FeatureFlags flags;
 
     private Shipment shipment;
     private Driver driver;
@@ -443,6 +449,47 @@ class DriverCustodyServiceTest {
         assertTrue(detail.destination().instructions().contains("Ndey"));
         assertTrue(detail.destination().instructions().contains("photograph"));
         assertTrue(detail.whatToDoNext().contains("without a code"), detail.whatToDoNext());
+    }
+
+    @Test
+    void switchingSafeDropOffStopsDropsTodayWithoutErasingWhatSheAsked() {
+        collectIt();
+        authoriseSafeDrop("behind the shop", null);
+
+        // The row already exists: FeatureFlags writes every declared flag at
+        // its default on startup, which is the behaviour being relied on here.
+        com.sujula.model.platform.FeatureFlag flag = featureFlags
+                .findByFlagKey(com.sujula.service.platform.FeatureFlags.SAFE_DROP)
+                .orElseThrow(() -> new AssertionError(
+                        "the declared flags should have been created at startup"));
+        assertTrue(flag.isEnabled(), "and safe drop is on by default");
+
+        flag.setEnabled(false);
+        featureFlags.save(flag);
+        entityManager.flush();
+        flags.invalidate();
+
+        // A drop with no code is refused while the flag is down — the platform
+        // has stopped honouring the permission, which is a different fact from
+        // her never having given one.
+        BadRequestException refused = assertThrows(BadRequestException.class,
+                () -> custody.deliver(driverUser.getId(), shipment.getId(),
+                        handover(null, DEST_LAT, DEST_LNG, "https://m.invalid/p.jpg")));
+        assertTrue(refused.getMessage().contains("code is required"), refused.getMessage());
+
+        // And her instruction is still on the parcel, untouched.
+        entityManager.refresh(shipment);
+        assertTrue(shipment.isSafeDropAuthorised());
+        assertEquals("behind the shop", shipment.getSafeDropLocation());
+
+        // Switched back on, the same request goes through.
+        flag.setEnabled(true);
+        featureFlags.save(flag);
+        entityManager.flush();
+        flags.invalidate();
+
+        assertNotNull(custody.deliver(driverUser.getId(), shipment.getId(),
+                handover(null, DEST_LAT, DEST_LNG, "https://m.invalid/p.jpg")));
     }
 
     /** Records the authorisation the way the recipient surface does. */

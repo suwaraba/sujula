@@ -84,7 +84,20 @@ public final class AuthRequests {
             @NotBlank @Size(min = 10, max = 128,
                     message = "Password must be at least 10 characters")
             String newPassword,
-            boolean keepOtherSessions) {}
+
+            /**
+             * Boxed rather than primitive, and not cosmetic: a missing primitive
+             * makes this binder reject the whole body as "not valid JSON", so a
+             * client that simply omitted this optional flag could not change
+             * their password at all.
+             */
+            Boolean keepOtherSessions) {
+
+        /** Absent means the safe answer: sign every other device out. */
+        public boolean keepOthers() {
+            return Boolean.TRUE.equals(keepOtherSessions);
+        }
+    }
 
     /** Proves the authenticator was set up before it is trusted to guard the account. */
     public record MfaActivate(

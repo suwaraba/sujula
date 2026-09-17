@@ -267,6 +267,12 @@ DELETE FROM vendor_payouts         WHERE id >= 1000;
 DELETE FROM payout_batches         WHERE id >= 1000;
 DELETE FROM report_exports         WHERE id >= 1000;
 DELETE FROM fx_spreads             WHERE id >= 1000;
+-- Callbacks before the disputes they point at; announcements, flags and job
+-- runs reference nothing.
+DELETE FROM callback_requests      WHERE id >= 1000;
+DELETE FROM announcements          WHERE id >= 1000;
+DELETE FROM feature_flags          WHERE id >= 1000;
+DELETE FROM job_runs               WHERE id >= 1000;
 DELETE FROM vendors                WHERE id >= 1000;
 DELETE FROM users                  WHERE id >= 1000;
 DELETE FROM gift_cards             WHERE id >= 1000;
@@ -2502,8 +2508,16 @@ INSERT INTO disputes
   frozen_at, unfrozen_at, hold_reference,
   outcome, awarded_to_buyer, awarded_to_buyer_native,
   resolved_by_user_id, resolved_at, resolution_note, withdrawn_at, refund_reference,
+  assigned_to_user_id, assigned_at, due_by, callback_requested_at,
   created_at, updated_at)
 VALUES
+ -- Open, assigned to support, and PAST its deadline. due_by is frozen when the
+ -- dispute is raised rather than computed from today's policy — a queue sorted
+ -- by a deadline that moves with policy is one where the oldest is never the
+ -- most urgent, and both parties have money tied up behind the answer.
+ --
+ -- Support may work this: read it, write internal notes, arrange a call. Only
+ -- an administrator may decide it, because deciding moves the seller's money.
  (1980, 0, 'DSP-9MRT4XKQ2B', 1501, 1005, 'OPEN', 'NOT_RECEIVED',
   'Nothing arrived. The seller says it was collected; nobody has it.', 1960,
   106.70, 'GBP', 9700.00,
@@ -2511,6 +2525,7 @@ VALUES
   @NOW, NULL, NULL,
   NULL, NULL, NULL,
   NULL, NULL, NULL, NULL, NULL,
+  1012, @NOW, @LAPSED, @NOW,
   @NOW, @NOW);
 
 -- The other half of the link, now that both rows exist.
@@ -3232,6 +3247,171 @@ VALUES
  (2413, 'Senegal standard', 2403, 'SN', NULL, 'XOF',
   1500.00, 0.00, 350.00, 1.00, 700.00, 1500.00, NULL, NULL,
   '2026-09-01', NULL, 'Dakar and the ring road.', TRUE, 1001, @NOW, @NOW);
+-- ── callback_requests ───────────────────────────────────────────────────────
+-- Somebody is going to telephone somebody, and what came of it.
+--
+-- Keyed on a PHONE NUMBER, not a user id, and 2602 is why that matters: Isatou
+-- Ceesay is the recipient of SHP-SEED-0002 and has no account on this platform
+-- at all. Her number lives on the shipment because she never signed up for
+-- anything — she is the sister in Serrekunda the whole marketplace exists to
+-- serve (C5), and a callback table keyed on users could not reach her.
+--
+-- The intent and the outcome are separate columns because they are separate
+-- facts. "We said we would call", "we called and she did not answer" and "we
+-- called and she said the seal was cut" are three states, and a platform that
+-- stored only the first cannot tell a supervisor which calls are still owed.
+-- NO_ANSWER and RESCHEDULED still count as owed; SPOKE and UNREACHABLE do not.
+--
+-- preferred_language earns its column. A caller who opens in English to
+-- somebody who speaks Wolof has already lost the call, and "she did not want to
+-- talk" is what gets written down instead.
+--
+-- Note whose number 2600 is. Dispute 1980 is about SHP-SEED-0003, which was
+-- going to Oliver in London — he bought it and it was for himself. Not every
+-- parcel on this platform is a remittance, and the callback follows the parcel
+-- rather than an assumption about it.
+
+INSERT INTO callback_requests
+ (id, dispute_id, phone, contact_name, preferred_language, reason,
+  requested_by_user_id, requested_at, call_by,
+  outcome, called_by_user_id, called_at, notes, attempts, updated_at)
+VALUES
+ -- Owed, overdue, and never attempted. The one a supervisor must see first.
+ (2600, 1980, '+447700900005', 'Oliver Bennett', 'English',
+  'He says nothing arrived; the seller says it was collected. Ask what he was actually told and by whom.',
+  1012, @NOW, @LAPSED,
+  NULL, NULL, NULL, NULL, 0, @NOW),
+
+ -- Rang out once. Still owed: no answer is not a finished call.
+ (2601, 1980, '+2203100007', 'Ebrima Sowe', NULL,
+  'Driver side of the same parcel — did he collect it at all.',
+  1012, @NOW, @FUTURE,
+  'NO_ANSWER', 1012, @NOW, 'Rang out. Trying again this afternoon.', 1, @NOW),
+
+ -- No account, no dispute, and the number comes off the parcel. This is the
+ -- row that could not exist if callbacks were keyed on users.
+ (2602, NULL, '+2203100077', 'Isatou Ceesay', 'Wolof',
+  'Her parcel is out for delivery and the address has no street number. Confirm where the driver should stop.',
+  1012, @NOW, @NOW,
+  'SPOKE', 1012, @NOW,
+  'Second gate past the mosque, blue door. She is in after four.',
+  1, @NOW);
+
+-- ── announcements ───────────────────────────────────────────────────────────
+-- Something the platform told a group of people at once.
+--
+-- A record rather than a loop, and that earns its keep the first time somebody
+-- asks "did the sellers in Senegal get told about the holiday schedule".
+--
+-- recipients is NOT segment_size. Somebody who has switched every channel off
+-- for this event is in the segment and receives nothing, and reporting the
+-- segment size as the reach would be reporting a number that is not true — 2610
+-- below reached nine of eleven for exactly that reason.
+--
+-- The event is PLATFORM_NOTICE rather than PROMOTION, deliberately. A seller
+-- who switched marketing off has not asked to be the last to know the platform
+-- is closed on Koriteh.
+--
+-- country_code here is the RECIPIENTS' own country — where a seller trades,
+-- where a driver carries. It is the one place on this platform where that is
+-- the right question, because an announcement is about the person rather than
+-- about a parcel.
+
+INSERT INTO announcements
+ (id, reference, title, body, audience_role, country_code, event,
+  sent_by_user_id, sent_at, segment_size, recipients, created_at, updated_at)
+VALUES
+ (2610, 'ANN-7XK4MQ2BVN3D', 'No collections on Tuesday',
+  'Tuesday is a public holiday. Drivers will not collect, and orders placed Monday evening will be collected Wednesday morning. Your handling time is not counted against you for that day.',
+  'VENDOR', 'GM', 'PLATFORM_NOTICE',
+  1001, @NOW, 11, 9, @NOW, @NOW),
+
+ (2611, 'ANN-9QRT4XKM2BHV', 'New payout floor',
+  'From October, balances below 500 GMD roll into the next run rather than being sent on their own. A transfer costs a fee whatever it carries, and below that it costs more than it moves.',
+  'VENDOR', NULL, 'PLATFORM_NOTICE',
+  1001, @NOW, 14, 14, @NOW, @NOW),
+
+ -- Drawn up and not sent. sent_at NULL is the difference, and it is why reach
+ -- is zero rather than unknown.
+ (2612, 'ANN-2MHB6VXQ4TWK', 'Safe drop is coming to Banjul',
+  'From next month you will be able to tell a driver where to leave a parcel if you are out. You will still get a code, and the driver still photographs where they left it.',
+  'CUSTOMER', 'GM', 'PLATFORM_NOTICE',
+  1001, NULL, 0, 0, @NOW, @NOW);
+
+-- ── feature_flags ───────────────────────────────────────────────────────────
+-- Switches somebody can throw without a deploy.
+--
+-- These rows are NOT the source of truth for which flags exist: FeatureFlags
+-- declares them in code and writes any that are missing at startup, so a flag
+-- added in code exists the first time the application runs with it. They are
+-- here so a fresh database has them at sensible settings and so the seed can
+-- demonstrate one that has been moved.
+--
+-- Every one carries who last threw it and why. A flag with no author is one
+-- nobody will dare turn back on: six months later the only thing anybody knows
+-- is that it is off, and turning it on becomes an act of faith.
+--
+-- client_visible is false on admin.impersonation on purpose. Telling a browser
+-- whether impersonation is available tells anybody looking how the platform is
+-- defended, and a flag list is exactly the sort of thing that ends up in a
+-- public config endpoint by accident.
+
+INSERT INTO feature_flags
+ (id, flag_key, label, description, enabled, client_visible,
+  last_changed_by_user_id, last_changed_at, last_change_reason, created_at, updated_at)
+VALUES
+ (2620, 'delivery.safe-drop', 'Safe drop',
+  'Lets a driver leave a parcel without a code where the recipient has authorised it in advance. Off, every delivery needs a code at the door — slower, and impossible for somebody who is out at work.',
+  TRUE, TRUE, NULL, NULL, 'Created with its default when the flag was introduced.', @NOW, @NOW),
+
+ (2621, 'checkout.guest', 'Guest checkout',
+  'Lets somebody buy without an account. Off, every buyer must register first, which costs orders from people sending goods home once.',
+  TRUE, TRUE, NULL, NULL, 'Created with its default when the flag was introduced.', @NOW, @NOW),
+
+ -- Moved, and the reason is on the flag rather than only in the audit log,
+ -- because the person who finds it off in six months reads the flag.
+ (2622, 'vendor.applications', 'Seller applications',
+  'Whether new sellers may apply. Off while a backlog is cleared — existing sellers are unaffected and keep trading.',
+  FALSE, TRUE, 1001, @NOW,
+  'Nineteen applications waiting on KYC review. Back on once the queue is under five.',
+  @NOW, @NOW),
+
+ (2623, 'admin.impersonation', 'Administrator impersonation',
+  'Lets an administrator open a session as another user for support work. Every use is audited. Off, support must work from what the person tells them.',
+  TRUE, FALSE, NULL, NULL, 'Created with its default when the flag was introduced.', @NOW, @NOW);
+
+-- ── job_runs ────────────────────────────────────────────────────────────────
+-- One row per PASS of a background job, including the ones that found nothing.
+--
+-- That last part is the design. A drainer finding an empty queue is the normal
+-- case and still writes a row — so a GAP in these rows means the scheduler
+-- stopped, which is a different and worse problem than a job failing. A
+-- "last status" column on the job itself could not express it: a job that failed
+-- silently every night for a week and succeeded this morning looks healthy under
+-- one, and looks like a problem under a list.
+--
+-- 2634 is ABANDONED rather than RUNNING. A process killed mid-pass gets no
+-- chance to record its own death, and a row saying RUNNING for three weeks is a
+-- job that looks busy; the sweeper marks them.
+--
+-- 2635 was run by a person, which is context worth keeping: a manual pass in the
+-- middle of an afternoon reads differently from the scheduled two o'clock one.
+
+INSERT INTO job_runs
+ (id, job_name, status, started_at, finished_at, items_processed,
+  failure_reason, triggered_by_user_id, created_at)
+VALUES
+ (2630, 'catalogue-jobs', 'SUCCEEDED', @NOW, @NOW, 2, NULL, NULL, @NOW),
+ -- Nothing to do, which is healthy and still worth a row.
+ (2631, 'catalogue-jobs', 'SUCCEEDED', @LAPSED, @LAPSED, 0, NULL, NULL, @LAPSED),
+ (2632, 'finance-exports', 'SUCCEEDED', @NOW, @NOW, 1, NULL, NULL, @NOW),
+ (2633, 'finance-exports', 'FAILED', @LAPSED, @LAPSED, 0,
+  'That window holds 241,880 rows, above the 200,000 limit.', NULL, @LAPSED),
+ (2634, 'account-data-requests', 'ABANDONED', @LAPSED, @NOW, 0,
+  'Still marked running 168 hours after it started. The process almost certainly died mid-pass.',
+  NULL, @LAPSED),
+ (2635, 'platform-sweeper', 'SUCCEEDED', @NOW, @NOW, 1, NULL, 1001, @NOW);
+
 
 COMMIT;
 

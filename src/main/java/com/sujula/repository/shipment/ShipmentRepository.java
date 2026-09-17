@@ -175,4 +175,37 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
     List<Shipment> findHandledBy(@Param("pickupPointId") Long pickupPointId,
                                  @Param("from") java.time.LocalDateTime from,
                                  @Param("to") java.time.LocalDateTime to);
+
+    /**
+     * Parcels somebody is currently responsible for, anywhere in the chain.
+     *
+     * <p>Counted as "not finished" rather than by listing the moving states,
+     * because the second kind of query is the one that silently stops counting a
+     * state somebody adds later — and a parcel missing from this number is a
+     * parcel nobody is looking for.
+     */
+    @Query("SELECT COUNT(s) FROM Shipment s WHERE s.status NOT IN ("
+         + "  com.sujula.model.constant.ShipmentStatus.DELIVERED, "
+         + "  com.sujula.model.constant.ShipmentStatus.RETURNED, "
+         + "  com.sujula.model.constant.ShipmentStatus.CANCELLED)")
+    long countInFlight();
+
+    @Query("SELECT COUNT(s) FROM Shipment s WHERE s.status = :status AND s.updatedAt >= :since")
+    long countByStatusSince(@Param("status") com.sujula.model.constant.ShipmentStatus status,
+                            @Param("since") java.time.LocalDateTime since);
+
+    /**
+     * Parcels that have not moved in longer than they should have.
+     *
+     * <p>The one number on the dashboard that is about a person rather than a
+     * figure: each of these is somebody waiting, often for goods a relative
+     * abroad paid for, and a parcel stuck for a week is a story the platform
+     * will hear about whether or not it noticed first.
+     */
+    @Query("SELECT COUNT(s) FROM Shipment s WHERE s.updatedAt < :before "
+         + "AND s.status NOT IN ("
+         + "  com.sujula.model.constant.ShipmentStatus.DELIVERED, "
+         + "  com.sujula.model.constant.ShipmentStatus.CANCELLED, "
+         + "  com.sujula.model.constant.ShipmentStatus.RETURNED)")
+    long countStuckSince(@Param("before") java.time.LocalDateTime before);
 }
