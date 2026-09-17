@@ -2339,14 +2339,25 @@ INSERT INTO handover_codes (id, delivery_id, vendor_order_id, shipment_id, leg_i
  (1731, 1700, NULL, NULL, NULL, '905177', 'DRIVER_TO_PICKUP',    1, @NOW, 1008, '2026-09-12 18:00:00.000000', NULL, 0, 1, @NOW),
  (1732, 1700, NULL, NULL, NULL, '234861', 'PICKUP_TO_CUSTOMER',  1, @NOW, 1004, '2026-09-12 20:00:00.000000', NULL, 0, 1, @NOW),
  (1733, 1701, NULL, NULL, NULL, '660419', 'VENDOR_TO_DRIVER',    1, @NOW, 1007, '2026-09-13 18:00:00.000000', NULL, 0, 1, @NOW),
- (1734, 1701, NULL, NULL, NULL, '773025', 'DRIVER_TO_CUSTOMER',  0, NULL, NULL, '2026-09-20 18:00:00.000000', NULL, 0, 0, @NOW),
- (1735, NULL, 1505, NULL, NULL, '304912', 'VENDOR_RELEASE',      0, NULL, NULL, '2026-09-16 12:00:00.000000', @NOW,  0, 0, @NOW),
- (1736, NULL, 1505, NULL, NULL, '871460', 'VENDOR_RELEASE',      1, @NOW, 1007, '2026-09-16 12:00:00.000000', NULL, 0, 0, @NOW),
+ -- The three rows below are meant to be LIVE, so their expiry is relative to
+ -- the moment this file runs rather than a date written into it. A code seeded
+ -- to expire on a fixed day is expired by the time anybody reads these notes,
+ -- and the row is then decorative: the endpoint answers "no code" and the value
+ -- printed at the end of this file is refused. The used codes above keep their
+ -- fixed timestamps, because those are history and history does not decay.
+ (1734, 1701, NULL, NULL, NULL, '773025', 'DRIVER_TO_CUSTOMER',  0, NULL, NULL, @FUTURE, NULL, 0, 0, @NOW),
+ (1735, NULL, 1505, NULL, NULL, '304912', 'VENDOR_RELEASE',      0, NULL, NULL, @FUTURE, @NOW,  0, 0, @NOW),
+ -- Unused, and that is the only state it could be in: slice 1505 is
+ -- READY_FOR_PICKUP with collected_at NULL, so no driver has presented this
+ -- code. It was seeded as used, which contradicted the slice beside it and made
+ -- GET /vendor/orders/1505/handoff-code answer "there is no code yet" against
+ -- the note at the end of this file saying it answers 871460.
+ (1736, NULL, 1505, NULL, NULL, '871460', 'VENDOR_RELEASE',      0, NULL, NULL, @FUTURE, NULL, 0, 0, @NOW),
  -- The recipient's code for the diaspora parcel. It went to Fatou in Madrid by
  -- email, and she passes it to Isatou the way anybody passes on a Western Union
  -- reference. Isatou needs no account, no app and no email of her own (C5) —
  -- only to read six digits to the driver at the door.
- (1737, NULL, NULL, 1901, 1911, '540913', 'RECIPIENT_RELEASE', 0, NULL, NULL, '2026-09-16 12:00:00.000000', NULL, 0, 0, @NOW);
+ (1737, NULL, NULL, 1901, 1911, '540913', 'RECIPIENT_RELEASE', 0, NULL, NULL, @FUTURE, NULL, 0, 0, @NOW);
 
 -- Two rows for one slice, and vendor_orders.release_code_issue_count says 1
 -- rather than 2 - which is the disagreement to expect, because the count is a
@@ -3566,7 +3577,10 @@ COMMIT;
 --     GET /vendor/orders/1505/handoff-code
 --                                       871460. Served no-store and never
 --                                       logged. 304912 was the previous one and
---                                       is dead - try presenting it.
+--                                       is dead - try presenting it. Both are
+--                                       seeded with a RELATIVE expiry, so they
+--                                       are live whenever this file is run
+--                                       rather than on the day it was written.
 --     GET /vendor/orders/1505/label     an A6 PDF. Read what is NOT on it: no
 --                                       street, no price, no contents, and not
 --                                       the collection code. A code printed on
