@@ -640,7 +640,25 @@ public class OrderServiceImpl implements OrderService {
                     .totalNative(totalNative)
                     .subtotal(group.getSubtotal())
                     .discount(group.getDiscount())
-                    .total(group.getTotal())
+                    // Goods less discount, and NOT group.getTotal(), which is
+                    // the cart group's figure with that group's shipping in it.
+                    //
+                    // A slice's total is the goods. Delivery lives on the order,
+                    // on OrderItem.deliveryCost per line and on
+                    // delivery_native per slice, because the platform arranges
+                    // it and keeps it — which is also why payout_native
+                    // excludes it. Two lines up, totalNative is computed
+                    // exactly this way, so taking the cart total here made the
+                    // native and display totals on one row mean two different
+                    // things.
+                    //
+                    // The other checkout path already did it this way and so
+                    // does every seeded row, so an order placed through the
+                    // cart was the only kind whose slices did not add up to
+                    // the order less its shipping. A buyer's screen showing
+                    // per-seller totals that do not come to the whole is the
+                    // visible half of that.
+                    .total(nonNull(group.getSubtotal()).subtract(nonNull(group.getDiscount())))
                     .coupon(vendorCoupon)
                     .couponCode(group.getVendorCouponCode())
                     .items(items)

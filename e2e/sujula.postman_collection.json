@@ -9229,25 +9229,29 @@
                   "    pm.expect(v.totalNative, v.storeName + ' has no native total').to.be.a('number');",
                   "  });",
                   "});",
-                  "pm.test(\"C2 — and the slice total is the converted goods plus that seller's own leg\", function () {",
-                  "  // totalNative is the GOODS in the seller's currency; total is those goods",
-                  "  // converted plus the delivery the platform charged for them. So the",
-                  "  // difference is the leg, which must be a real, non-negative amount rather",
-                  "  // than the rate failing to reproduce anything.",
+                  "pm.test(\"C2 — and the rate reproduces the slice's own total\", function () {",
+                  "  // Both totals are the goods — the native one in the seller's currency, the",
+                  "  // display one converted — so the rate on the slice has to turn one into the",
+                  "  // other. It is the whole point of snapshotting it: a payout questioned next",
+                  "  // month has to be re-derivable from what is still on the row.",
                   "  $body.vendorOrders.forEach(function (v) {",
-                  "    const goods = v.totalNative * v.fxRate;",
-                  "    const leg = v.total - goods;",
-                  "    pm.expect(leg > -0.02, v.storeName + ': ' + v.totalNative + ' ' + v.listingCurrency",
-                  "      + ' at ' + v.fxRate + ' is ' + goods.toFixed(2)",
-                  "      + ', which is more than the slice total of ' + v.total).to.be.true;",
-                  "    pm.expect(leg, v.storeName + \": the leg came to more than the whole slice\")",
-                  "      .to.be.below(v.total + 0.02);",
+                  "    const expected = v.totalNative * v.fxRate;",
+                  "    pm.expect(Math.abs(v.total - expected) < 0.02,",
+                  "      v.storeName + ': ' + v.totalNative + ' ' + v.listingCurrency + ' at ' + v.fxRate",
+                  "      + ' is ' + expected.toFixed(2) + ', slice says ' + v.total).to.be.true;",
                   "  });",
                   "});",
-                  "pm.test(\"C3 — the sub-order totals come to the order total\", function () {",
+                  "pm.test(\"C3 — the sub-order totals come to the goods on the order\", function () {",
+                  "  // A slice's total is the GOODS. Delivery lives on the order, on each line's",
+                  "  // deliveryCost and on the slice's delivery_native, because the platform",
+                  "  // arranges it and keeps it — which is why a payout excludes it too. So the",
+                  "  // slices come to the order less its shipping, and that identity is what",
+                  "  // makes a buyer's per-seller screen add up to the whole.",
                   "  const slices = $body.vendorOrders.reduce(function (s, v) { return s + v.total; }, 0);",
-                  "  pm.expect(Math.abs(slices - $body.total) < 0.02,",
-                  "    'slices come to ' + slices.toFixed(2) + ' and the order to ' + $body.total).to.be.true;",
+                  "  const goods = $body.total - $body.shipping;",
+                  "  pm.expect(Math.abs(slices - goods) < 0.02,",
+                  "    'slices come to ' + slices.toFixed(2) + ' and the order less shipping to '",
+                  "    + goods.toFixed(2)).to.be.true;",
                   "});",
                   "pm.test(\"C2 — a payout is the goods less commission, in the seller's own money\", function () {",
                   "  $body.vendorOrders.forEach(function (v) {",
@@ -10517,6 +10521,1291 @@
                   "pm.test(\"A stranger's basket cannot be merged into yours — 400 or 403 or 404 or 409 or 422\", function () {",
                   "  pm.expect([400,403,404,409,422]).to.include(pm.response.code,",
                   "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 — A buyer's orders, tracking and invoices",
+      "description": "Reading, cancelling and confirming, plus the public tracking page.",
+      "item": [
+        {
+          "name": "Oliver's orders, each with its own currency",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Oliver's orders, each with its own currency — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "const ids = $body.items.map(function (o) { return o.id; });",
+                  "pm.test(\"Orders — 1401 is his\", function () {",
+                  "  pm.expect(ids).to.include(1401);",
+                  "});",
+                  "pm.test(\"Orders — none of Aminata's are in his list\", function () {",
+                  "  pm.expect(ids, 'order 1403 is Aminata\\'s').to.not.include(1403);",
+                  "  pm.expect(ids, 'order 1402 is a guest order').to.not.include(1402);",
+                  "});",
+                  "pm.test(\"Orders — a multivendor order says how many sellers are in it\", function () {",
+                  "  const order = $body.items.find(function (o) { return o.id === 1401; });",
+                  "  pm.expect(order.vendorCount, 'one payment, two sellers').to.equal(2);",
+                  "  pm.expect(order.currency, 'charged in the currency he holds a card in').to.equal('GBP');",
+                  "});",
+                  "pm.test(\"Orders — the list says whether each can still be cancelled\", function () {",
+                  "  $body.items.forEach(function (o) {",
+                  "    pm.expect(o.cancellable, o.orderNumber + ' does not say whether it can be cancelled')",
+                  "      .to.be.a('boolean');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The detail, grouped by seller, each group totalling on its own",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The detail, grouped by seller, each group totalling on its own — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"The detail, grouped by seller, each group totalling on its own — id is 1401\", function () {",
+                  "  const actual = H.get($body, \"id\");",
+                  "  const expected = 1401;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"id\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The detail, grouped by seller, each group totalling on its own — orderNumber is \\\"SJL-SEED-0001\\\"\", function () {",
+                  "  const actual = H.get($body, \"orderNumber\");",
+                  "  const expected = \"SJL-SEED-0001\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"orderNumber\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The detail, grouped by seller, each group totalling on its own — trackingCode is \\\"K7MPQ4RTVX2ND9YH\\\"\", function () {",
+                  "  const actual = H.get($body, \"trackingCode\");",
+                  "  const expected = \"K7MPQ4RTVX2ND9YH\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"trackingCode\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The detail, grouped by seller, each group totalling on its own — currency is \\\"GBP\\\"\", function () {",
+                  "  const actual = H.get($body, \"currency\");",
+                  "  const expected = \"GBP\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"currency\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The detail, grouped by seller, each group totalling on its own — paymentStatus is \\\"PAID\\\"\", function () {",
+                  "  const actual = H.get($body, \"paymentStatus\");",
+                  "  const expected = \"PAID\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"paymentStatus\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The detail, grouped by seller, each group totalling on its own — shippingTo.country is \\\"GB\\\"\", function () {",
+                  "  const actual = H.get($body, \"shippingTo.country\");",
+                  "  const expected = \"GB\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"shippingTo.country\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The detail, grouped by seller, each group totalling on its own — shippingTo.city is \\\"London\\\"\", function () {",
+                  "  const actual = H.get($body, \"shippingTo.city\");",
+                  "  const expected = \"London\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"shippingTo.city\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C3 — two sub-orders, and one of them has already shipped\", function () {",
+                  "  pm.expect($body.vendorOrders.length).to.equal(2);",
+                  "  const byId = {};",
+                  "  $body.vendorOrders.forEach(function (v) { byId[v.vendorOrderId] = v; });",
+                  "  pm.expect(byId[1501].status, 'slice 1501 is SHIPPED')",
+                  "    .to.equal('SHIPPED');",
+                  "  pm.expect(byId[1502].status,",
+                  "    'slice 1502 has not shipped, which is what makes it cancellable on its own')",
+                  "    .to.not.equal('SHIPPED');",
+                  "});",
+                  "pm.test(\"C3 — each slice totals its own goods, and they come to the order's\", function () {",
+                  "  // A slice's total is the goods. Delivery is the platform's — it arranges it,",
+                  "  // keeps it, and excludes it from a payout — so it lives on the order and on",
+                  "  // each line rather than inside a seller's slice. The identity to hold is",
+                  "  // therefore slices == order less shipping, and it is worth holding: a",
+                  "  // per-seller screen whose parts do not come to the whole is a buyer",
+                  "  // wondering what the missing four pounds was.",
+                  "  const slices = $body.vendorOrders.reduce(function (s, v) { return s + v.total; }, 0);",
+                  "  const goods = $body.total - $body.shipping;",
+                  "  pm.expect(Math.abs(slices - goods) < 0.05,",
+                  "    'slices come to ' + slices.toFixed(2) + ' and the order less shipping to '",
+                  "    + goods.toFixed(2)).to.be.true;",
+                  "});",
+                  "pm.test(\"C3 — and each slice's own parts add up the same way\", function () {",
+                  "  $body.vendorOrders.forEach(function (v) {",
+                  "    const expected = v.subtotal - v.discount;",
+                  "    pm.expect(Math.abs(v.total - expected) < 0.02,",
+                  "      v.storeName + ': ' + v.subtotal + ' - ' + v.discount + ' should be '",
+                  "      + expected.toFixed(2) + ', slice says ' + v.total).to.be.true;",
+                  "  });",
+                  "});",
+                  "pm.test(\"C3 — the order's shipping is the sum of the slices' own legs\", function () {",
+                  "  const legs = $body.vendorOrders.reduce(function (s, v) {",
+                  "    return s + (v.shipping || 0);",
+                  "  }, 0);",
+                  "  pm.expect(Math.abs(legs - $body.shipping) < 0.05,",
+                  "    'the slices carry legs coming to ' + legs.toFixed(2) + ' and the order charges '",
+                  "    + $body.shipping).to.be.true;",
+                  "});",
+                  "pm.test(\"The order total is its own parts\", function () {",
+                  "  const expected = $body.subtotal - $body.discount + $body.shipping + $body.tax;",
+                  "  pm.expect(Math.abs($body.total - expected) < 0.02,",
+                  "    $body.subtotal + ' - ' + $body.discount + ' + ' + $body.shipping + ' + ' + $body.tax",
+                  "    + ' should be ' + expected.toFixed(2) + ', order says ' + $body.total).to.be.true;",
+                  "});",
+                  "pm.test(\"Every line carries its own delivery leg\", function () {",
+                  "  $body.vendorOrders.forEach(function (v) {",
+                  "    v.lines.forEach(function (line) {",
+                  "      pm.expect(line.deliveryCost, line.productName + ' has no leg of its own')",
+                  "        .to.be.a('number');",
+                  "    });",
+                  "  });",
+                  "});",
+                  "pm.test(\"A line says whether it can be reviewed yet\", function () {",
+                  "  $body.vendorOrders.forEach(function (v) {",
+                  "    v.lines.forEach(function (line) {",
+                  "      pm.expect(line.reviewable, line.productName + ' does not say').to.be.a('boolean');",
+                  "    });",
+                  "  });",
+                  "});",
+                  "pm.test(\"The buyer sees no seller's private figures\", function () {",
+                  "  const text = H.text(pm.response);",
+                  "  ['commissionNative', 'payoutNative', 'commissionRate'].forEach(function (field) {",
+                  "    pm.expect(text, 'the buyer is shown ' + field + ', which is between the seller and the platform')",
+                  "      .to.not.include(field);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Asking for it as Aminata is a 404, not a 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAminata}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401"
+              ]
+            },
+            "description": "\"Forbidden\" would confirm the order exists, which is worth withholding from anybody counting through order ids."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Asking for it as Aminata is a 404, not a 403 — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And her own order is a 404 for him",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1403",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1403"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And her own order is a 404 for him — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One timeline per seller, because there are two parcels",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401/tracking",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401",
+                "tracking"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"One timeline per seller, because there are two parcels — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"One timeline per seller, because there are two parcels — orderId is 1401\", function () {",
+                  "  const actual = H.get($body, \"orderId\");",
+                  "  const expected = 1401;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"orderId\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"One timeline per seller, because there are two parcels — trackingCode is \\\"K7MPQ4RTVX2ND9YH\\\"\", function () {",
+                  "  const actual = H.get($body, \"trackingCode\");",
+                  "  const expected = \"K7MPQ4RTVX2ND9YH\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"trackingCode\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Tracking — a timeline for each slice, not one for the order\", function () {",
+                  "  pm.expect($body.timelines.length, 'two parcels are two timelines').to.equal(2);",
+                  "});",
+                  "pm.test(\"Tracking — the buyer's view carries the driver's own words\", function () {",
+                  "  // The counterpart to the public page below, which substitutes fixed phrases.",
+                  "  // This is the person who paid: they get what was actually recorded.",
+                  "  const shipped = $body.timelines.find(function (t) {",
+                  "    return t.vendorOrderId === 1501;",
+                  "  });",
+                  "  pm.expect(shipped.events.length, 'a shipped parcel with no events').to.be.at.least(1);",
+                  "  shipped.events.forEach(function (e) {",
+                  "    pm.expect(e.description, 'an event with no description').to.be.a('string');",
+                  "    pm.expect(e.at).to.be.a('string');",
+                  "  });",
+                  "});",
+                  "pm.test(\"Tracking — a slice with no events reports none rather than inventing one\", function () {",
+                  "  const waiting = $body.timelines.find(function (t) {",
+                  "    return t.vendorOrderId === 1502;",
+                  "  });",
+                  "  pm.expect(waiting.events, 'nothing has happened to this parcel yet').to.eql([]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An invoice is a signed, expiring link rather than a document",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401/invoice",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401",
+                "invoice"
+              ]
+            },
+            "description": "Ownership is proven once, here, and the link is then the credential — which is why it is short-lived: the document carries a home address and a phone number. It is open on purpose, because an invoice legitimately travels: to the recipient, to a bank, to whoever is reimbursing the buyer."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"An invoice is a signed, expiring link rather than a document — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"An invoice is a signed, expiring link rather than a document — url matches\", function () {",
+                  "  const actual = H.get($body, \"url\");",
+                  "  const expected = {\"$matches\":\"/invoices/\"};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"url\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"An invoice is a signed, expiring link rather than a document — contentType is \\\"application/pdf\\\"\", function () {",
+                  "  const actual = H.get($body, \"contentType\");",
+                  "  const expected = \"application/pdf\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"contentType\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"An invoice is a signed, expiring link rather than a document — expiresAt exists\", function () {",
+                  "  const actual = H.get($body, \"expiresAt\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"expiresAt\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.collectionVariables.set(\"invoiceUrl\",",
+                  "  H.get($body, \"url\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And the link resolves to a PDF with no token of its own",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/invoices/{{invoicePath}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invoices",
+                "{{invoicePath}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The endpoint returns an absolute URL; the collection needs just the path so",
+                  "// it can be sent against {{baseUrl}} whatever host the run is pointed at.",
+                  "const url = pm.collectionVariables.get('invoiceUrl') || '';",
+                  "pm.collectionVariables.set('invoicePath', url.split('/invoices/')[1] || 'nothing');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And the link resolves to a PDF with no token of its own — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"And the link resolves to a PDF with no token of its own — header Content-Type\", function () {",
+                  "  const actual = pm.response.headers.get(\"Content-Type\");",
+                  "  pm.expect(H.matches(actual, {\"$matches\":\"application/pdf\"}), \"Content-Type\" + ' was ' + H.show(actual)).to.be.true;",
+                  "});",
+                  "pm.test(\"Invoice — it is a PDF and not an error page\", function () {",
+                  "  pm.expect(pm.response.stream.length, 'an empty invoice').to.be.above(500);",
+                  "  pm.expect(H.text(pm.response).slice(0, 5), 'not a PDF header').to.include('%PDF');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A tampered invoice token is refused",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/invoices/MTQwMS4xNzg5NjczNzM3.thisIsNotTheSignature",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "invoices",
+                "MTQwMS4xNzg5NjczNzM3.thisIsNotTheSignature"
+              ]
+            },
+            "description": "The token is an HMAC over one order id and an expiry. Without the signature check the path would be an order-id enumerator that returns somebody's address."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A tampered invoice token is refused — 400 or 401 or 403 or 404\", function () {",
+                  "  pm.expect([400,401,403,404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Another buyer cannot mint a link for somebody else's invoice",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAminata}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401/invoice",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401",
+                "invoice"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Another buyer cannot mint a link for somebody else's invoice — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "C3: the whole order cannot be cancelled, and the refusal names the seller",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401",
+                "cancel"
+              ]
+            },
+            "description": "Slice 1501 is SHIPPED. Stopping an order whose goods are already with a courier is a return rather than a cancellation, and the refusal says which seller it is so the buyer knows what to ask for.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Changed my mind about the phone\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"C3: the whole order cannot be cancelled, and the refusal names the seller — 400 or 409 or 422\", function () {",
+                  "  pm.expect([400,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Cancel — the refusal names the store rather than saying no\", function () {",
+                  "  pm.expect(H.text(pm.response), 'a buyer told \"cannot cancel\" and nothing else has to guess')",
+                  "    .to.match(/Kombo/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "C3: one seller's slice can be, and it leaves the other alone",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-cancel-awa-slice"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401/vendor-orders/1502/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401",
+                "vendor-orders",
+                "1502",
+                "cancel"
+              ]
+            },
+            "description": "What comes back is a refund REQUEST, not a refund: 16.70 GBP against slice 1502 alone, waiting on an administrator. Money leaving the platform is the one action no later API call can undo, so nothing in the buyer surface completes it.\n\nRow 1450 is that request, seeded before this call is made — which makes this a test of something else as well. Ask twice and there must still be one row: a buyer who taps cancel, sees nothing happen on a slow connection and taps again must not end up with two refunds queued against the same goods, one of which an administrator approves after the other has paid.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"She has enough cloth\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"C3: one seller's slice can be, and it leaves the other alone — 200 or 201 or 202 or 400 or 409 or 422\", function () {",
+                  "  pm.expect([200,201,202,400,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "if (pm.response.code < 300) {",
+                  "  pm.test(\"C3 — a refund REQUEST, in the currency the buyer was charged\", function () {",
+                  "    const text = JSON.stringify($body);",
+                  "    pm.expect(text).to.match(/GBP/);",
+                  "    pm.expect(text, 'nothing here should claim money has moved').to.not.match(/\"refunded\"s*:s*true/);",
+                  "  });",
+                  "} else {",
+                  "  pm.test(\"C3 — already cancelled on an earlier run, and cancelling twice is refused\", function () {",
+                  "    pm.expect(H.text(pm.response).length, 'refused with no reason given').to.be.above(2);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And the shipped slice is exactly where it was",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401"
+              ]
+            },
+            "description": "This is C3, and it is worth checking rather than assuming: one seller cancelling must not touch another's line."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And the shipped slice is exactly where it was — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"C3 — 1501 is untouched by what happened to 1502\", function () {",
+                  "  const byId = {};",
+                  "  $body.vendorOrders.forEach(function (v) { byId[v.vendorOrderId] = v; });",
+                  "  pm.expect(byId[1501].status,",
+                  "    \"Lamin's parcel changed status because Awa's slice was cancelled\")",
+                  "    .to.equal('SHIPPED');",
+                  "  pm.expect(byId[1501].lines.length,",
+                  "    'lines went missing from the other seller\\'s slice').to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancelling a slice of an order that is not yours is a 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAminata}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-cancel-not-mine"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401/vendor-orders/1501/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401",
+                "vendor-orders",
+                "1501",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Not mine at all\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Cancelling a slice of an order that is not yours is a 404 — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A slice that belongs to a different order is not found either",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-cancel-wrong-order"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401/vendor-orders/1504/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401",
+                "vendor-orders",
+                "1504",
+                "cancel"
+              ]
+            },
+            "description": "Slice 1504 belongs to order 1403. Resolving the slice by id alone, without the order it hangs off, would let a buyer cancel across orders.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Wrong order\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A slice that belongs to a different order is not found either — 400 or 404 or 409\", function () {",
+                  "  pm.expect([400,404,409]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirming receipt answers idempotently when it is already confirmed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAminata}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-confirm-1504"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1403/vendor-orders/1504/confirm-receipt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1403",
+                "vendor-orders",
+                "1504",
+                "confirm-receipt"
+              ]
+            },
+            "description": "Slice 1504 is already confirmed and released in the seed. What this writes when it does fire is the buyer's own statement that the goods arrived, recorded in their name, next to the driver's account of the same moment — the status is the consequence of that row rather than the input to it, which is the whole difference between a custody chain and a status field somebody can set.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Confirming receipt answers idempotently when it is already confirmed — 200 or 201 or 204 or 400 or 409\", function () {",
+                  "  pm.expect([200,201,204,400,409]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nobody else can confirm receipt of her parcel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-confirm-not-mine"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1403/vendor-orders/1504/confirm-receipt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1403",
+                "vendor-orders",
+                "1504",
+                "confirm-receipt"
+              ]
+            },
+            "description": "Confirming receipt releases money to a seller. If anybody could do it for anybody, escrow would be decoration.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Nobody else can confirm receipt of her parcel — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "C5: the tracking page needs no account, no app and no email",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/track/K7MPQ4RTVX2ND9YH",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "track",
+                "K7MPQ4RTVX2ND9YH"
+              ]
+            },
+            "description": "This is the sister in Serrekunda with a forwarded message and nothing else. Sixteen characters from a thirty-symbol alphabet, because possession of one is the only credential there is."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — trackingCode is \\\"K7MPQ4RTVX2ND9YH\\\"\", function () {",
+                  "  const actual = H.get($body, \"trackingCode\");",
+                  "  const expected = \"K7MPQ4RTVX2ND9YH\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"trackingCode\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — stage exists\", function () {",
+                  "  const actual = H.get($body, \"stage\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"stage\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — description exists\", function () {",
+                  "  const actual = H.get($body, \"description\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"description\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — parcels gte\", function () {",
+                  "  const actual = H.get($body, \"parcels\");",
+                  "  const expected = {\"$gte\":1};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"parcels\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — destinationCity is \\\"London\\\"\", function () {",
+                  "  const actual = H.get($body, \"destinationCity\");",
+                  "  const expected = \"London\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"destinationCity\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — destinationCountry is \\\"GB\\\"\", function () {",
+                  "  const actual = H.get($body, \"destinationCountry\");",
+                  "  const expected = \"GB\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"destinationCountry\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"Oliver\\\" — no name: the page may have been forwarded to anybody\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Oliver\") < 0,",
+                  "    'found ' + \"\\\"Oliver\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"Bennett\\\" — nor a surname\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Bennett\") < 0,",
+                  "    'found ' + \"\\\"Bennett\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"221B\\\" — no street\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"221B\") < 0,",
+                  "    'found ' + \"\\\"221B\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"Baker Street\\\" — nor a street name\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Baker Street\") < 0,",
+                  "    'found ' + \"\\\"Baker Street\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"+447700900005\\\" — no phone number\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"+447700900005\") < 0,",
+                  "    'found ' + \"\\\"+447700900005\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"NW1 6XE\\\" — not even a postcode, which is a street on its own\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"NW1 6XE\") < 0,",
+                  "    'found ' + \"\\\"NW1 6XE\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"SJL-SEED-0001\\\" — no order number to quote at support\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"SJL-SEED-0001\") < 0,",
+                  "    'found ' + \"\\\"SJL-SEED-0001\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"129.73\\\" — no price: what somebody paid for a gift is their business\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"129.73\") < 0,",
+                  "    'found ' + \"\\\"129.73\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"GBP\\\" — nor the currency it was paid in\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"GBP\") < 0,",
+                  "    'found ' + \"\\\"GBP\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"Samsung\\\" — no contents\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Samsung\") < 0,",
+                  "    'found ' + \"\\\"Samsung\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: the tracking page needs no account, no app and no email — the body never says \\\"Ebrima\\\" — and not the driver's name\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Ebrima\") < 0,",
+                  "    'found ' + \"\\\"Ebrima\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5 — the events are fixed phrases, not the driver's free text\", function () {",
+                  "  // The buyer's own timeline says \"Assigned for the outbound leg\". This page",
+                  "  // says \"A driver has been assigned.\" That substitution is the only thing",
+                  "  // between a driver's notes and a stranger who was forwarded the message.",
+                  "  $body.events.forEach(function (e) {",
+                  "    pm.expect(e.description, 'an event with no description at all').to.be.a('string');",
+                  "    pm.expect(e.description, 'the internal wording leaked onto the public page')",
+                  "      .to.not.include('outbound leg');",
+                  "    pm.expect(e.description).to.not.include('international courier');",
+                  "  });",
+                  "});",
+                  "pm.test(\"C5 — parcel counts, because that is what a recipient actually asks\", function () {",
+                  "  pm.expect($body.parcels).to.be.a('number');",
+                  "  pm.expect($body.parcelsDelivered).to.be.a('number');",
+                  "  pm.expect($body.parcelsDelivered).to.be.at.most($body.parcels);",
+                  "});",
+                  "pm.test(\"C5 — a town and a country, and no more precision than that\", function () {",
+                  "  pm.expect($body.destinationCity).to.be.a('string');",
+                  "  pm.expect(JSON.stringify($body), 'coordinates on a public page are a front door')",
+                  "    .to.not.match(/\"lat(itude)?\"|\"lng\"|\"longitude\"/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The guest order has one too, on the same terms",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/track/B3WQHJ7FNXR5MTCD",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "track",
+                "B3WQHJ7FNXR5MTCD"
+              ]
+            },
+            "description": "A guest order has no account behind it at all, so the code is the only way anybody — including the buyer — reaches it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The guest order has one too, on the same terms — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"The guest order has one too, on the same terms — trackingCode is \\\"B3WQHJ7FNXR5MTCD\\\"\", function () {",
+                  "  const actual = H.get($body, \"trackingCode\");",
+                  "  const expected = \"B3WQHJ7FNXR5MTCD\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"trackingCode\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A code nobody was issued is a 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/track/ZZZZZZZZZZZZZZZZ",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "track",
+                "ZZZZZZZZZZZZZZZZ"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A code nobody was issued is a 404 — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And a code short enough to brute-force is not one either",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/track/ABC",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "track",
+                "ABC"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And a code short enough to brute-force is not one either — 400 or 404\", function () {",
+                  "  pm.expect([400,404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The same parcels, for the person who paid, say much more",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1401/tracking",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1401",
+                "tracking"
+              ]
+            },
+            "description": "The control for the public page. Run the two side by side: this one names the store, the courier, the tracking number and the driver's own words, because the person reading it is the person who paid."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The same parcels, for the person who paid, say much more — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"The buyer's timeline names what the public page withholds\", function () {",
+                  "  const text = H.text(pm.response);",
+                  "  pm.expect(text, 'the buyer should see which store').to.include('Kombo Electronics');",
+                  "  pm.expect(text, 'and the courier reference').to.include('SJL-DLV');",
                   "});"
                 ]
               }

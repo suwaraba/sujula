@@ -796,25 +796,29 @@ pm.test("C2 — each sub-order carries the rate it was struck at", function () {
     pm.expect(v.totalNative, v.storeName + ' has no native total').to.be.a('number');
   });
 });
-pm.test("C2 — and the slice total is the converted goods plus that seller's own leg", function () {
-  // totalNative is the GOODS in the seller's currency; total is those goods
-  // converted plus the delivery the platform charged for them. So the
-  // difference is the leg, which must be a real, non-negative amount rather
-  // than the rate failing to reproduce anything.
+pm.test("C2 — and the rate reproduces the slice's own total", function () {
+  // Both totals are the goods — the native one in the seller's currency, the
+  // display one converted — so the rate on the slice has to turn one into the
+  // other. It is the whole point of snapshotting it: a payout questioned next
+  // month has to be re-derivable from what is still on the row.
   $body.vendorOrders.forEach(function (v) {
-    const goods = v.totalNative * v.fxRate;
-    const leg = v.total - goods;
-    pm.expect(leg > -0.02, v.storeName + ': ' + v.totalNative + ' ' + v.listingCurrency
-      + ' at ' + v.fxRate + ' is ' + goods.toFixed(2)
-      + ', which is more than the slice total of ' + v.total).to.be.true;
-    pm.expect(leg, v.storeName + ": the leg came to more than the whole slice")
-      .to.be.below(v.total + 0.02);
+    const expected = v.totalNative * v.fxRate;
+    pm.expect(Math.abs(v.total - expected) < 0.02,
+      v.storeName + ': ' + v.totalNative + ' ' + v.listingCurrency + ' at ' + v.fxRate
+      + ' is ' + expected.toFixed(2) + ', slice says ' + v.total).to.be.true;
   });
 });
-pm.test("C3 — the sub-order totals come to the order total", function () {
+pm.test("C3 — the sub-order totals come to the goods on the order", function () {
+  // A slice's total is the GOODS. Delivery lives on the order, on each line's
+  // deliveryCost and on the slice's delivery_native, because the platform
+  // arranges it and keeps it — which is why a payout excludes it too. So the
+  // slices come to the order less its shipping, and that identity is what
+  // makes a buyer's per-seller screen add up to the whole.
   const slices = $body.vendorOrders.reduce(function (s, v) { return s + v.total; }, 0);
-  pm.expect(Math.abs(slices - $body.total) < 0.02,
-    'slices come to ' + slices.toFixed(2) + ' and the order to ' + $body.total).to.be.true;
+  const goods = $body.total - $body.shipping;
+  pm.expect(Math.abs(slices - goods) < 0.02,
+    'slices come to ' + slices.toFixed(2) + ' and the order less shipping to '
+    + goods.toFixed(2)).to.be.true;
 });
 pm.test("C2 — a payout is the goods less commission, in the seller's own money", function () {
   $body.vendorOrders.forEach(function (v) {
