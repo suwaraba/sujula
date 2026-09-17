@@ -187,6 +187,21 @@ module.exports = {
 
   legs: { ebrimaInProgress: 1911, lapsedOffer: 1912 },
 
+  /**
+   * Parcel codes, which are what the recipient surface resolves by.
+   *
+   * Not the same thing as an order's tracking code: an order can be several
+   * parcels from several sellers, and the person waiting at the door is waiting
+   * for one of them. So /track/{code} takes the ORDER's code and
+   * /parcels/{code} takes the SHIPMENT's, and passing one to the other is a
+   * 404.
+   */
+  parcelCodes: {
+    delivered: 'PARC7K3M9QXB2VDH',   // shipment 1900, handed over
+    inFlight: 'PARCQ4T8NHRW6JZY',    // shipment 1901, out for delivery to Isatou
+    unclaimed: 'PARCV2B9KXFM3QTD',   // shipment 1902, no events at all
+  },
+
   /** Isatou's code for shipment 1901. Emailed to Fatou in Madrid to pass on. */
   recipientCode: { shipment1901: '540913' },
 

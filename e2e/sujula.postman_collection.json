@@ -11815,6 +11815,2142 @@
       ]
     },
     {
+      "name": "06 — The custody chain: driver, counter, recipient",
+      "description": "Who may move a parcel, what they have to present, and what the recipient can change.",
+      "item": [
+        {
+          "name": "Ebrima's profile: what he drives and what he may carry",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "profile"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Ebrima's profile: what he drives and what he may carry — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Ebrima's profile: what he drives and what he may carry — status is \\\"APPROVED\\\"\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = \"APPROVED\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Ebrima's profile: what he drives and what he may carry — vehicleType is \\\"MOTOR\\\"\", function () {",
+                  "  const actual = H.get($body, \"vehicleType\");",
+                  "  const expected = \"MOTOR\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"vehicleType\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Ebrima's profile: what he drives and what he may carry — maxWeightKg gt\", function () {",
+                  "  const actual = H.get($body, \"maxWeightKg\");",
+                  "  const expected = {\"$gt\":0};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"maxWeightKg\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Ebrima's profile: what he drives and what he may carry — countryCode is \\\"GM\\\"\", function () {",
+                  "  const actual = H.get($body, \"countryCode\");",
+                  "  const expected = \"GM\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"countryCode\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Ebrima's profile: what he drives and what he may carry — kyc.documentsSubmitted is true\", function () {",
+                  "  const actual = H.get($body, \"kyc.documentsSubmitted\");",
+                  "  const expected = true;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"kyc.documentsSubmitted\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Ebrima's profile: what he drives and what he may carry — score.acceptancePercent gt\", function () {",
+                  "  const actual = H.get($body, \"score.acceptancePercent\");",
+                  "  const expected = {\"$gt\":0};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"score.acceptancePercent\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Driver profile — his acceptance rate is derived, not stored as a claim\", function () {",
+                  "  const score = $body.score;",
+                  "  const expected = score.offersReceived > 0",
+                  "    ? Math.round((score.accepted / score.offersReceived) * 10000) / 100",
+                  "    : 0;",
+                  "  pm.expect(Math.abs(score.acceptancePercent - expected) < 0.05,",
+                  "    score.accepted + ' of ' + score.offersReceived + ' is ' + expected",
+                  "    + '%, profile says ' + score.acceptancePercent).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "His assignments, and the lapsed offer that is deliberately not in them",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/assignments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "assignments"
+              ]
+            },
+            "description": "Leg 1911 is his and in progress. Leg 1912 is an offer that lapsed and is NOT listed — a driver shown a dead offer will tap it and read the refusal as a broken app."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"His assignments, and the lapsed offer that is deliberately not in them — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "const all = ($body.offered || []).concat($body.accepted || []);",
+                  "const ids = all.map(function (l) { return l.legId; });",
+                  "pm.test(\"Assignments — the live leg is there\", function () {",
+                  "  pm.expect(ids).to.include(1911);",
+                  "});",
+                  "pm.test(\"Assignments — the lapsed offer is not\", function () {",
+                  "  pm.expect(ids, 'leg 1912 lapsed and went back to the pool')",
+                  "    .to.not.include(1912);",
+                  "});",
+                  "pm.test(\"Assignments — each leg says what it pays, in the driver's own currency\", function () {",
+                  "  all.forEach(function (leg) {",
+                  "    pm.expect(leg.earning, 'leg ' + leg.legId + ' does not say what it pays').to.be.a('number');",
+                  "    pm.expect(leg.earningCurrency).to.equal('GMD');",
+                  "    pm.expect(leg.pickupFrom, 'leg ' + leg.legId + ' does not say where to go').to.be.a('string');",
+                  "  });",
+                  "});",
+                  "pm.test(\"Assignments — a list carries no recipient's phone number\", function () {",
+                  "  // He gets the destination when he is carrying the parcel, not while he is",
+                  "  // deciding whether to. A list of offers is a list a driver scrolls in",
+                  "  // public.",
+                  "  pm.expect(H.text(pm.response)).to.not.include('+2203100077');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Accepting an offer that has already lapsed is refused, and does not blame him",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-accept-lapsed"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/assignments/1912/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "assignments",
+                "1912",
+                "accept"
+              ]
+            },
+            "description": "It went back to the pool. The message says so rather than \"not allowed\", because a driver who taps a stale offer has done nothing wrong and will otherwise conclude the app is broken.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Accepting an offer that has already lapsed is refused, and does not blame him — 400 or 404 or 409 or 422\", function () {",
+                  "  pm.expect([400,404,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Lapsed offer — the refusal explains rather than accuses\", function () {",
+                  "  pm.expect(H.text(pm.response).length, 'refused with an empty body').to.be.above(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The parcel he is carrying: he gets the door, because he has to knock on it",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/shipments/1901",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "shipments",
+                "1901"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The parcel he is carrying: he gets the door, because he has to knock on it — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"The parcel he is carrying: he gets the door, because he has to knock on it — id is 1901\", function () {",
+                  "  const actual = H.get($body, \"id\");",
+                  "  const expected = 1901;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"id\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The parcel he is carrying: he gets the door, because he has to knock on it — status exists\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The parcel he is carrying: he gets the door, because he has to knock on it — destination.recipientName exists\", function () {",
+                  "  const actual = H.get($body, \"destination.recipientName\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"destination.recipientName\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The parcel he is carrying: he gets the door, because he has to knock on it — destination.street exists\", function () {",
+                  "  const actual = H.get($body, \"destination.street\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"destination.street\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The parcel he is carrying: he gets the door, because he has to knock on it — destination.city is \\\"Serrekunda\\\"\", function () {",
+                  "  const actual = H.get($body, \"destination.city\");",
+                  "  const expected = \"Serrekunda\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"destination.city\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The parcel he is carrying: he gets the door, because he has to knock on it — origin.storeName is \\\"Kombo Electronics\\\"\", function () {",
+                  "  const actual = H.get($body, \"origin.storeName\");",
+                  "  const expected = \"Kombo Electronics\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"origin.storeName\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"In flight — he has the name, the street and the number\", function () {",
+                  "  pm.expect($body.destination.recipientPhone, 'he cannot ring her without it')",
+                  "    .to.be.a('string');",
+                  "  pm.expect($body.destination.lat, 'and cannot navigate without a pin').to.be.a('number');",
+                  "});",
+                  "pm.test(\"In flight — and nothing about who paid for it\", function () {",
+                  "  const text = H.text(pm.response);",
+                  "  // Fatou in Madrid paid for this parcel. A driver has no reason to know that",
+                  "  // anybody did, let alone who.",
+                  "  ['Fatou', 'fatou.admin@sujula.gm', 'EUR', '132.16'].forEach(function (leak) {",
+                  "    pm.expect(text, 'the driver is shown ' + leak).to.not.include(leak);",
+                  "  });",
+                  "});",
+                  "pm.test(\"In flight — the chain is events, not a status somebody set\", function () {",
+                  "  pm.expect($body.chain, 'no custody chain on the parcel').to.be.an('array');",
+                  "  $body.chain.forEach(function (event) {",
+                  "    pm.expect(event.type, 'an event with no type').to.be.a('string');",
+                  "    pm.expect(event.occurredAt, 'an event with no time').to.be.a('string');",
+                  "    pm.expect(event.attestedByPosition,",
+                  "      'an event that does not say whether a position corroborated it')",
+                  "      .to.be.a('boolean');",
+                  "  });",
+                  "});",
+                  "pm.test(\"In flight — his own leg is marked as his\", function () {",
+                  "  const mine = $body.legs.filter(function (l) { return l.mine; });",
+                  "  pm.expect(mine.length, 'none of the legs are marked his').to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The parcel he handed over: the destination block is ABSENT, not blank",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/shipments/1900",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "shipments",
+                "1900"
+              ]
+            },
+            "description": "A driver who delivered a parcel yesterday has no reason to still hold somebody's front door. Absent rather than emptied, because a client that renders a blank street has been handed a field to fill in."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The parcel he handed over: the destination block is ABSENT, not blank — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"The parcel he handed over: the destination block is ABSENT, not blank — id is 1900\", function () {",
+                  "  const actual = H.get($body, \"id\");",
+                  "  const expected = 1900;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"id\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The parcel he handed over: the destination block is ABSENT, not blank — status is \\\"DELIVERED\\\"\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = \"DELIVERED\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The parcel he handed over: the destination block is ABSENT, not blank — destination exists\", function () {",
+                  "  const actual = H.get($body, \"destination\");",
+                  "  const expected = {\"$exists\":false};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"destination\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The parcel he handed over: the destination block is ABSENT, not blank — origin exists\", function () {",
+                  "  const actual = H.get($body, \"origin\");",
+                  "  const expected = {\"$exists\":false};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"origin\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The parcel he handed over: the destination block is ABSENT, not blank — the body never says \\\"Aminata\\\" — the recipient of a finished delivery is no longer his business\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Aminata\") < 0,",
+                  "    'found ' + \"\\\"Aminata\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"The parcel he handed over: the destination block is ABSENT, not blank — the body never says \\\"Sayerr Jobe\\\" — nor her street\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Sayerr Jobe\") < 0,",
+                  "    'found ' + \"\\\"Sayerr Jobe\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"Finished — the chain is still there, because that is the record\", function () {",
+                  "  // The window closes on the PII and not on the evidence: the chain is what",
+                  "  // answers \"who had this parcel, and when\" years from now.",
+                  "  pm.expect($body.chain.length, 'a delivered parcel with no custody events').to.be.at.least(2);",
+                  "  const types = $body.chain.map(function (e) { return e.type; });",
+                  "  pm.expect(types).to.include('COLLECTED');",
+                  "});",
+                  "pm.test(\"Finished — and so is what he earned for it\", function () {",
+                  "  pm.expect($body.legs[0].earning).to.be.a('number');",
+                  "  pm.expect($body.legs[0].completedAt).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A parcel nobody has accepted is not his to read the door of",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/shipments/1902",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "shipments",
+                "1902"
+              ]
+            },
+            "description": "Shipment 1902 has no events at all and its DRIVER_OFFERED status comes from the leg rather than from anything having happened — which is the state most parcels are in at any moment."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A parcel nobody has accepted is not his to read the door of — 200 or 403 or 404\", function () {",
+                  "  pm.expect([200,403,404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test(\"Unclaimed — no destination, because it is not his\", function () {",
+                  "    pm.expect($body.destination, 'a parcel he has not accepted handed him the address')",
+                  "      .to.not.exist;",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Collecting a parcel nobody has accepted is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-collect-unclaimed"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/shipments/1902/collect",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "shipments",
+                "1902",
+                "collect"
+              ]
+            },
+            "description": "Nobody has accepted that leg, so the parcel is not his to move. This is the first link of the chain refusing to be skipped.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"871460\",\n  \"latitude\": 13.4383,\n  \"longitude\": -16.6781\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Collecting a parcel nobody has accepted is refused — 400 or 403 or 404 or 409 or 422\", function () {",
+                  "  pm.expect([400,403,404,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A dead handoff code does not open the first link either",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-collect-dead-code"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/shipments/1901/collect",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "shipments",
+                "1901",
+                "collect"
+              ]
+            },
+            "description": "304912 was the collection code for slice 1505 and was regenerated. A code that still worked after being replaced would make regenerating one pointless — which is the whole reason a seller can.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"304912\",\n  \"latitude\": 13.4383,\n  \"longitude\": -16.6781\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A dead handoff code does not open the first link either — 400 or 403 or 404 or 409 or 422\", function () {",
+                  "  pm.expect([400,403,404,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Asking for the recipient's code emails the buyer, and never shows it to the driver",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-request-recipient-code"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/shipments/1901/request-recipient-code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "shipments",
+                "1901",
+                "request-recipient-code"
+              ]
+            },
+            "description": "It reaches Fatou in Madrid, who passes the six digits to her sister. Isatou needs no account, no app and no email of her own. The driver never sees it: one who could read it could mark a parcel delivered without meeting anybody.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Asking for the recipient's code emails the buyer, and never shows it to the driver — 200 or 201 or 202 or 400 or 409 or 429\", function () {",
+                  "  pm.expect([200,201,202,400,409,429]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Recipient code — the six digits are never in the answer\", function () {",
+                  "  const text = H.text(pm.response);",
+                  "  pm.expect(text, 'the driver was handed the code he is supposed to be given by the recipient')",
+                  "    .to.not.include(\"540913\");",
+                  "  // Any six-digit run at all is worth refusing here, not just this one.",
+                  "  pm.expect(text, 'a six-digit code appears in the response').to.not.match(/\\b\\d{6}\\b/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delivering with the wrong code is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-deliver-wrong-code"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/shipments/1901/deliver",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "shipments",
+                "1901",
+                "deliver"
+              ]
+            },
+            "description": "The last link, and the one somebody would forge if any single piece of evidence were enough on its own.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"000000\",\n  \"latitude\": 13.4384,\n  \"longitude\": -16.6781,\n  \"photoKey\": \"custody/e2e/handover.jpg\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Delivering with the wrong code is refused — 400 or 403 or 409 or 422\", function () {",
+                  "  pm.expect([400,403,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And delivering with no position is refused even with the right code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-deliver-no-position"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/shipments/1901/deliver",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "shipments",
+                "1901",
+                "deliver"
+              ]
+            },
+            "description": "A code, a position and a photograph. Each on its own is forgeable by somebody: the code by whoever overheard it, the position by an app, the photograph by anybody holding a similar box. Together they are evidence.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"540913\",\n  \"photoKey\": \"custody/e2e/handover.jpg\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And delivering with no position is refused even with the right code — 400 or 403 or 422\", function () {",
+                  "  pm.expect([400,403,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Another driver cannot read his parcel at all",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenIsatou}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/shipments/1901",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "shipments",
+                "1901"
+              ]
+            },
+            "description": "Isatou runs a counter rather than a bike, so she fails the role as well as the ownership — but the point holds for a second driver: the driver is resolved from the session and goes into the query, so a path variable cannot open somebody else's parcel."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Another driver cannot read his parcel at all — 403 or 404\", function () {",
+                  "  pm.expect([403,404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "His earnings, per currency, with the legs behind each figure",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/earnings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "earnings"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"His earnings, per currency, with the legs behind each figure — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Earnings — the total is the sum of the lines, which is what makes it checkable\", function () {",
+                  "  $body.byCurrency.forEach(function (group) {",
+                  "    const summed = group.lines.reduce(function (s, l) { return s + l.amount; }, 0);",
+                  "    pm.expect(Math.abs(group.total - summed) < 0.02,",
+                  "      group.currency + ': lines come to ' + summed.toFixed(2) + ' and the total says '",
+                  "      + group.total).to.be.true;",
+                  "    pm.expect(group.legs, 'the leg count does not match the lines')",
+                  "      .to.equal(group.lines.length);",
+                  "  });",
+                  "});",
+                  "pm.test(\"Earnings — never one total across currencies\", function () {",
+                  "  pm.expect($body.total, 'a single total across two currencies is not a number')",
+                  "    .to.not.exist;",
+                  "});",
+                  "pm.test(\"Earnings — a line says where it went, not who it went to\", function () {",
+                  "  $body.byCurrency.forEach(function (group) {",
+                  "    group.lines.forEach(function (line) {",
+                  "      pm.expect(line.dropTo, 'a leg with no destination town').to.be.a('string');",
+                  "      pm.expect(JSON.stringify(line), 'a recipient name in an earnings statement')",
+                  "        .to.not.match(/recipientName|recipientPhone/);",
+                  "    });",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "His history is towns and dates, not addresses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "history"
+              ]
+            },
+            "description": "Where a driver has been all day is data about him; where each parcel went is data about somebody else. The history keeps the first and drops the second down to a town."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"His history is towns and dates, not addresses — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"History — a town and a country per row, and no street\", function () {",
+                  "  ($body.rows || []).forEach(function (row) {",
+                  "    pm.expect(row.dropCity, 'a row with no destination town').to.be.a('string');",
+                  "    pm.expect(JSON.stringify(row)).to.not.match(/street|recipientName|recipientPhone/i);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Isatou's counters, with the figures the public search withholds",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenIsatou}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pickup/points",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pickup",
+                "points"
+              ]
+            },
+            "description": "The operator's own view is the opposite decision from the public one: she gets the real count, the capacity, the commission and the closure, because it is her business. The public search gets a band."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Isatou's counters, with the figures the public search withholds — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Her counters — real counts rather than a band alone\", function () {",
+                  "  pm.expect($body.points.length, 'she runs at least one counter').to.be.at.least(1);",
+                  "  $body.points.forEach(function (p) {",
+                  "    pm.expect(p.storedParcels, p.name + ' does not say how many are on the shelf')",
+                  "      .to.be.a('number');",
+                  "    pm.expect(p.capacity, p.name + ' does not say how many it holds').to.be.a('number');",
+                  "    pm.expect(p.commissionPerParcel, p.name + ' does not say what she earns')",
+                  "      .to.be.a('number');",
+                  "  });",
+                  "});",
+                  "pm.test(\"Her counters — the one closed for a funeral is HERS and is listed\", function () {",
+                  "  // The public search hides it, for the shopper's sake. Hiding it from the",
+                  "  // operator would hide her own counter from her.",
+                  "  const ids = $body.points.map(function (p) { return p.id; });",
+                  "  pm.expect(ids).to.include(1097);",
+                  "  const closed = $body.points.find(function (p) { return p.id === 1097; });",
+                  "  pm.expect(closed.closureReason).to.match(/funeral/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Three piles at the counter: coming, on the shelf, and overdue",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenIsatou}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pickup/points/1096/parcels",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pickup",
+                "points",
+                "1096",
+                "parcels"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Three piles at the counter: coming, on the shelf, and overdue — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Three piles at the counter: coming, on the shelf, and overdue — storedCount gte\", function () {",
+                  "  const actual = H.get($body, \"storedCount\");",
+                  "  const expected = {\"$gte\":1};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"storedCount\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Three piles at the counter: coming, on the shelf, and overdue — capacityBand oneOf\", function () {",
+                  "  const actual = H.get($body, \"capacityBand\");",
+                  "  const expected = {\"$oneOf\":[\"AVAILABLE\",\"BUSY\",\"FULL\",\"CLOSED\"]};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"capacityBand\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Three piles at the counter: coming, on the shelf, and overdue — stored.0.shipmentId is 1903\", function () {",
+                  "  const actual = H.get($body, \"stored.0.shipmentId\");",
+                  "  const expected = 1903;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"stored.0.shipmentId\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Three piles at the counter: coming, on the shelf, and overdue — stored.0.shelfCode is \\\"A-118\\\"\", function () {",
+                  "  const actual = H.get($body, \"stored.0.shelfCode\");",
+                  "  const expected = \"A-118\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"stored.0.shelfCode\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The shelf — a parcel that is here has a name and a shelf\", function () {",
+                  "  const parcel = $body.stored[0];",
+                  "  pm.expect(parcel.recipientName, 'she has to know who to hand it to').to.be.a('string');",
+                  "  pm.expect(parcel.shelfCode, 'and where it is').to.be.a('string');",
+                  "  pm.expect(parcel.daysRemaining, 'and how long she has to keep it').to.be.a('number');",
+                  "});",
+                  "pm.test(\"The shelf — the phone is a hint rather than a number\", function () {",
+                  "  const parcel = $body.stored[0];",
+                  "  pm.expect(parcel.recipientPhoneHint, 'no hint to check a caller against')",
+                  "    .to.be.a('string');",
+                  "  pm.expect(parcel.recipientPhoneHint, 'a full number on a counter screen')",
+                  "    .to.match(/[^0-9+]/);",
+                  "  pm.expect(H.text(pm.response)).to.not.include('+2203100010');",
+                  "});",
+                  "pm.test(\"The shelf — an incoming parcel carries no recipient name\", function () {",
+                  "  // They are not here yet. A counter that knew who every parcel in the",
+                  "  // country was for would be a directory.",
+                  "  ($body.incoming || []).forEach(function (parcel) {",
+                  "    pm.expect(parcel.recipientName, 'an incoming parcel named its recipient').to.not.exist;",
+                  "  });",
+                  "});",
+                  "pm.test(\"The shelf — the stored count is the shelf, not an assertion\", function () {",
+                  "  pm.expect($body.storedCount).to.equal($body.stored.length);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Releasing a parcel needs the code AND the name of whoever is collecting",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenIsatou}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-release-no-name"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pickup/points/1096/parcels/1903/release",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pickup",
+                "points",
+                "1096",
+                "parcels",
+                "1903",
+                "release"
+              ]
+            },
+            "description": "A code alone would let anybody who overheard it take the parcel; a name alone anybody who read the label. A brother collecting for his sister is allowed and written down.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Releasing a parcel needs the code AND the name of whoever is collecting — 400 or 403 or 422\", function () {",
+                  "  pm.expect([400,403,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And the wrong code is refused even with a name",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenIsatou}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-release-wrong-code"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pickup/points/1096/parcels/1903/release",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pickup",
+                "points",
+                "1096",
+                "parcels",
+                "1903",
+                "release"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"000000\",\n  \"collectedBy\": \"Her brother Lamin\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And the wrong code is refused even with a name — 400 or 403 or 409 or 422\", function () {",
+                  "  pm.expect([400,403,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Returning a parcel before its deadline is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenIsatou}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-return-early"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pickup/points/1096/parcels/1903/return",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pickup",
+                "points",
+                "1096",
+                "parcels",
+                "1903",
+                "return"
+              ]
+            },
+            "description": "Somebody may be travelling to collect it, and sending it back early takes a decision that is not the counter's.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Nobody has come for it\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Returning a parcel before its deadline is refused — 400 or 403 or 409 or 422\", function () {",
+                  "  pm.expect([400,403,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Early return — the refusal says when it could be returned\", function () {",
+                  "  pm.expect(H.text(pm.response).length, 'refused with no reason').to.be.above(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A closed counter says WHICH of the four reasons it is",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenIsatou}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-accept-at-closed"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pickup/points/1097/parcels/1903/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pickup",
+                "points",
+                "1097",
+                "parcels",
+                "1903",
+                "accept"
+              ]
+            },
+            "description": "Closed, suspended, switched off, or full. A driver standing outside with a parcel needs to know which, because three of them mean \"come back\" and one means \"go somewhere else\".",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"driverCode\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A closed counter says WHICH of the four reasons it is — 400 or 403 or 409 or 422\", function () {",
+                  "  pm.expect([400,403,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Another operator's counter is not readable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenEbrima}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pickup/points/1096/parcels",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pickup",
+                "points",
+                "1096",
+                "parcels"
+              ]
+            },
+            "description": "These rows lead to recipients' names and phone numbers, so the operator is resolved from the session and goes into every query beside the point id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Another operator's counter is not readable — 403 or 404\", function () {",
+                  "  pm.expect([403,404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "What the counter earns, which is the operator's own business",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenIsatou}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/pickup/points/1096/earnings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "pickup",
+                "points",
+                "1096",
+                "earnings"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"What the counter earns, which is the operator's own business — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "C5: her parcel page, with no account and no app",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCQ4T8NHRW6JZY",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCQ4T8NHRW6JZY"
+              ]
+            },
+            "description": "Isatou in Serrekunda did not sign up for anything. The code is the whole credential, and the page is built to be worth nothing to a stranger holding it — which is why it carries a first name and a town.\n\nNote also that this is the SHIPMENT's code and not the order's: an order can be several parcels from several sellers, and the person at the door is waiting for one of them."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"C5: her parcel page, with no account and no app — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — trackingCode is \\\"PARCQ4T8NHRW6JZY\\\"\", function () {",
+                  "  const actual = H.get($body, \"trackingCode\");",
+                  "  const expected = \"PARCQ4T8NHRW6JZY\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"trackingCode\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — stage is \\\"OUT_FOR_DELIVERY\\\"\", function () {",
+                  "  const actual = H.get($body, \"stage\");",
+                  "  const expected = \"OUT_FOR_DELIVERY\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"stage\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — forName is \\\"Isatou\\\"\", function () {",
+                  "  const actual = H.get($body, \"forName\");",
+                  "  const expected = \"Isatou\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"forName\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — destinationCity is \\\"Serrekunda\\\"\", function () {",
+                  "  const actual = H.get($body, \"destinationCity\");",
+                  "  const expected = \"Serrekunda\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"destinationCity\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — destinationCountry is \\\"GM\\\"\", function () {",
+                  "  const actual = H.get($body, \"destinationCountry\");",
+                  "  const expected = \"GM\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"destinationCountry\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — itemCount gte\", function () {",
+                  "  const actual = H.get($body, \"itemCount\");",
+                  "  const expected = {\"$gte\":1};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"itemCount\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — youCan.choosePickupPoint is true\", function () {",
+                  "  const actual = H.get($body, \"youCan.choosePickupPoint\");",
+                  "  const expected = true;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"youCan.choosePickupPoint\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — youCan.reschedule is true\", function () {",
+                  "  const actual = H.get($body, \"youCan.reschedule\");",
+                  "  const expected = true;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"youCan.reschedule\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — youCan.authoriseSafeDrop is true\", function () {",
+                  "  const actual = H.get($body, \"youCan.authoriseSafeDrop\");",
+                  "  const expected = true;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"youCan.authoriseSafeDrop\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — the body never says \\\"Ceesay\\\" — a first name only: the link may have been forwarded\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Ceesay\") < 0,",
+                  "    'found ' + \"\\\"Ceesay\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — the body never says \\\"+2203100077\\\" — her own number is not something to print back at her\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"+2203100077\") < 0,",
+                  "    'found ' + \"\\\"+2203100077\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — the body never says \\\"Fatou\\\" — and the payer is nobody she was told about\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Fatou\") < 0,",
+                  "    'found ' + \"\\\"Fatou\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — the body never says \\\"132.16\\\" — nor what the gift cost\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"132.16\") < 0,",
+                  "    'found ' + \"\\\"132.16\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — the body never says \\\"EUR\\\" — nor the currency it was bought in\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"EUR\") < 0,",
+                  "    'found ' + \"\\\"EUR\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — the body never says \\\"Samsung\\\" — no contents: a parcel description is a theft target\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Samsung\") < 0,",
+                  "    'found ' + \"\\\"Samsung\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — the body never says \\\"Ebrima\\\" — and not the driver's name\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Ebrima\") < 0,",
+                  "    'found ' + \"\\\"Ebrima\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5: her parcel page, with no account and no app — the body never says \\\"SJL-SEED-0004\\\" — no order number\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"SJL-SEED-0004\") < 0,",
+                  "    'found ' + \"\\\"SJL-SEED-0004\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"C5 — she is told what she can still change and, when she cannot, why\", function () {",
+                  "  pm.expect($body.youCan, 'nothing tells her what she is allowed to do').to.be.an('object');",
+                  "  if ($body.youCan.reschedule === false) {",
+                  "    pm.expect($body.youCan.why, 'refused with no reason given to the one person waiting')",
+                  "      .to.be.a('string');",
+                  "  }",
+                  "});",
+                  "pm.test(\"C5 — her standing instructions are reported back to her\", function () {",
+                  "  pm.expect($body.standing, 'no standing instructions block').to.be.an('object');",
+                  "  pm.expect($body.standing.safeDropAuthorised).to.be.a('boolean');",
+                  "});",
+                  "pm.test(\"C5 — the history is fixed phrases, as the public page is\", function () {",
+                  "  ($body.history || []).forEach(function (event) {",
+                  "    pm.expect(event.description).to.be.a('string');",
+                  "    pm.expect(event.description, 'internal wording on the recipient page')",
+                  "      .to.not.include('outbound leg');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A delivered parcel tells her it is done, and closes the three choices",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARC7K3M9QXB2VDH",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARC7K3M9QXB2VDH"
+              ]
+            },
+            "description": "And says why rather than greying three buttons out, because she is the one person who cannot ask anybody."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A delivered parcel tells her it is done, and closes the three choices — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"A delivered parcel tells her it is done, and closes the three choices — stage is \\\"DELIVERED\\\"\", function () {",
+                  "  const actual = H.get($body, \"stage\");",
+                  "  const expected = \"DELIVERED\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"stage\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A delivered parcel tells her it is done, and closes the three choices — forName is \\\"Aminata\\\"\", function () {",
+                  "  const actual = H.get($body, \"forName\");",
+                  "  const expected = \"Aminata\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"forName\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A delivered parcel tells her it is done, and closes the three choices — youCan.choosePickupPoint is false\", function () {",
+                  "  const actual = H.get($body, \"youCan.choosePickupPoint\");",
+                  "  const expected = false;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"youCan.choosePickupPoint\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A delivered parcel tells her it is done, and closes the three choices — youCan.reschedule is false\", function () {",
+                  "  const actual = H.get($body, \"youCan.reschedule\");",
+                  "  const expected = false;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"youCan.reschedule\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A delivered parcel tells her it is done, and closes the three choices — youCan.authoriseSafeDrop is false\", function () {",
+                  "  const actual = H.get($body, \"youCan.authoriseSafeDrop\");",
+                  "  const expected = false;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"youCan.authoriseSafeDrop\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A delivered parcel tells her it is done, and closes the three choices — youCan.why exists\", function () {",
+                  "  const actual = H.get($body, \"youCan.why\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"youCan.why\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An order's tracking code is not a parcel code",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/K7MPQ4RTVX2ND9YH",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "K7MPQ4RTVX2ND9YH"
+              ]
+            },
+            "description": "Two different credentials for two different things, and neither resolves the other. An order is several parcels; a parcel is what somebody is standing at the door for."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"An order's tracking code is not a parcel code — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A code nobody was issued is a 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCZZZZZZZZZZZZ",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCZZZZZZZZZZZZ"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A code nobody was issued is a 404 — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "She asks for her own code, with no account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCQ4T8NHRW6JZY/request-code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCQ4T8NHRW6JZY",
+                "request-code"
+              ]
+            },
+            "description": "Open on purpose, and the clearest case of C5 on the platform: requiring a sign-in here would hand the decision back to whoever has an account, which is exactly the wrong person.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"She asks for her own code, with no account — 200 or 201 or 202 or 400 or 429\", function () {",
+                  "  pm.expect([200,201,202,400,429]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Her code — the answer says it was sent, not what it was\", function () {",
+                  "  pm.expect(H.text(pm.response), 'the code itself came back to an anonymous caller')",
+                  "    .to.not.match(/\\b\\d{6}\\b/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "She chooses a counter instead of the door",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCQ4T8NHRW6JZY/choose-pickup-point",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCQ4T8NHRW6JZY",
+                "choose-pickup-point"
+              ]
+            },
+            "description": "Verified by the six digits rather than by a session, because she has no session. Her code is what proves she is the person the parcel is for.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pickupPointId\": 1096,\n  \"code\": \"540913\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"She chooses a counter instead of the door — 200 or 201 or 202 or 400 or 403 or 409 or 422\", function () {",
+                  "  pm.expect([200,201,202,400,403,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "if (pm.response.code < 300) {",
+                  "  pm.test(\"Her choice — recorded, and the parcel is going to the counter\", function () {",
+                  "    pm.expect(JSON.stringify($body)).to.match(/1096|Westfield/);",
+                  "  });",
+                  "} else {",
+                  "  pm.test(\"Her choice — refused with a reason she can act on\", function () {",
+                  "    pm.expect(H.text(pm.response).length).to.be.above(2);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Without her code, nobody changes where her parcel goes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCQ4T8NHRW6JZY/choose-pickup-point",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCQ4T8NHRW6JZY",
+                "choose-pickup-point"
+              ]
+            },
+            "description": "The page is open, so the code is the only thing stopping whoever was forwarded the message from redirecting somebody else's parcel to a counter they can reach.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pickupPointId\": 1097\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Without her code, nobody changes where her parcel goes — 400 or 401 or 403 or 422\", function () {",
+                  "  pm.expect([400,401,403,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And a wrong code is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCQ4T8NHRW6JZY/reschedule",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCQ4T8NHRW6JZY",
+                "reschedule"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"000000\",\n  \"from\": \"2026-09-19T14:00:00\",\n  \"until\": \"2026-09-19T18:00:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And a wrong code is refused — 400 or 401 or 403 or 422\", function () {",
+                  "  pm.expect([400,401,403,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A window in the past is refused whatever the code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCQ4T8NHRW6JZY/reschedule",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCQ4T8NHRW6JZY",
+                "reschedule"
+              ]
+            },
+            "description": "A delivery window that has already passed is not a reschedule, it is a parcel nobody will ever attempt again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"540913\",\n  \"from\": \"2020-01-01T09:00:00\",\n  \"until\": \"2020-01-01T17:00:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A window in the past is refused whatever the code — 400 or 403 or 422\", function () {",
+                  "  pm.expect([400,403,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Authorising a safe drop names the place and the person",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCQ4T8NHRW6JZY/authorise-safe-drop",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCQ4T8NHRW6JZY",
+                "authorise-safe-drop"
+              ]
+            },
+            "description": "Because the alternative is a driver deciding on her behalf. What she has authorised goes onto the parcel the driver reads, and the photograph is then the only proof there will be — so the authorisation has to be hers and has to be recorded.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"540913\",\n  \"location\": \"with the pharmacy next door\",\n  \"person\": \"Ndey\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Authorising a safe drop names the place and the person — 200 or 201 or 202 or 400 or 403 or 409 or 422\", function () {",
+                  "  pm.expect([200,201,202,400,403,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nobody can authorise one on her behalf",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCQ4T8NHRW6JZY/authorise-safe-drop",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCQ4T8NHRW6JZY",
+                "authorise-safe-drop"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"location\": \"behind the gate\",\n  \"person\": \"Anybody\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Nobody can authorise one on her behalf — 400 or 401 or 403 or 422\", function () {",
+                  "  pm.expect([400,401,403,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A delivered parcel cannot be rescheduled by anybody",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARC7K3M9QXB2VDH/reschedule",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARC7K3M9QXB2VDH",
+                "reschedule"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"540913\",\n  \"from\": \"2026-09-20T09:00:00\",\n  \"until\": \"2026-09-20T17:00:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A delivered parcel cannot be rescheduled by anybody — 400 or 403 or 409 or 422\", function () {",
+                  "  pm.expect([400,403,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "90 — The role matrix",
       "description": "Generated from endpoints.json: 432 operations, 863 rows.\n\nLeft out on purpose: DELETE /api/users/{id}/permanent (an erasure the matrix cannot undo); POST /auth/logout (signing a persona out would fail every folder after this one); POST /auth/logout-all (signing a persona out would fail every folder after this one); DELETE /me (an erasure the matrix cannot undo).",
       "item": [
