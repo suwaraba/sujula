@@ -146,12 +146,36 @@ public class DeliveryContextService {
     /** The entity, for the services that price against a context. */
     @Transactional(readOnly = true)
     public DeliveryContext require(String id, Long userId) {
-        DeliveryContext context = contexts.findLive(id)
+        return lookup(id, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Delivery context", id));
-        if (!context.isAnonymous() && !context.belongsTo(userId)) {
-            throw new ResourceNotFoundException("Delivery context", id);
+    }
+
+    /**
+     * The same resolution, for a caller that has something to do either way.
+     *
+     * <p>Empty rather than thrown, and that is the whole reason this method
+     * exists. Reading a cart prices its shipping on a best-effort basis: a
+     * context that has expired, or that belongs to somebody else, leaves the
+     * cart readable without a shipping figure rather than failing the read — a
+     * shopper whose destination lapsed should be asked for it again, not shown
+     * an error page with their basket behind it.
+     *
+     * <p>Catching {@link #require}'s exception looked like it did that, and did
+     * not. This method runs in the caller's transaction, so an exception
+     * escaping it marks that transaction rollback-only; the caller then caught
+     * it, carried on, returned normally, and the commit failed with
+     * UnexpectedRollbackException. GET /carts/{token} answered 500 for the one
+     * case the catch was written for. REQUIRES_NEW would also have fixed it and
+     * would have opened a second transaction on every cart read to report a
+     * result that is not exceptional in the first place.
+     */
+    @Transactional(readOnly = true)
+    public Optional<DeliveryContext> lookup(String id, Long userId) {
+        if (id == null || id.isBlank()) {
+            return Optional.empty();
         }
-        return context;
+        return contexts.findLive(id)
+                .filter(context -> context.isAnonymous() || context.belongsTo(userId));
     }
 
     // ─────────────────────────────────────────────────────────────────────────

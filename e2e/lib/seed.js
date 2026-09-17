@@ -102,6 +102,19 @@ module.exports = {
     mariama: { id: 1103, slug: null,                owner: 1010, settles: 'GMD', country: 'SN' },
   },
 
+  /**
+   * Slugs, which are what the public product and store pages resolve by.
+   *
+   * GET /products/{slug} takes a slug and GET /products/{productId}/questions
+   * takes a number, so both forms of every listing are needed.
+   */
+  slugs: {
+    phone: 'samsung-galaxy-a16',
+    featurePhone: 'nokia-110-4g',
+    kettle: 'tobaski-electric-kettle',
+    waxPrint: 'wax-print-six-yards-indigo',
+  },
+
   products: {
     phone: 1301,        // the one with 180 views and one sale, and two questions
     speaker: 1302,

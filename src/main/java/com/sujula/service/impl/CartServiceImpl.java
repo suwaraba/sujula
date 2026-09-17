@@ -890,17 +890,23 @@ public class CartServiceImpl implements CartService {
             return;
         }
 
-        DeliveryContext destination;
-        try {
-            Long userId = cart.getUser() != null ? cart.getUser().getId() : null;
-            destination = deliveryContexts.require(cart.getDeliveryContextId(), userId);
-        } catch (RuntimeException e) {
-            // The context expired or was never valid. The cart still reads; the
-            // shopper is asked for a destination again.
-            log.info("[Cart] Delivery context {} is no longer usable: {}",
-                    cart.getDeliveryContextId(), e.getMessage());
+        Long userId = cart.getUser() != null ? cart.getUser().getId() : null;
+        // lookup, not require. An expired or unreadable context is an ordinary
+        // outcome here — the cart still reads and the shopper is asked for a
+        // destination again — and asking for it as an exception did not
+        // produce that behaviour: require() runs in this transaction, so its
+        // exception marked the transaction rollback-only, and the commit after
+        // this method returned normally failed with UnexpectedRollbackException.
+        // GET /carts/{token} answered 500 in exactly the case this degradation
+        // was written for.
+        Optional<DeliveryContext> resolved =
+                deliveryContexts.lookup(cart.getDeliveryContextId(), userId);
+        if (resolved.isEmpty()) {
+            log.info("[Cart] Delivery context {} is no longer usable, so cart {} is priced "
+                    + "without shipping", cart.getDeliveryContextId(), cart.getId());
             return;
         }
+        DeliveryContext destination = resolved.get();
 
         DeliveryDestination to = new DeliveryDestination(
                 destination.getLatitude(), destination.getLongitude(),

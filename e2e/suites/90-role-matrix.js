@@ -113,6 +113,23 @@ function skipReason(endpoint) {
 /** A name that reads in a run report without the path being guessed at. */
 const label = (endpoint) => `${endpoint.method} ${endpoint.path}`;
 
+/**
+ * The assertion every row in this folder carries, whatever else it asserts.
+ *
+ * A refusal is a decision; a 500 is the absence of one. Nine hundred requests
+ * from seven different kinds of caller, several of them with no body and a
+ * path variable pointing at somebody else's row, is the widest net this
+ * collection casts — and an endpoint that throws under it is throwing in
+ * production too, where the caller is a real person and the stack trace goes
+ * in a log nobody reads.
+ */
+const NEVER_THROWS = `
+pm.test("no caller should be able to make this endpoint throw", function () {
+  pm.expect(pm.response.code, 'answered ' + pm.response.code + ': '
+    + H.text(pm.response).slice(0, 300)).to.be.below(500);
+});
+`;
+
 function refusedAtTheGate(endpoint) {
   const rule = ruleFor(endpoint.method, endpoint.path);
   if (rule.who === 'open') return [];
@@ -143,6 +160,7 @@ function refusedAtTheGate(endpoint) {
         // pinning the exact code here would make the matrix red the day
         // somebody corrects it.
         status: [401, 403],
+        script: NEVER_THROWS,
       });
     });
 }
@@ -170,7 +188,7 @@ pm.test(${JSON.stringify(`${label(endpoint)} — ${key} gets no answer`)}, funct
     + ', which means this caller reached data that is not theirs')
     .to.be.at.least(400);
 });
-`,
+` + NEVER_THROWS,
   }));
 }
 
@@ -188,13 +206,19 @@ function openToEveryone(endpoint) {
     note: 'Public on purpose. Browsing precedes signing in on this marketplace, and '
         + 'the recipient reading a tracking page has no account to sign in to — so '
         + 'this is asserted rather than assumed, because a rule tightened by accident '
-        + 'is a storefront nobody can reach.',
+        + 'is a storefront nobody can reach.\n\n'
+        + 'This is a claim about SECURITY and not about content: several of these '
+        + 'need a query string to answer usefully, so a 404 is a legitimate answer '
+        + 'here and the row would pass on one. What each of them actually returns is '
+        + 'asserted in the suite for its own surface — which is the division worth '
+        + 'keeping, because a generated row that cannot fail is worse than a missing '
+        + 'one: it gets counted.',
     script: `
 pm.test(${JSON.stringify(`${label(endpoint)} — no credential was demanded`)}, function () {
   pm.expect([401, 403], 'a public endpoint asked for a credential')
     .to.not.include(pm.response.code);
 });
-`,
+` + NEVER_THROWS,
   })];
 }
 

@@ -126,6 +126,47 @@ class DeliveryContextServiceTest {
         assertThrows(ResourceNotFoundException.class, () -> service.get(created.id(), null));
     }
 
+    /**
+     * The non-throwing form, and why it has to exist rather than being a catch
+     * around {@link DeliveryContextService#require}.
+     *
+     * <p>Reading a cart prices its shipping on a best-effort basis, so a context
+     * that has lapsed or belongs to somebody else has to leave the cart readable
+     * without a shipping figure. Asking for that as a caught exception did not
+     * produce it: require() joins the caller's transaction, its exception marks
+     * that transaction rollback-only, and the commit after the catch returned
+     * normally failed — GET /carts/&#123;token&#125; answered 500 in exactly the
+     * case the degradation was written for.
+     *
+     * <p>Same three answers as get(), and never an exception for any of them.
+     */
+    @Test
+    void lookupAnswersEmptyWhereRequireThrows() {
+        DeliveryContextResponse mine = service.create(OWNER, request(13.44, -16.67), http());
+        DeliveryContextResponse guests = service.create(null, request(13.27, -16.64), http());
+
+        assertTrue(service.lookup(mine.id(), OWNER).isPresent());
+        assertTrue(service.lookup(guests.id(), null).isPresent(),
+                "a guest's context is readable by whoever holds the id");
+
+        assertTrue(service.lookup(mine.id(), INTRUDER).isEmpty(), "somebody else's context");
+        assertTrue(service.lookup(mine.id(), null).isEmpty(), "nobody signed in");
+        assertTrue(service.lookup("never-issued", null).isEmpty(), "an id that was never real");
+        assertTrue(service.lookup(null, OWNER).isEmpty(), "no id at all");
+        assertTrue(service.lookup("   ", OWNER).isEmpty(), "a blank id");
+
+        // And require still throws for the callers that want a 404.
+        assertThrows(ResourceNotFoundException.class, () -> service.require(mine.id(), INTRUDER));
+    }
+
+    @Test
+    void lookupTreatsALapsedContextAsAbsentRatherThanThrowing() {
+        DeliveryContextResponse created = service.create(null, request(13.44, -16.67), http());
+        stored.forEach(context -> context.setExpiresAt(LocalDateTime.now().minusMinutes(1)));
+
+        assertTrue(service.lookup(created.id(), null).isEmpty());
+    }
+
     @Test
     void anExpiredContextIsIndistinguishableFromOneThatNeverExisted() {
         DeliveryContextResponse created = service.create(null, request(13.44, -16.67), http());

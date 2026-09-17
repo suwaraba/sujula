@@ -28,7 +28,6 @@ const BY_NAME = {
 
   vendorId: seed.vendors.kombo.id,
   storeId: seed.vendors.kombo.id,
-  slug: seed.vendors.kombo.slug,
   documentId: seed.kycDocuments.awaIdAccepted,
 
   productId: seed.products.phone,
@@ -81,26 +80,42 @@ const BY_NAME = {
 };
 
 /**
- * `{id}` means a different row on each surface, so it is resolved from the path
- * rather than from the name. Longest prefix wins, so /api/users/{id}/password
- * and /api/users/{id} can differ if they ever need to.
+ * Two parameter names mean a different row on each surface, so they are
+ * resolved from the path rather than from the name. Longest prefix wins, so
+ * /api/users/{id}/password and /api/users/{id} can differ if they ever need to.
+ *
+ * `slug` is in here for a reason worth stating: GET /products/{slug} takes a
+ * PRODUCT slug and GET /stores/{slug} takes a STORE slug. Resolving the name
+ * alone gave every /products/{slug} row a store slug, so the request 404'd —
+ * and because the matrix row for a public GET only asserts that no credential
+ * was demanded, it passed while testing nothing at all. A row that cannot fail
+ * is worse than a missing one, because it is counted.
  */
-const ID_BY_PREFIX = [
-  ['/api/admin/orders/', seed.orders.oliverTwoVendors],
-  ['/api/categories/', 'phones'],
-  ['/api/exchange-rates/', 1220],
-  ['/api/users/', seed.users.aminata.id],
-  ['/api/vendors/', seed.vendors.kombo.id],
-  ['/driver/shipments/', seed.shipments.inFlight],
-  ['/pickup-points/', seed.pickupPoints.westfield],
-  ['/pickup/points/', seed.pickupPoints.westfield],
-];
+const BY_PREFIX = {
+  id: [
+    ['/api/admin/orders/', seed.orders.oliverTwoVendors],
+    ['/api/categories/', 'phones'],
+    ['/api/exchange-rates/', 1220],
+    ['/api/users/', seed.users.aminata.id],
+    ['/api/vendors/', seed.vendors.kombo.id],
+    ['/driver/shipments/', seed.shipments.inFlight],
+    ['/pickup-points/', seed.pickupPoints.westfield],
+    ['/pickup/points/', seed.pickupPoints.westfield],
+  ],
+  slug: [
+    ['/products/', seed.slugs.phone],
+    ['/stores/', seed.vendors.kombo.slug],
+    ['/categories/', 'phones'],
+    ['/api/', seed.vendors.kombo.slug],
+  ],
+};
 
 function valueFor(name, path) {
-  if (name === 'id') {
-    const match = ID_BY_PREFIX.filter(([prefix]) => path.startsWith(prefix))
+  const candidates = BY_PREFIX[name];
+  if (candidates) {
+    const match = candidates.filter(([prefix]) => path.startsWith(prefix))
       .sort((a, b) => b[0].length - a[0].length)[0];
-    if (!match) throw new Error(`no seeded row for {id} on ${path}`);
+    if (!match) throw new Error(`no seeded row for {${name}} on ${path}`);
     return match[1];
   }
   if (!(name in BY_NAME)) throw new Error(`no seeded row for {${name}} on ${path}`);

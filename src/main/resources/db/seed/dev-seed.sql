@@ -549,7 +549,7 @@ INSERT INTO carts (id, user_id, session_id, token, display_currency, delivery_co
  (1070, 1004, NULL, 'seed-cart-aminata', 'GMD', 'seed-ctx-aminata-home',
   NULL, @NOW, @NOW),
  (1071, NULL, 'a7f3c1e2-9b84-4d55-8e10-2c6f7b0d91aa', 'seed-cart-guest-gbp', 'GBP',
-  'seed-ctx-aminata-home', '2026-09-19 09:00:00.000000', @NOW, @NOW);
+  'seed-ctx-guest-serrekunda', '2026-09-19 09:00:00.000000', @NOW, @NOW);
 
 -- ── coupons ─────────────────────────────────────────────────────────────────
 -- Checkout honours these and applies vendor-scoped ones only to that vendor's
@@ -2913,6 +2913,21 @@ VALUES
   'Brikama Market Road', 'Brikama', 'West Coast', NULL, 'GM',
   'CENTROID', 'HOME_DELIVERY', NULL, NULL, 'GMD', 'en', 'Africa/Banjul', @NOW, @FUTURE),
 
+ -- A guest delivering to Serrekunda, which is what cart 1071 prices against.
+ -- It has to be a GUEST row rather than Aminata's: a context belonging to an
+ -- account is readable only by that account, deliberately, so a leaked id
+ -- cannot hand a stranger a signed-in shopper's home address. Cart 1071 pointed
+ -- at hers, so the guest who owns that basket could not resolve its destination
+ -- and it priced with no shipping at all — and, until the fix that came with
+ -- this change, answered 500.
+ --
+ -- Same pin as Aminata's home, so the delivery arithmetic in the notes at the
+ -- end of this file still holds: the leg from Kairaba Avenue is about half a
+ -- kilometre.
+ ('seed-ctx-guest-serrekunda', NULL, 13.43950000, -16.67520000,
+  '27 Sayerr Jobe Avenue', 'Serekunda', 'West Coast', NULL, 'GM',
+  'USER_CONFIRMED', 'HOME_DELIVERY', NULL, NULL, 'GMD', 'en', 'Africa/Banjul', @NOW, @FUTURE),
+
  -- Collection from a hub. No destination pin at all, and still deliverable:
  -- the parcel goes to the pickup point and the buyer collects it.
  ('seed-ctx-guest-pickup', NULL, NULL, NULL,
@@ -3799,6 +3814,12 @@ COMMIT;
 --     seed-ctx-aminata-home    hers, from her confirmed address
 --     seed-ctx-guest-brikama   a guest's — no account, and the id is the whole
 --                              of their claim to it
+--     seed-ctx-guest-serrekunda a guest delivering to Serrekunda. What cart 1071
+--                              prices against, and a guest row rather than
+--                              Aminata's because a context belonging to an
+--                              account is readable only by that account — so a
+--                              guest basket pointed at hers cannot resolve its
+--                              own destination
 --     seed-ctx-guest-pickup    collection at hub 1096, with no destination pin
 --                              at all, and still deliverable
 --     seed-ctx-oliver-london   cross-border, priced in sterling
@@ -3940,8 +3961,19 @@ COMMIT;
 --
 --   ── The filters ──────────────────────────────────────────────────────────
 --
---     GET /products?condition=REFURBISHED     1307 only
---     GET /products?condition=OPEN_BOX        1304 only
+--     GET /products?condition=REFURBISHED     nothing, and that is right: the
+--                                             only refurbished listing is 1307,
+--                                             which is ARCHIVED because order
+--                                             lines point at it. This note used
+--                                             to claim it returned 1307 — a
+--                                             public catalogue that showed a
+--                                             withdrawn listing would be the
+--                                             bug, so the note was what was
+--                                             wrong
+--     GET /products?condition=OPEN_BOX        1304 only. The condition facet
+--                                             therefore comes back with two
+--                                             values, NEW and OPEN_BOX, which
+--                                             is what it is seeded to prove
 --     GET /products?inStockOnly=true          drops 1304 and 1307, which have none
 --     GET /products?minRating=4.5             1301 and 1305
 --     GET /products?store=kombo-electronics   one seller's shelf
