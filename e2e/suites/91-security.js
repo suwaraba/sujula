@@ -291,6 +291,116 @@ pm.collectionVariables.set('tamperedToken',
       status: [401, 403],
     }),
 
+    // ── Telling "who are you" apart from "not you" ───────────────────────────
+    //
+    // BEFORE the cookie-session block below, for the same reason the token rows
+    // are: these send no credential at all, and a JSESSIONID sitting in newman's
+    // jar authenticates them into a 200. Found exactly that way — five rows
+    // asserting 401 answered 200 with Oliver's profile.
+    //
+    // Two different instructions to a client, and one status cannot carry both.
+    // 401 means sign in and try again; 403 means signing in will not help. The
+    // split is made by ExceptionTranslationFilter: an anonymous request is sent
+    // to the authentication entry point, an authenticated one to the
+    // access-denied handler. These rows pin each side so the two cannot quietly
+    // collapse back into one.
+
+    req({
+      name: 'A protected endpoint with no credentials at all answers 401',
+      method: 'GET',
+      path: '/me',
+      note: 'No Authorization header and no session. The caller has not said who they are, so '
+          + 'the answer is "say who you are" rather than "you are not allowed" — a client that '
+          + 'reads 403 here has been told that signing in will not help, which is the opposite '
+          + 'of true. Before the entry point was configured this answered 403 everywhere, which '
+          + 'is what sent somebody to a browser address bar wondering what permission they were '
+          + 'missing. The body is asserted too: a refusal made in the filter chain never reaches '
+          + 'a @ControllerAdvice, so it used to come back empty while every other failure on this '
+          + 'application speaks JSON — a client parsing the documented error shape got nothing.',
+      status: 401,
+      json: {
+        status: 401,
+        error: 'Unauthorized',
+        message: { $exists: true },
+        timestamp: { $exists: true },
+      },
+    }),
+
+    req({
+      name: 'A credential that does not verify is 401, not 403',
+      method: 'GET',
+      path: '/admin/users',
+      headers: { Authorization: 'Bearer not.a.real.token' },
+      note: 'The distinction the status is read FROM the security context to get right, rather '
+          + 'than from the Authorization header: a header carrying a forged or expired token is '
+          + 'a caller who has not identified themselves. Answering 403 here would tell them '
+          + 'their credential was accepted and only their role fell short, which is both wrong '
+          + 'and a hint worth withholding.',
+      status: 401,
+    }),
+
+    req({
+      name: 'A GET on a POST-only public endpoint answers 401 rather than admitting it exists',
+      method: 'GET',
+      path: '/auth/register',
+      note: 'The permitAll rule for /auth/register is scoped to POST, so a GET falls through to '
+          + 'the /auth/** catch-all and is refused unauthenticated. Not 405: Spring Security '
+          + 'decides before the dispatcher ever looks for a handler, so the application never '
+          + 'discovers there is no GET mapping. Worth a row because this is exactly what a '
+          + 'browser address bar produces, and the answer should read as "you are not signed in" '
+          + 'rather than as a permissions problem.',
+      status: 401,
+    }),
+
+    req({
+      name: 'The same endpoint by POST is open to anybody, which is the point of the rule',
+      method: 'POST',
+      path: '/auth/register',
+      body: {
+        email: 'security-folder-{{$timestamp}}@example.invalid',
+        password: 'Sujula123!',
+        firstName: 'Security',
+        lastName: 'Folder',
+        phone: '+2203100999',
+      },
+      note: 'The control for the row above: registration IS reachable without a credential, by '
+          + 'the method it is published under. A fresh address each run, because the collection '
+          + 'creates no fixtures it then depends on — this account is written and never read.',
+      status: [200, 201],
+      json: { accessToken: { $exists: true } },
+    }),
+
+    req({
+      name: 'A signed-in caller reaching past their role answers 403, not 401',
+      method: 'GET',
+      path: '/actuator/prometheus',
+      as: 'oliver',
+      note: 'The other half of the split, and the reason the entry point cannot simply answer '
+          + '401 everywhere. Oliver said who he is and was believed; what he lacks is the role. '
+          + 'Telling him to sign in would send him round a loop he cannot leave.',
+      status: 403,
+      json: { status: 403, error: 'Forbidden', message: { $exists: true } },
+      bodyExcludes: [
+        { value: 'ADMIN', why: 'naming the role that would open it describes the way in' },
+        { value: 'prometheus', why: 'nor should a refusal confirm what it was guarding' },
+      ],
+    }),
+
+    req({
+      name: 'A refusal a service raises itself keeps its own status',
+      method: 'POST',
+      path: '/auth/login',
+      body: { email: seed.users.sulayman.email, password: seed.PASSWORD },
+      note: 'Sulayman is blocked and his password is correct. This 403 comes from the '
+          + 'application rather than from the filter chain — his credentials were read and found '
+          + 'wanting, which is not the same as not presenting any — so the entry point must '
+          + 'leave it alone. Asserted here because an entry point applied too widely would turn '
+          + 'this into a 401 and tell a blocked user to try signing in again.',
+      status: 403,
+      json: { message: { $matches: 'blocked' } },
+      absent: ['tokens', 'accessToken'],
+    }),
+
     // ── Cookie sessions and CSRF ─────────────────────────────────────────────
     //
     // SecurityConfig exempts /auth/**, /me/**, /checkout/** and others from

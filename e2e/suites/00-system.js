@@ -134,8 +134,10 @@ pm.test("Locales — every entry answers the question", function () {
       path: '/actuator/prometheus',
       note: 'It carries request counts, error rates and timings per endpoint — enough '
           + 'to tell a stranger when the platform is struggling and which path to '
-          + 'press on.',
-      status: 403,
+          + 'press on. 401 rather than 403: this caller presented no credential at '
+          + 'all, so the answer is "say who you are". An administrator who signs in '
+          + 'reaches it; see the 403 rows in folder 91 for the other side.',
+      status: 401,
     }),
 
     req({
@@ -143,8 +145,9 @@ pm.test("Locales — every entry answers the question", function () {
       path: '/actuator/health',
       note: 'The two are easy to confuse and are deliberately not the same: /health/* '
           + 'is the public probe pair and answers with nothing a stranger can use, '
-          + 'while the actuator tree is administrator-only.',
-      status: 403,
+          + 'while the actuator tree is administrator-only. 401 for the same reason '
+          + 'as the row above.',
+      status: 401,
     }),
 
     req({

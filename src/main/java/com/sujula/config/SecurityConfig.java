@@ -81,9 +81,47 @@ public class SecurityConfig {
         return handler;
     }
 
+    /**
+     * The two filter-chain handlers, which are one object. See the class for why.
+     */
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public FilterChainRefusals filterChainRefusals(tools.jackson.databind.ObjectMapper json) {
+        return new FilterChainRefusals(json);
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                   FilterChainRefusals refusals) throws Exception {
         http
+                // Tells a caller with NO credentials apart from one whose
+                // credentials are not enough.
+                //
+                // The default answered 403 to both, so a browser opening
+                // /auth/register — a GET, where only POST is published — was
+                // told it lacked permission, when what it lacked was an
+                // account. 401 and 403 are different instructions: sign in and
+                // try again, against signing in will not help. It also answered
+                // with an empty body, while every controller-level failure on
+                // this application speaks JSON, so a client parsing the
+                // documented error shape got nothing to parse.
+                //
+                // The same object is both handlers on purpose, and
+                // FilterChainRefusals says why: ExceptionTranslationFilter
+                // picks between them by asking whether the caller is anonymous,
+                // and with a bearer-token filter that fills the context late
+                // that question is not reliably answered by the time the
+                // exception unwinds — signed-in callers denied at the chain
+                // were being told to sign in again. So the object reads the
+                // context itself and picks the status, and which of the two
+                // routes the filter takes stops mattering.
+                //
+                // Untouched by this: a refusal a controller or service raises,
+                // which GlobalExceptionHandler already splits the same way. A
+                // blocked account signing in is still 403, because those
+                // credentials were read and found wanting.
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint(refusals)
+                        .accessDeniedHandler(refusals))
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                         .csrfTokenRequestHandler(spaCsrfTokenRequestHandler())
