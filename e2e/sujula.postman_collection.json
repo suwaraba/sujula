@@ -15591,6 +15591,3272 @@
       ]
     },
     {
+      "name": "08 — A seller's catalogue, stock, handsets and fulfilment desk",
+      "description": "The moderation ladder, the stock ledger, the optimistic lock and the collection code.",
+      "item": [
+        {
+          "name": "A seller sees their drafts and their withdrawn listings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products"
+              ]
+            },
+            "description": "The opposite of the public catalogue, which shows only what moderation approved. A seller who could not see their own draft could not finish it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A seller sees their drafts and their withdrawn listings — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "const ids = $body.items.map(function (p) { return p.id; });",
+                  "pm.test(\"His catalogue — the counts name every rung, archived included\", function () {",
+                  "  // The withdrawn listing is deliberately out of the default page — it is not",
+                  "  // work in progress and a seller does not want it in the way. What it must",
+                  "  // not be is invisible, so the counts come back with the page rather than as",
+                  "  // a second round trip, and the archived tab is drawn from them.",
+                  "  pm.expect($body.counts, 'no tab counts, so a back office cannot draw its tabs')",
+                  "    .to.be.an('object');",
+                  "  pm.expect($body.counts.ARCHIVED, 'the withdrawn listing is not counted anywhere')",
+                  "    .to.be.at.least(1);",
+                  "  pm.expect(ids, 'the withdrawn listing is in the default page')",
+                  "    .to.not.include(1307);",
+                  "});",
+                  "pm.test(\"His catalogue — nothing of Awa's is in it\", function () {",
+                  "  pm.expect(ids, \"the wax print is Awa's\").to.not.include(1305);",
+                  "});",
+                  "pm.test(\"His catalogue — live is true if and only if the status is PUBLISHED\", function () {",
+                  "  // Two fields describing one fact drift the moment something sets one without",
+                  "  // the other, and the way they drift here is a listing moderation pulled that",
+                  "  // carries on selling.",
+                  "  $body.items.forEach(function (p) {",
+                  "    pm.expect(p.live, p.name + ' is ' + p.status + ' and live=' + p.live)",
+                  "      .to.equal(p.status === 'PUBLISHED');",
+                  "  });",
+                  "});",
+                  "pm.test(\"His catalogue — every listing says what it is priced in\", function () {",
+                  "  $body.items.forEach(function (p) {",
+                  "    pm.expect(p.currency, p.name + ' has no currency').to.equal('GMD');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And the archived tab returns what its own count promised",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products?status=ARCHIVED",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "ARCHIVED"
+                }
+              ]
+            },
+            "description": "Asking for the archived tab IS asking to include archived listings. It came back empty while the counts block beside it said there was one, so a seller clicking the tab their own screen had just offered them got nothing, and no message either."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And the archived tab returns what its own count promised — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"And the archived tab returns what its own count promised — items.0.id is 1307\", function () {",
+                  "  const actual = H.get($body, \"items.0.id\");",
+                  "  const expected = 1307;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"items.0.id\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"And the archived tab returns what its own count promised — items.0.status is \\\"ARCHIVED\\\"\", function () {",
+                  "  const actual = H.get($body, \"items.0.status\");",
+                  "  const expected = \"ARCHIVED\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"items.0.status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Archived tab — the count and the page agree\", function () {",
+                  "  pm.expect($body.items.length).to.equal($body.counts.ARCHIVED);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A new listing is created as a DRAFT, always",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-new-listing"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products"
+              ]
+            },
+            "description": "Never PUBLISHED and never APPROVED, whatever the body asks for. A seller who could create an approved listing would be a seller who never entered the review queue.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Anker PowerCore 10000\",\n  \"shortDescription\": \"Ten thousand milliamp power bank\",\n  \"description\": \"Two USB-A outputs, charges a phone three times over.\",\n  \"sku\": \"KOM-ANK10K\",\n  \"price\": 1850,\n  \"categoryId\": 1214,\n  \"condition\": \"NEW\",\n  \"stock\": 12,\n  \"weightKg\": 0.24\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A new listing is created as a DRAFT, always — 200 or 201 or 400 or 409\", function () {",
+                  "  pm.expect([200,201,400,409]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "if (pm.response.code < 300) {",
+                  "  pm.test(\"New listing — DRAFT, and not live\", function () {",
+                  "    pm.expect($body.status).to.equal('DRAFT');",
+                  "    pm.expect($body.live, 'a draft on sale').to.equal(false);",
+                  "  });",
+                  "  pm.test(\"New listing — priced in the seller's own currency, derived not sent\", function () {",
+                  "    pm.expect($body.currency, \"Lamin settles in dalasi\").to.equal('GMD');",
+                  "  });",
+                  "  pm.collectionVariables.set('draftProduct', $body.id);",
+                  "} else {",
+                  "  pm.test(\"New listing — refused with a reason, most likely the SKU already exists\", function () {",
+                  "    pm.expect(H.text(pm.response).length).to.be.above(2);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And it cannot put itself on sale",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-publish-draft"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products/{{draftProduct}}/publish",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products",
+                "{{draftProduct}}",
+                "publish"
+              ]
+            },
+            "description": "A draft cannot publish itself, and that refusal is the only thing making the review queue real rather than advisory.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And it cannot put itself on sale — 400 or 403 or 404 or 409 or 422\", function () {",
+                  "  pm.expect([400,403,404,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submitting it for review is what a seller can do",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-submit-draft"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products/{{draftProduct}}/submit-for-review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products",
+                "{{draftProduct}}",
+                "submit-for-review"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Submitting it for review is what a seller can do — 200 or 201 or 202 or 400 or 404 or 409\", function () {",
+                  "  pm.expect([200,201,202,400,404,409]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "if (pm.response.code < 300) {",
+                  "  pm.test(\"Submitted — IN_REVIEW, and still not live\", function () {",
+                  "    pm.expect($body.status).to.equal('IN_REVIEW');",
+                  "    pm.expect($body.live).to.equal(false);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Changing the stock on an approved listing leaves it on sale",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products/1303",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products",
+                "1303"
+              ]
+            },
+            "description": "A seller who had to re-enter the review queue to restock would stop using the queue. The approved content hash is a digest of what a moderator actually looked at — the name, the text, the price, the category, the brand, the condition — and stock is none of those.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stock\": 24\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Changing the stock on an approved listing leaves it on sale — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Changing the stock on an approved listing leaves it on sale — status is \\\"PUBLISHED\\\"\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = \"PUBLISHED\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Changing the stock on an approved listing leaves it on sale — live is true\", function () {",
+                  "  const actual = H.get($body, \"live\");",
+                  "  const expected = true;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"live\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Changing the price takes it off sale and back into the queue",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products/1303",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products",
+                "1303"
+              ]
+            },
+            "description": "The hash stops matching, so the listing goes back to IN_REVIEW and active goes false. Which is the point: a moderator approved a kettle at 1250, not a kettle at any price the seller later chooses.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 1390\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Changing the price takes it off sale and back into the queue — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Price edit — back into the queue, and off sale\", function () {",
+                  "  pm.expect($body.status, 'a re-priced listing stayed approved').to.equal('IN_REVIEW');",
+                  "  pm.expect($body.live, 'a listing in the review queue is still on sale').to.equal(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And it is gone from the public catalogue immediately",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products?store=kombo-electronics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "store",
+                  "value": "kombo-electronics"
+                }
+              ]
+            },
+            "description": "Every public query filters on active, and ProductLifecycle is the only thing allowed to write it. This is that pair holding under a real edit rather than in a unit test."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And it is gone from the public catalogue immediately — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Public catalogue — the re-priced kettle is not on sale\", function () {",
+                  "  const ids = $body.items.map(function (p) { return p.id; });",
+                  "  pm.expect(ids, 'a listing in the review queue is on the shopfront')",
+                  "    .to.not.include(1303);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A moderator approves the change, and the listing returns to where it was",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenFatou}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-approve-kettle"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/products/1303/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "products",
+                "1303",
+                "approve"
+              ]
+            },
+            "description": "Straight back to PUBLISHED rather than to APPROVED, and that is the right answer for THIS listing: the seller had already decided to sell it, and a price edit does not withdraw that decision. The rung that needs the seller is the one below — see the draft further up this folder, which cannot publish itself even once it is approved.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Price change only; nothing else moved.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A moderator approves the change, and the listing returns to where it was — 200 or 201 or 400 or 409\", function () {",
+                  "  pm.expect([200,201,400,409]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "if (pm.response.code < 300) {",
+                  "  pm.test(\"Approved — back on the rung it was on before the edit\", function () {",
+                  "    pm.expect(['APPROVED', 'PUBLISHED'],",
+                  "      'approving a re-priced listing left it at ' + $body.status).to.include($body.status);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Putting the price back sends it round the loop again",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products/1303",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products",
+                "1303"
+              ]
+            },
+            "description": "Which proves the hash check is on the content rather than on a one-off flag: the same field changing back is still a change a moderator approved a different value for.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 1250\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Putting the price back sends it round the loop again — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Putting the price back sends it round the loop again — status is \\\"IN_REVIEW\\\"\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = \"IN_REVIEW\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Putting the price back sends it round the loop again — live is false\", function () {",
+                  "  const actual = H.get($body, \"live\");",
+                  "  const expected = false;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"live\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approved again",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenFatou}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-reapprove-kettle"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/products/1303/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "products",
+                "1303",
+                "approve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Back to its original price.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Approved again — 200 or 201 or 400 or 409\", function () {",
+                  "  pm.expect([200,201,400,409]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Published if it needs it, which leaves the shelf as this folder found it",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-republish-kettle"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products/1303/publish",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products",
+                "1303",
+                "publish"
+              ]
+            },
+            "description": "A no-op when the approval already restored it, and the step that finishes the job when it did not. Either answer is correct; what matters is the state afterwards, which the next request checks.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Published if it needs it, which leaves the shelf as this folder found it — 200 or 201 or 400 or 409\", function () {",
+                  "  pm.expect([200,201,400,409]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The shopfront has its six listings back, at their original prices",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ]
+            },
+            "description": "The assertion that makes the restoration real rather than intended.\n\nFolders 03 and 04 assert that the catalogue has six listings and that the kettle costs 1250 — and they run BEFORE this one, so a run that left the listing in the review queue would leave the NEXT run red in two other folders for a reason nobody would trace back to here. Which is the argument for restoring rather than restarting: a suite that leaves the world as it found it can be run twice."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The shopfront has its six listings back, at their original prices — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"The shopfront has its six listings back, at their original prices — totalElements is 6\", function () {",
+                  "  const actual = H.get($body, \"totalElements\");",
+                  "  const expected = 6;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"totalElements\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Restored — the kettle is on sale at its original price\", function () {",
+                  "  const kettle = $body.items.find(function (p) { return p.id === 1303; });",
+                  "  pm.expect(kettle, 'the kettle is not on the shopfront, so folder 03 is about to fail')",
+                  "    .to.be.an('object');",
+                  "  pm.expect(kettle.listingPrice, 'folder 04 asserts 1250 for this listing')",
+                  "    .to.equal(1250);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Another seller cannot edit his listing",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAwa}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products/1303",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products",
+                "1303"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Another seller cannot edit his listing — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A translation, marked as machine-made when it is",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAwa}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products/1305/translations/fr-SN",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products",
+                "1305",
+                "translations",
+                "fr-SN"
+              ]
+            },
+            "description": "Awa writes French in Ziguinchor; the buyer paying is in London; the parcel goes to Serrekunda. Nobody in that chain can pick the cloth up and look at it, so the listing text is the whole of what they get — and a machine's version of \"six yards of wax print, cut to order\" is usually fine and occasionally nonsense. Somebody spending a month's remittance should be told which they are reading.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Wax imprimé — six yards, indigo\",\n  \"shortDescription\": \"Coton fini à la main, pièce de six yards\",\n  \"description\": \"Coupé sur mesure. Six yards, teinture indigo.\",\n  \"machineTranslated\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A translation, marked as machine-made when it is — 200 or 201 or 204\", function () {",
+                  "  pm.expect([200,201,204]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The import that half worked, with the seller's own words quoted back",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/imports/IMP-7QK2M4XR9DTB5VNC",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "imports",
+                "IMP-7QK2M4XR9DTB5VNC"
+              ]
+            },
+            "description": "Twenty-seven of thirty rows are in the catalogue as drafts and three did not parse. Each error names the row as the seller's own spreadsheet numbers it — header is row 1 — and quotes their text back: \"there is no category called 'Phonez'\" rather than \"invalid category\". That difference is the whole reason to build this instead of telling them to use the form."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The import that half worked, with the seller's own words quoted back — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Import — counts in and counts rejected, not just a status\", function () {",
+                  "  const text = JSON.stringify($body);",
+                  "  pm.expect(text).to.match(/27|\"created\"|\"imported\"/);",
+                  "  pm.expect($body.status, 'an import with no status').to.be.a('string');",
+                  "});",
+                  "pm.test(\"Import — the row errors quote the seller's own text\", function () {",
+                  "  const errors = JSON.stringify($body.errors || $body.rowErrors || []);",
+                  "  pm.expect(errors, 'no row errors on an import that rejected three rows')",
+                  "    .to.have.length.of.at.least(10);",
+                  "  pm.expect(errors, \"the seller's own bad value should be quoted back at them\")",
+                  "    .to.match(/Phonez/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The import where the file itself was unreadable says so once",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/imports/IMP-3HJ8P6WZ2FKD7RQY",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "imports",
+                "IMP-3HJ8P6WZ2FKD7RQY"
+              ]
+            },
+            "description": "Somebody uploaded a PDF. Nothing was attempted, and saying so once beats four hundred identical row errors."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The import where the file itself was unreadable says so once — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Unreadable file — one message about the file, not a list about rows\", function () {",
+                  "  const errors = $body.errors || $body.rowErrors || [];",
+                  "  pm.expect(errors.length, 'a file nothing could be read from produced row errors')",
+                  "    .to.be.at.most(1);",
+                  "  pm.expect(JSON.stringify($body), 'nothing says what was wrong with the file')",
+                  "    .to.have.length.of.at.least(20);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Another seller's import reference is not found",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAwa}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/imports/IMP-7QK2M4XR9DTB5VNC",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "imports",
+                "IMP-7QK2M4XR9DTB5VNC"
+              ]
+            },
+            "description": "Import errors name a seller's products, their prices and their SKUs. The reference is random rather than sequential for that reason, and ownership is checked in the query as well — the reference is the second lock, not the only one."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Another seller's import reference is not found — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The import template is a list of column names and no data",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/products/import-template",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "products",
+                "import-template"
+              ]
+            },
+            "description": "The one endpoint under /vendor that any account may read, because there is nothing here belonging to anybody: it describes the file format."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The import template is a list of column names and no data — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Template — required columns are named separately from optional ones\", function () {",
+                  "  pm.expect($body.requiredColumns, 'no required columns').to.be.an('array');",
+                  "  pm.expect($body.requiredColumns).to.include('name');",
+                  "  pm.expect($body.requiredColumns).to.include('price');",
+                  "  pm.expect($body.optionalColumns).to.be.an('array');",
+                  "});",
+                  "pm.test(\"Template — and no seller's data is in it\", function () {",
+                  "  pm.expect(H.text(pm.response)).to.not.include('KOM-');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Stock that is running out, flagged rather than found by reading",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/inventory?lowStock=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "inventory"
+              ],
+              "query": [
+                {
+                  "key": "lowStock",
+                  "value": "true"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Stock that is running out, flagged rather than found by reading — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Low stock — everything returned is actually low\", function () {",
+                  "  pm.expect($body.items.length).to.be.at.least(1);",
+                  "  $body.items.forEach(function (v) {",
+                  "    pm.expect(v.lowStock, v.sku + ' came back from a low-stock query with lowStock=false')",
+                  "      .to.equal(true);",
+                  "    pm.expect(v.stock, v.sku + ' is flagged low at ' + v.stock",
+                  "      + ' against a threshold of ' + v.lowStockThreshold)",
+                  "      .to.be.at.most(v.lowStockThreshold);",
+                  "  });",
+                  "});",
+                  "pm.test(\"Low stock — a serialised variant reports its sellable units\", function () {",
+                  "  const serialised = $body.items.filter(function (v) { return v.serialised; });",
+                  "  serialised.forEach(function (v) {",
+                  "    pm.expect(v.sellableUnits, v.sku + ' is serialised and does not say how many units')",
+                  "      .to.be.a('number');",
+                  "    pm.expect(v.sellableUnits, v.sku + ': the count must follow the units')",
+                  "      .to.equal(v.stock);",
+                  "  });",
+                  "});",
+                  "pm.test(\"Low stock — every row carries the version it was read at\", function () {",
+                  "  // Which is what makes an absolute correction safe. See the optimistic lock",
+                  "  // below.",
+                  "  $body.items.forEach(function (v) {",
+                  "    pm.expect(v.version, v.sku + ' has no version').to.be.a('number');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The movements add up to the count, which is the whole design",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/inventory/1351/movements",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "inventory",
+                "1351",
+                "movements"
+              ]
+            },
+            "description": "0 + 10 - 3 - 4 = 3. A count that can be assigned directly is a count nobody can explain, so the movement is the record and the figure is what the movements come to."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The movements add up to the count, which is the whole design — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"The movements add up to the count, which is the whole design — variantId is 1351\", function () {",
+                  "  const actual = H.get($body, \"variantId\");",
+                  "  const expected = 1351;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"variantId\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The movements add up to the count, which is the whole design — currentStock is 3\", function () {",
+                  "  const actual = H.get($body, \"currentStock\");",
+                  "  const expected = 3;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"currentStock\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Ledger — the movements sum to the stock\", function () {",
+                  "  const summed = $body.movements.reduce(function (s, m) { return s + m.quantityChange; }, 0);",
+                  "  pm.expect(summed, 'movements come to ' + summed + ' and the stock says '",
+                  "    + $body.currentStock).to.equal($body.currentStock);",
+                  "});",
+                  "pm.test(\"Ledger — every row's before and after are consistent with its change\", function () {",
+                  "  $body.movements.forEach(function (m) {",
+                  "    pm.expect(m.stockBefore + m.quantityChange,",
+                  "      'movement ' + m.id + ': ' + m.stockBefore + ' + ' + m.quantityChange",
+                  "      + ' should be ' + m.stockAfter).to.equal(m.stockAfter);",
+                  "  });",
+                  "});",
+                  "pm.test(\"Ledger — the sales are in the trail beside the seller's own corrections\", function () {",
+                  "  // An audit showing the manual edits and quietly omitting the orders that",
+                  "  // took the stock would be wrong in exactly the case somebody opens it for.",
+                  "  const reasons = $body.movements.map(function (m) { return m.reason; });",
+                  "  pm.expect(reasons, 'the orders that took stock are missing from the trail')",
+                  "    .to.include('SALE');",
+                  "  pm.expect(reasons).to.include('RESTOCK');",
+                  "  pm.expect(reasons).to.include('CORRECTION');",
+                  "});",
+                  "pm.test(\"Ledger — a SALE has no person on it, because an order took the stock\", function () {",
+                  "  $body.movements.filter(function (m) { return m.reason === 'SALE'; })",
+                  "    .forEach(function (m) {",
+                  "      pm.expect(m.recordedBy, 'a sale attributed to a member of staff').to.not.exist;",
+                  "      // And no order number either: stock is reserved before the order exists,",
+                  "      // which is the right way round.",
+                  "      pm.expect(m.reference, 'a sale carrying an order number it cannot have').to.not.exist;",
+                  "    });",
+                  "});",
+                  "pm.test(\"Ledger — a correction names who counted the shelf\", function () {",
+                  "  const correction = $body.movements.find(function (m) { return m.id === 1452; });",
+                  "  pm.expect(correction.recordedBy, 'a manual correction with nobody behind it')",
+                  "    .to.be.a('string');",
+                  "  pm.expect(correction.note, 'and with no reason written down').to.be.a('string');",
+                  "  pm.expect(correction.quantityChange, 'the row that earns the feature: minus four')",
+                  "    .to.equal(-4);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A delta needs no version: plus five is plus five whoever else is writing",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/inventory/1351",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "inventory",
+                "1351"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delta\": 5,\n  \"reason\": \"RESTOCK\",\n  \"note\": \"Container from Dakar\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A delta needs no version: plus five is plus five whoever else is writing — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.collectionVariables.set(\"phoneOtherVersion\",",
+                  "  H.get($body, \"version\"));",
+                  "pm.test(\"Delta — the answer is before, after and the new version\", function () {",
+                  "  pm.expect($body.stockAfter, 'no resulting figure').to.be.a('number');",
+                  "  pm.expect($body.stockBefore, 'no starting figure, so the caller cannot tell what moved')",
+                  "    .to.be.a('number');",
+                  "  pm.expect($body.stockAfter - $body.stockBefore, 'the answer does not reflect the delta sent')",
+                  "    .to.equal(5);",
+                  "  pm.expect($body.version, 'no version, so the next absolute correction has nothing to send')",
+                  "    .to.be.a('number');",
+                  "});",
+                  "pm.test(\"Delta — and it says in words what it did\", function () {",
+                  "  pm.expect($body.message, 'a stock change with no sentence a seller can read')",
+                  "    .to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An absolute figure carries the version it was read at",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/inventory/1351",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "inventory",
+                "1351"
+              ]
+            },
+            "description": "Two people counting the same shelf and saving 10 and 12 must not leave whichever committed last, with the other simply wrong and nothing anywhere to say so. Which is why the endpoint offers both forms and asks for the version on only one.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"setTo\": 12,\n  \"version\": \"{{phoneOtherVersion}}\",\n  \"reason\": \"CORRECTION\",\n  \"note\": \"Counted the shelf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"An absolute figure carries the version it was read at — 200 or 409\", function () {",
+                  "  pm.expect([200,409]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test(\"Absolute — the shelf reads twelve\", function () {",
+                  "    pm.expect($body.stockAfter).to.equal(12);",
+                  "  });",
+                  "} else {",
+                  "  pm.test(\"Absolute — refused because the version had already moved\", function () {",
+                  "    pm.expect(H.text(pm.response).length).to.be.above(2);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And the same version again is refused, because the first moved it",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/inventory/1351",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "inventory",
+                "1351"
+              ]
+            },
+            "description": "The whole point of the lock. Ten and twelve are two people's counts of one shelf, and last-write-wins loses one of them silently.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"setTo\": 10,\n  \"version\": \"{{phoneOtherVersion}}\",\n  \"reason\": \"CORRECTION\",\n  \"note\": \"Counted it again\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And the same version again is refused, because the first moved it — 400 or 409 or 422\", function () {",
+                  "  pm.expect([400,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A serialised variant refuses a typed figure outright",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/inventory/1350",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "inventory",
+                "1350"
+              ]
+            },
+            "description": "Variant 1350 is IMEI-tracked. The units are the authority and the count follows them — a shop whose count did not follow would go on selling a phone that is in a drawer with water damage.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"setTo\": 9,\n  \"version\": 0,\n  \"reason\": \"CORRECTION\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A serialised variant refuses a typed figure outright — 400 or 409 or 422\", function () {",
+                  "  pm.expect([400,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Another seller's shelf is not adjustable",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAwa}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/inventory/1351",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "inventory",
+                "1351"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"delta\": -3,\n  \"reason\": \"DAMAGE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Another seller's shelf is not adjustable — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The handsets behind a serialised variant, one row each",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/imei-units?variantId=1350",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "imei-units"
+              ],
+              "query": [
+                {
+                  "key": "variantId",
+                  "value": "1350"
+                }
+              ]
+            },
+            "description": "Phones are the one product a count cannot describe: most sold here are second-hand, and the buyer is often thousands of miles away choosing a gift for somebody at home. Two units of the same model are not interchangeable when one was opened once and the other has a scratched screen."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The handsets behind a serialised variant, one row each — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Handsets — every IMEI satisfies its own Luhn check digit\", function () {",
+                  "  function luhn(imei) {",
+                  "    let sum = 0;",
+                  "    for (let i = 0; i < imei.length; i++) {",
+                  "      let digit = parseInt(imei.charAt(imei.length - 1 - i), 10);",
+                  "      if (i % 2 === 1) {",
+                  "        digit *= 2;",
+                  "        if (digit > 9) digit -= 9;",
+                  "      }",
+                  "      sum += digit;",
+                  "    }",
+                  "    return sum % 10 === 0;",
+                  "  }",
+                  "  pm.expect($body.items.length).to.be.at.least(1);",
+                  "  $body.items.forEach(function (unit) {",
+                  "    pm.expect(unit.imei, 'an IMEI that is not fifteen digits').to.match(/^\\d{15}$/);",
+                  "    pm.expect(luhn(unit.imei), unit.imei + ' fails its own check digit').to.be.true;",
+                  "  });",
+                  "});",
+                  "pm.test(\"Handsets — the written-off unit is not sellable\", function () {",
+                  "  const off = $body.items.find(function (u) { return u.id === 1462; });",
+                  "  if (off) {",
+                  "    pm.expect(['WRITTEN_OFF', 'DAMAGED', 'BLOCKED'],",
+                  "      'unit 1462 is written off and reports ' + off.status)",
+                  "      .to.include(off.status);",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An IMEI one digit off its check digit is rejected, and the others are not",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-register-imei"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/imei-units",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "imei-units"
+              ]
+            },
+            "description": "Recording an IMEI at all is mostly about making a stolen handset harder to launder, and an IMEI that fails its own check digit is a typo or a fabrication. That line alone is rejected while the others register — a seller entering forty handsets should not lose thirty-nine to one mistake.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": 1301,\n  \"variantId\": 1350,\n  \"units\": [\n    {\n      \"imei\": \"013227009086252\",\n      \"serialNumber\": \"RF8N90ABCDX\",\n      \"grade\": \"A_GRADE\"\n    },\n    {\n      \"imei\": \"490154203237519\",\n      \"serialNumber\": \"RF8N90ABCDY\",\n      \"grade\": \"B_GRADE\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"An IMEI one digit off its check digit is rejected, and the others are not — 200 or 201 or 207 or 400 or 409 or 422\", function () {",
+                  "  pm.expect([200,201,207,400,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Registering — the answer accounts for both lines, one way or the other\", function () {",
+                  "  // Either the bad line is named as rejected while the good one registers, or",
+                  "  // the whole batch is refused and says which line was wrong. What must not",
+                  "  // happen is a silent partial success that leaves a seller unsure which of",
+                  "  // forty handsets is on the system.",
+                  "  const text = H.text(pm.response);",
+                  "  pm.expect(text.length, 'answered with nothing at all').to.be.above(2);",
+                  "  pm.expect(text, 'neither the failing IMEI nor a count of failures is mentioned')",
+                  "    .to.match(/490154203237519|reject|invalid|fail|check digit|Luhn/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A seller cannot mark a handset SOLD",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/imei-units/1462",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "imei-units",
+                "1462"
+              ]
+            },
+            "description": "The order does that, so the record and the sale cannot disagree.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"SOLD\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A seller cannot mark a handset SOLD — 400 or 403 or 409 or 422\", function () {",
+                  "  pm.expect([400,403,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nor touch BLOCKED in either direction",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/imei-units/1462",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "imei-units",
+                "1462"
+              ]
+            },
+            "description": "Setting it would let them flag a rival's stock; clearing it would let them launder a stolen handset. Both directions, which is why the refusal is on the value rather than on the transition.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"BLOCKED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Nor touch BLOCKED in either direction — 400 or 403 or 409 or 422\", function () {",
+                  "  pm.expect([400,403,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A promotion that overlaps another is refused, and the refusal names it",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-activate-conflicting"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/promotions/1472/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "promotions",
+                "1472",
+                "activate"
+              ]
+            },
+            "description": "Both cover product 1301 and their windows touch. Two discounts on one item do not compound into a price anybody can predict — they compound into whichever the pricing code reaches first, which is a different answer on different days and an argument with a buyer either way. \"Conflicts with an existing promotion\" would leave a seller hunting through their own list, so the refusal says which one.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A promotion that overlaps another is refused, and the refusal names it — 400 or 409 or 422\", function () {",
+                  "  pm.expect([400,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Conflict — the refusal names the promotion it clashes with\", function () {",
+                  "  const text = H.text(pm.response);",
+                  "  pm.expect(text, 'a seller told \"conflicts\" and nothing else has to go hunting')",
+                  "    .to.match(/1470|Tobaski phone sale/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One that does not overlap is allowed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-activate-ok"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/promotions/1471/activate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "promotions",
+                "1471",
+                "activate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"One that does not overlap is allowed — 200 or 201 or 400 or 409\", function () {",
+                  "  pm.expect([200,201,400,409]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "if (pm.response.code < 300) {",
+                  "  pm.test(\"Activated — running, with an empty conflict list\", function () {",
+                  "    pm.expect($body.status).to.equal('ACTIVE');",
+                  "    pm.expect($body.running).to.equal(true);",
+                  "    pm.expect($body.conflicts, 'activated with conflicts against it').to.eql([]);",
+                  "  });",
+                  "  pm.test(\"Activating twice is idempotent and says so\", function () {",
+                  "    // Run a second time, because a seller taps a button twice and a promotion",
+                  "    // that re-activated would move its window.",
+                  "    pm.expect($body.message, 'no sentence explaining what happened').to.be.a('string');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "His promotions are his, struck in his own currency",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/promotions?size=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "promotions"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "50"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"His promotions are his, struck in his own currency — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Promotions — every amount is in the seller's own currency\", function () {",
+                  "  // 500 GMD off, because Lamin banks in dalasi. A buyer paying in sterling sees",
+                  "  // that converted at the rate their order was quoted at; striking it in GBP",
+                  "  // would leave him funding an amount that moves with the market between",
+                  "  // writing the promotion and the order landing.",
+                  "  $body.items.forEach(function (p) {",
+                  "    if (p.currency) {",
+                  "      pm.expect(p.currency, p.name + ' is struck in ' + p.currency).to.equal('GMD');",
+                  "    }",
+                  "  });",
+                  "});",
+                  "pm.test(\"Promotions — none of Awa's are in his list\", function () {",
+                  "  const ids = $body.items.map(function (p) { return p.id; });",
+                  "  pm.expect(ids, \"promotion 1473 belongs to Teranga Textiles\")",
+                  "    .to.not.include(1473);",
+                  "});",
+                  "pm.test(\"Promotions — a draft says what is blocking it\", function () {",
+                  "  const draft = $body.items.find(function (p) { return p.status === 'DRAFT'; });",
+                  "  if (!draft) return;",
+                  "  pm.expect(draft.running, 'a draft promotion reported as running').to.equal(false);",
+                  "  pm.expect(draft.blockedReason || draft.conflicts || draft.description,",
+                  "    draft.name + ' is a draft with nothing saying why').to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And Awa's free-delivery promotion is hers, in CFA",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAwa}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/promotions?size=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "promotions"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "A free-delivery promotion and a goods discount do not compete for the same number — one waives the leg and the other reduces the price — which is why the conflict rule is about what a promotion touches rather than about dates alone. 1473 covers her whole shop, which is what no product rows means."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And Awa's free-delivery promotion is hers, in CFA — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Her promotions — the free-delivery one is running\", function () {",
+                  "  const shipping = $body.items.find(function (p) {",
+                  "    return p.id === 1473;",
+                  "  });",
+                  "  pm.expect(shipping, 'promotion 1473 is missing from her list')",
+                  "    .to.be.an('object');",
+                  "  pm.expect(shipping.type).to.match(/SHIP/i);",
+                  "  pm.expect(shipping.running).to.equal(true);",
+                  "});",
+                  "pm.test(\"Her promotions — struck in CFA, because she banks in Senegal\", function () {",
+                  "  $body.items.forEach(function (p) {",
+                  "    if (p.currency) {",
+                  "      pm.expect(p.currency, p.name + ' is struck in ' + p.currency).to.equal('XOF');",
+                  "    }",
+                  "  });",
+                  "});",
+                  "pm.test(\"Her promotions — and none of Lamin's\", function () {",
+                  "  const ids = $body.items.map(function (p) { return p.id; });",
+                  "  [1470, 1471, 1472]",
+                  "    .forEach(function (id) {",
+                  "      pm.expect(ids, 'promotion ' + id + ' belongs to Kombo Electronics').to.not.include(id);",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A seller's slice, and the whole of what they learn about either person",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/orders/1505",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "orders",
+                "1505"
+              ]
+            },
+            "description": "A packed parcel for Isatou in Serrekunda, paid for by Fatou in Madrid. The shipping block is a name, a town, a country and three digits of a phone — no street, because the platform routes the parcel and the QR on the label resolves the address for whoever scans it; and no payer at all."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — id is 1505\", function () {",
+                  "  const actual = H.get($body, \"id\");",
+                  "  const expected = 1505;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"id\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — status is \\\"READY_FOR_PICKUP\\\"\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = \"READY_FOR_PICKUP\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — currency is \\\"GMD\\\"\", function () {",
+                  "  const actual = H.get($body, \"currency\");",
+                  "  const expected = \"GMD\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"currency\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — shipping.town is \\\"Serrekunda\\\"\", function () {",
+                  "  const actual = H.get($body, \"shipping.town\");",
+                  "  const expected = \"Serrekunda\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"shipping.town\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — shipping.country is \\\"GM\\\"\", function () {",
+                  "  const actual = H.get($body, \"shipping.country\");",
+                  "  const expected = \"GM\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"shipping.country\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — fx.paidIn is \\\"EUR\\\"\", function () {",
+                  "  const actual = H.get($body, \"fx.paidIn\");",
+                  "  const expected = \"EUR\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"fx.paidIn\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — fx.settledIn is \\\"GMD\\\"\", function () {",
+                  "  const actual = H.get($body, \"fx.settledIn\");",
+                  "  const expected = \"GMD\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"fx.settledIn\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — fx.rate gt\", function () {",
+                  "  const actual = H.get($body, \"fx.rate\");",
+                  "  const expected = {\"$gt\":0};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"fx.rate\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — the body never says \\\"Fatou\\\" — the payer is nobody the seller was told about\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Fatou\") < 0,",
+                  "    'found ' + \"\\\"Fatou\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — the body never says \\\"fatou.admin@sujula.gm\\\" — nor her address\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"fatou.admin@sujula.gm\") < 0,",
+                  "    'found ' + \"\\\"fatou.admin@sujula.gm\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — the body never says \\\"Madrid\\\" — nor where she is\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Madrid\") < 0,",
+                  "    'found ' + \"\\\"Madrid\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A seller's slice, and the whole of what they learn about either person — the body never says \\\"12 Kairaba Avenue\\\" — and not the recipient's street either\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"12 Kairaba Avenue\") < 0,",
+                  "    'found ' + \"\\\"12 Kairaba Avenue\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"Slice — a phone hint rather than a number\", function () {",
+                  "  pm.expect($body.shipping.phoneHint, 'no hint to check a caller against')",
+                  "    .to.be.a('string');",
+                  "  pm.expect($body.shipping.phoneHint, 'a full number on a seller screen')",
+                  "    .to.match(/[^0-9+]/);",
+                  "  pm.expect(H.text(pm.response)).to.not.include('+2203100077');",
+                  "});",
+                  "pm.test(\"C2 — his own figures, and the rate they were struck at\", function () {",
+                  "  // 9700 GMD of goods, 10% commission, 8730 payable. Delivery is the",
+                  "  // platform's and is NOT added to the payout.",
+                  "  pm.expect($body.goodsTotal).to.equal(9700);",
+                  "  pm.expect($body.commission).to.equal(970);",
+                  "  pm.expect($body.payout, 'goods less commission, and delivery is not his')",
+                  "    .to.equal(8730);",
+                  "  pm.expect($body.payout).to.equal($body.goodsTotal - $body.commission);",
+                  "});",
+                  "pm.test(\"C2 — the rate says what it converted between, not just a number\", function () {",
+                  "  pm.expect($body.fx.source, 'a rate with no provenance').to.be.a('string');",
+                  "  pm.expect($body.fx.rateAt, 'a rate with no moment').to.be.a('string');",
+                  "});",
+                  "pm.test(\"Slice — the handsets on the line are named, because they are not interchangeable\", function () {",
+                  "  const line = $body.lines[0];",
+                  "  pm.expect(line.serialised).to.equal(true);",
+                  "  pm.expect(line.assignedImeis, 'a serialised line with no handset assigned')",
+                  "    .to.be.an('array').and.to.have.length.of.at.least(1);",
+                  "  pm.expect(line.handsetsOutstanding).to.equal(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The collection code, served no-store and never written on the parcel",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/orders/1505/handoff-code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "orders",
+                "1505",
+                "handoff-code"
+              ]
+            },
+            "description": "Read aloud to the driver. A code printed on the box it protects protects nothing, which is why the label carries a signed QR instead."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The collection code, served no-store and never written on the parcel — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"The collection code, served no-store and never written on the parcel — header Cache-Control\", function () {",
+                  "  const actual = pm.response.headers.get(\"Cache-Control\");",
+                  "  pm.expect(H.matches(actual, {\"$matches\":\"no-store\"}), \"Cache-Control\" + ' was ' + H.show(actual)).to.be.true;",
+                  "});",
+                  "pm.test(\"The collection code, served no-store and never written on the parcel — code is \\\"871460\\\"\", function () {",
+                  "  const actual = H.get($body, \"code\");",
+                  "  const expected = \"871460\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"code\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The collection code, served no-store and never written on the parcel — timesIssued gte\", function () {",
+                  "  const actual = H.get($body, \"timesIssued\");",
+                  "  const expected = {\"$gte\":1};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"timesIssued\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"The collection code, served no-store and never written on the parcel — message exists\", function () {",
+                  "  const actual = H.get($body, \"message\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"message\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Collection code — the answer tells the seller not to write it down\", function () {",
+                  "  pm.expect($body.message, 'no instruction with a code that must not be printed')",
+                  "    .to.match(/driver|not.*write|parcel/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And it is a 404 for the other seller",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAwa}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/orders/1505/handoff-code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "orders",
+                "1505",
+                "handoff-code"
+              ]
+            },
+            "description": "The collection code is a seller-only secret. It gets no permitAll of the kind the tracking page and the invoice link have, because those two are built to be worth nothing to a stranger holding them and this is not."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And it is a 404 for the other seller — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The parcel label: an A6 PDF with none of the four things you would expect",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/orders/1505/label",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "orders",
+                "1505",
+                "label"
+              ]
+            },
+            "description": "Read what is NOT on it: no street, no price, no contents, and not the collection code."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The parcel label: an A6 PDF with none of the four things you would expect — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Label — it is a PDF\", function () {",
+                  "  pm.expect(H.text(pm.response).slice(0, 5)).to.include('%PDF');",
+                  "});",
+                  "pm.test(\"Label — the collection code is not printed on the box it protects\", function () {",
+                  "  pm.expect(H.text(pm.response),",
+                  "    'the code is on the label, which makes the code pointless')",
+                  "    .to.not.include(\"871460\");",
+                  "});",
+                  "pm.test(\"Label — no street and no price\", function () {",
+                  "  const text = H.text(pm.response);",
+                  "  ['12 Kairaba Avenue', '9700', '132.16'].forEach(function (leak) {",
+                  "    pm.expect(text, 'the label carries ' + leak).to.not.include(leak);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Marking a packed slice ready again changes nothing, and does NOT reissue the code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-ready-already"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/orders/1505/ready",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "orders",
+                "1505",
+                "ready"
+              ]
+            },
+            "description": "Idempotent rather than refused, and that is the better of the two: a seller taps \"ready for collection\" twice on a patchy connection, and answering 409 to the second tap tells them something is wrong when nothing is.\n\nWhat must not happen is a NEW collection code, because the driver is already on their way with the first one — so the assertion is on reissued being false and the code being unchanged, which is the part that matters. The seed note calling this \"refused\" describes an older shape.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Marking a packed slice ready again changes nothing, and does NOT reissue the code — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Marking a packed slice ready again changes nothing, and does NOT reissue the code — status is \\\"READY_FOR_PICKUP\\\"\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = \"READY_FOR_PICKUP\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Marking a packed slice ready again changes nothing, and does NOT reissue the code — releaseCode.code is \\\"871460\\\"\", function () {",
+                  "  const actual = H.get($body, \"releaseCode.code\");",
+                  "  const expected = \"871460\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"releaseCode.code\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Marking a packed slice ready again changes nothing, and does NOT reissue the code — releaseCode.reissued is false\", function () {",
+                  "  const actual = H.get($body, \"releaseCode.reissued\");",
+                  "  const expected = false;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"releaseCode.reissued\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Marking a packed slice ready again changes nothing, and does NOT reissue the code — releaseCode.timesIssued is 1\", function () {",
+                  "  const actual = H.get($body, \"releaseCode.timesIssued\");",
+                  "  const expected = 1;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"releaseCode.timesIssued\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Ready again — the answer says plainly that nothing changed\", function () {",
+                  "  pm.expect($body.message, 'no sentence telling the seller what happened')",
+                  "    .to.be.a('string');",
+                  "  pm.expect($body.message).to.match(/already|unchanged/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Awa's rejected slice carries her reason on it",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAwa}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/orders/1506",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "orders",
+                "1506"
+              ]
+            },
+            "description": "Then look at 1505 again: untouched, still going. One payment, two vendors, independent outcomes — C3 from the seller's side."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Awa's rejected slice carries her reason on it — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Awa's rejected slice carries her reason on it — id is 1506\", function () {",
+                  "  const actual = H.get($body, \"id\");",
+                  "  const expected = 1506;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"id\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Awa's rejected slice carries her reason on it — status is \\\"CANCELLED\\\"\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = \"CANCELLED\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Awa's rejected slice carries her reason on it — currency is \\\"XOF\\\"\", function () {",
+                  "  const actual = H.get($body, \"currency\");",
+                  "  const expected = \"XOF\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"currency\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Awa's rejected slice carries her reason on it — rejectionReason matches\", function () {",
+                  "  const actual = H.get($body, \"rejectionReason\");",
+                  "  const expected = {\"$matches\":\"indigo\"};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"rejectionReason\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Awa's rejected slice carries her reason on it — cancelledAt exists\", function () {",
+                  "  const actual = H.get($body, \"cancelledAt\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"cancelledAt\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"Rejected — the reason is hers, in her own words\", function () {",
+                  "  pm.expect($body.rejectionReason, 'cancelled with no reason recorded').to.be.a('string');",
+                  "  pm.expect($body.rejectionReason.length, 'a reason too short to mean anything')",
+                  "    .to.be.above(20);",
+                  "});",
+                  "pm.test(\"C3 — and her figures are in CFA, not the buyer's euros\", function () {",
+                  "  pm.expect($body.currency).to.equal('XOF');",
+                  "  pm.expect($body.fx.paidIn, 'the buyer paid in euros').to.equal('EUR');",
+                  "  pm.expect($body.fx.settledIn, 'she settles in CFA').to.equal('XOF');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And the other seller's slice of the same order is untouched",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/orders/1505",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "orders",
+                "1505"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And the other seller's slice of the same order is untouched — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"And the other seller's slice of the same order is untouched — status is \\\"READY_FOR_PICKUP\\\"\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = \"READY_FOR_PICKUP\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"And the other seller's slice of the same order is untouched — cancelledAt exists\", function () {",
+                  "  const actual = H.get($body, \"cancelledAt\");",
+                  "  const expected = {\"$exists\":false};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"cancelledAt\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A seller cannot read another seller's slice of their own order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/orders/1506",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "orders",
+                "1506"
+              ]
+            },
+            "description": "Both slices belong to order 1404. Sharing an order does not share a slice: what Awa charges, what she is paid and why she cancelled are her business."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A seller cannot read another seller's slice of their own order — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A balance is the sum of the ledger, never a stored figure",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "balance"
+              ]
+            },
+            "description": "1000 dalasi available and 17,640 pending. The pending figure is escrow — parcels that have not been confirmed delivered. Nothing stores either number; both are sums of vendor_ledger_entries."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A balance is the sum of the ledger, never a stored figure — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Balance — one figure per currency and never one total\", function () {",
+                  "  pm.expect($body.byCurrency.length).to.be.at.least(1);",
+                  "  pm.expect($body.total, 'a single total across currencies is not a number').to.not.exist;",
+                  "  $body.byCurrency.forEach(function (b) {",
+                  "    pm.expect(b.currency).to.be.a('string');",
+                  "    pm.expect(b.available).to.be.a('number');",
+                  "    pm.expect(b.pending, 'no escrow figure').to.be.a('number');",
+                  "  });",
+                  "});",
+                  "pm.test(\"Balance — his is in dalasi\", function () {",
+                  "  pm.expect($body.byCurrency.map(function (b) { return b.currency; })).to.eql(['GMD']);",
+                  "});",
+                  "pm.test(\"Balance — the total is its own parts\", function () {",
+                  "  $body.byCurrency.forEach(function (b) {",
+                  "    pm.expect(b.total, b.currency + ': ' + b.available + ' + ' + b.pending",
+                  "      + ' should be ' + (b.available + b.pending)).to.equal(b.available + b.pending);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And the rows behind it add up to it",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "transactions"
+              ]
+            },
+            "description": "Which is the only thing that makes a balance checkable. Add the amount column up and you get the balance."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And the rows behind it add up to it — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Transactions — every entry says what it was and when\", function () {",
+                  "  const entries = $body.entries || $body.content || [];",
+                  "  pm.expect(entries.length).to.be.at.least(1);",
+                  "  entries.forEach(function (e) {",
+                  "    pm.expect(e.type, 'an entry with no type').to.be.a('string');",
+                  "    pm.expect(e.amount, 'an entry with no amount').to.be.a('number');",
+                  "    pm.expect(e.currency).to.be.a('string');",
+                  "    pm.expect(e.occurredAt).to.be.a('string');",
+                  "    pm.expect(e.heldInEscrow, 'an entry that does not say whether it is held')",
+                  "      .to.be.a('boolean');",
+                  "  });",
+                  "});",
+                  "pm.test(\"Transactions — the entries come to the balance\", function () {",
+                  "  const entries = $body.entries || $body.content || [];",
+                  "  const gmd = entries.filter(function (e) { return e.currency === 'GMD'; });",
+                  "  const summed = gmd.reduce(function (s, e) { return s + e.amount; }, 0);",
+                  "  pm.sendRequest({",
+                  "    url: pm.variables.replaceIn('{{baseUrl}}/vendor/balance'),",
+                  "    method: 'GET',",
+                  "    header: { Authorization: 'Bearer ' + pm.collectionVariables.get('tokenLamin') },",
+                  "  }, function (error, answer) {",
+                  "    pm.expect(error).to.equal(null);",
+                  "    const balance = answer.json().byCurrency.find(function (b) { return b.currency === 'GMD'; });",
+                  "    pm.expect(Math.abs(summed - balance.total) < 0.05,",
+                  "      'the ledger comes to ' + summed.toFixed(2) + ' and the balance says '",
+                  "      + balance.total + '. A balance that is not the sum of its rows is a figure '",
+                  "      + 'nobody can check.').to.be.true;",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A failed payout came back as a reversal rather than being deleted",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAwa}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/transactions?currency=XOF",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "currency",
+                  "value": "XOF"
+                }
+              ]
+            },
+            "description": "Her payout failed and the reversal explains the gap instead of hiding it. And look at slice 1506: four rows — sale, commission, refund, commission returned — that come to exactly nothing. Netting them into one would hide the thing a seller opens a refund to check."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A failed payout came back as a reversal rather than being deleted — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Reversal — the payout and its reversal are both rows\", function () {",
+                  "  const entries = $body.entries || $body.content || [];",
+                  "  const types = entries.map(function (e) { return e.type; });",
+                  "  pm.expect(types, 'the payout that failed is missing').to.include('PAYOUT');",
+                  "  pm.expect(types, 'it was deleted rather than reversed').to.include('PAYOUT_REVERSAL');",
+                  "});",
+                  "pm.test(\"Reversal — and they cancel out exactly\", function () {",
+                  "  const entries = $body.entries || $body.content || [];",
+                  "  const payout = entries.find(function (e) { return e.type === 'PAYOUT'; });",
+                  "  const reversal = entries.find(function (e) { return e.type === 'PAYOUT_REVERSAL'; });",
+                  "  pm.expect(payout.amount + reversal.amount,",
+                  "    payout.amount + ' and ' + reversal.amount + ' do not cancel').to.equal(0);",
+                  "  pm.expect(reversal.description, 'a reversal with no reason a seller can read')",
+                  "    .to.be.a('string');",
+                  "});",
+                  "pm.test(\"Refund — the commission is returned as its own row\", function () {",
+                  "  const entries = $body.entries || $body.content || [];",
+                  "  const types = entries.map(function (e) { return e.type; });",
+                  "  pm.expect(types, 'a refund with no commission reversal beside it')",
+                  "    .to.include('COMMISSION_REVERSAL');",
+                  "});",
+                  "pm.test(\"Every amount is in CFA, and CFA has no centime\", function () {",
+                  "  const entries = $body.entries || $body.content || [];",
+                  "  entries.forEach(function (e) {",
+                  "    pm.expect(e.currency).to.equal('XOF');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A payout request with money still held is refused, and says which kind of nothing",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenAwa}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "e2e-payout-awa"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/payouts/request",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "payouts",
+                "request"
+              ]
+            },
+            "description": "Money still held against parcels, rather than no money at all. The two need different words: one means \"wait\", the other means \"you have not sold anything\".",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"XOF\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A payout request with money still held is refused, and says which kind of nothing — 400 or 409 or 422\", function () {",
+                  "  pm.expect([400,409,422]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Payout — the refusal distinguishes held money from no money\", function () {",
+                  "  pm.expect(H.text(pm.response), 'refused with no explanation of which it is')",
+                  "    .to.match(/escrow|held|confirm|deliver/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revenue per currency, never one total",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/analytics/overview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "analytics",
+                "overview"
+              ]
+            },
+            "description": "A shop trading in two currencies gets two figures and a note saying why they are not added. Adding them would produce a number with no unit."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Revenue per currency, never one total — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Analytics — one revenue figure per currency\", function () {",
+                  "  pm.expect($body.byCurrency).to.be.an('array').and.to.have.length.of.at.least(1);",
+                  "  pm.expect($body.revenue, 'a single revenue figure across currencies').to.not.exist;",
+                  "  $body.byCurrency.forEach(function (c) {",
+                  "    pm.expect(c.netRevenue, c.currency + ': ' + c.revenue + ' - ' + c.commission",
+                  "      + ' should be ' + (c.revenue - c.commission)).to.equal(c.revenue - c.commission);",
+                  "  });",
+                  "});",
+                  "pm.test(\"Analytics — the period and what it is compared with are both stated\", function () {",
+                  "  pm.expect($body.period.from).to.be.a('string');",
+                  "  pm.expect($body.comparedWith.days, 'compared against a period of a different length')",
+                  "    .to.equal($body.period.days);",
+                  "});",
+                  "pm.test(\"Analytics — the conversion rate says plainly what a view is\", function () {",
+                  "  // Views are page loads, including reloads and the same person twice. A",
+                  "  // conversion rate presented as a fact about people would be wrong by a",
+                  "  // multiple nobody can estimate.",
+                  "  pm.expect($body.conversionNote, 'a conversion rate with no caveat on it')",
+                  "    .to.be.a('string');",
+                  "  pm.expect($body.conversionNote).to.match(/not unique|page loads|reload/i);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The phone was looked at 180 times and bought once",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/analytics/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "analytics",
+                "products"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The phone was looked at 180 times and bought once — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Product analytics — views and units sold are separate numbers\", function () {",
+                  "  pm.expect($body.rows, 'no per-product rows').to.be.an('array').and.to.have.length.of.at.least(1);",
+                  "  const phone = $body.rows.find(function (r) { return r.productId === 1301; });",
+                  "  pm.expect(phone, 'the Galaxy is not in the rows').to.be.an('object');",
+                  "  pm.expect(phone.views, 'looked at a hundred and eighty-odd times').to.be.above(100);",
+                  "  pm.expect(phone.unitsSold, 'and bought a couple of times').to.be.at.least(1);",
+                  "});",
+                  "pm.test(\"Product analytics — the conversion rate is the two divided\", function () {",
+                  "  $body.rows.forEach(function (r) {",
+                  "    if (!r.views || r.conversionPercent == null) return;",
+                  "    const expected = Math.round((r.unitsSold / r.views) * 1000) / 10;",
+                  "    pm.expect(Math.abs(r.conversionPercent - expected) < 0.2,",
+                  "      r.name + ': ' + r.unitsSold + ' of ' + r.views + ' is ' + expected",
+                  "      + '%, row says ' + r.conversionPercent).to.be.true;",
+                  "  });",
+                  "});",
+                  "pm.test(\"Product analytics — a figure that cannot be computed says why\", function () {",
+                  "  // The withdrawn listing has no stock, so its stock turn is not a number. A",
+                  "  // null with a note beside it is a seller being told; a zero is a seller",
+                  "  // being misled.",
+                  "  $body.rows.forEach(function (r) {",
+                  "    if (r.stockTurn === null) {",
+                  "      pm.expect(r.stockTurnNote, r.name + ': no stock turn and no reason given')",
+                  "        .to.be.a('string');",
+                  "    }",
+                  "  });",
+                  "});",
+                  "pm.test(\"Product analytics — every row is in the seller's own currency\", function () {",
+                  "  $body.rows.forEach(function (r) {",
+                  "    pm.expect(r.currency, r.name + ' has no currency').to.equal('GMD');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Customers: counts and countries, and nothing else",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/analytics/customers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "analytics",
+                "customers"
+              ]
+            },
+            "description": "Destinations are where parcels went, never where the payer was, and a country with only a handful of orders is left out entirely — because at small counts a country IS an identity."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Customers: counts and countries, and nothing else — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Customers: counts and countries, and nothing else — the body never says \\\"Oliver\\\" — a seller gets counts, not a customer list\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Oliver\") < 0,",
+                  "    'found ' + \"\\\"Oliver\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"Customers: counts and countries, and nothing else — the body never says \\\"oliver.bennett@example.co.uk\\\" — and certainly not addresses\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"oliver.bennett@example.co.uk\") < 0,",
+                  "    'found ' + \"\\\"oliver.bennett@example.co.uk\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"Customers: counts and countries, and nothing else — the body never says \\\"Aminata\\\" — nor names\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Aminata\") < 0,",
+                  "    'found ' + \"\\\"Aminata\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"Customers: counts and countries, and nothing else — the body never says \\\"221B\\\" — nor streets\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"221B\") < 0,",
+                  "    'found ' + \"\\\"221B\\\"\" + ' in the response').to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A statement whose brought-forward plus movements equals its carried-forward",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenLamin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/statements/2026-09?currency=GMD",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "statements",
+                "2026-09"
+              ],
+              "query": [
+                {
+                  "key": "currency",
+                  "value": "GMD"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A statement whose brought-forward plus movements equals its carried-forward — 200 or 404\", function () {",
+                  "  pm.expect([200,404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test(\"Statement — it is a document rather than an error page\", function () {",
+                  "    pm.expect(pm.response.stream.length, 'an empty statement').to.be.above(400);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Another seller's figures are not readable",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenNdeye}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "balance"
+              ]
+            },
+            "description": "What is behind this rule is revenue, margins, a bank-ready statement and the destinations a shop ships to. An unguarded route here hands a competitor a shop's whole trading position."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Another seller's figures are not readable — 400 or 403 or 404\", function () {",
+                  "  pm.expect([400,403,404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "90 — The role matrix",
       "description": "Generated from endpoints.json: 432 operations, 863 rows.\n\nLeft out on purpose: DELETE /api/users/{id}/permanent (an erasure the matrix cannot undo); POST /auth/logout (signing a persona out would fail every folder after this one); POST /auth/logout-all (signing a persona out would fail every folder after this one); DELETE /me (an erasure the matrix cannot undo).",
       "item": [
@@ -54944,6 +58210,10 @@
       "value": ""
     },
     {
+      "key": "tokenFatou",
+      "value": ""
+    },
+    {
       "key": "tokenOliverRefresh",
       "value": ""
     },
@@ -55045,6 +58315,14 @@
     },
     {
       "key": "tokenSellerSession",
+      "value": ""
+    },
+    {
+      "key": "tokenFatouRefresh",
+      "value": ""
+    },
+    {
+      "key": "tokenFatouSession",
       "value": ""
     }
   ]

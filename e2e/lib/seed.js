@@ -228,6 +228,9 @@ module.exports = {
 
   idempotencyKeys: { aminataHomeAddress: 'seed-key-aminata-home' },
 
+  /** The month a statement is asked for, which the seed's own note uses. */
+  statementPeriod: '2026-09',
+
   /** Rates the seed publishes, and one it deliberately does not. */
   fx: {
     published: [{ base: 'GMD', quote: 'GBP' }],

@@ -129,8 +129,15 @@ public class VendorCatalogueServiceImpl implements VendorCatalogueService {
                                             boolean includeArchived, Pageable pageable) {
         Vendor vendor = requireVendor(userId);
 
+        // Asking for the archived tab IS asking to include archived listings.
+        // Without this, ?status=ARCHIVED came back empty while the counts block
+        // beside it said there was one — a seller clicking the tab their own
+        // screen offered got nothing, and no message either. Archived listings
+        // stay out of the default page, which is what the flag is for.
+        boolean archivedToo = includeArchived || status == ProductStatus.ARCHIVED;
+
         Page<Product> page = products.findForVendor(
-                vendor.getId(), status, includeArchived, blankToNull(search), pageable);
+                vendor.getId(), status, archivedToo, blankToNull(search), pageable);
 
         // The tab counts come back with the page rather than as a second round
         // trip, because a back office draws them on every render.

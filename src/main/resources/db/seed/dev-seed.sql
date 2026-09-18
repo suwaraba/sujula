@@ -3585,9 +3585,15 @@ COMMIT;
 --                                       street, no price, no contents, and not
 --                                       the collection code. A code printed on
 --                                       the box it protects protects nothing.
---     POST /vendor/orders/1505/ready    refused - it is already packed. Try it
---                                       on a slice whose phone is unscanned and
---                                       the refusal names the line and the count.
+--     POST /vendor/orders/1505/ready    idempotent - it is already packed, so the
+--                                       answer says so and the collection code is
+--                                       UNCHANGED. That is the part that matters:
+--                                       a driver is already on their way with the
+--                                       first code, and a seller tapping the
+--                                       button twice on a patchy connection must
+--                                       not invalidate it. Try it instead on a
+--                                       slice whose phone is unscanned and the
+--                                       refusal names the line and the count.
 --     GET /vendor/orders/1506           as Awa. The slice she rejected, with her
 --                                       reason on it. Then look at 1505 again:
 --                                       untouched, still going. One payment, two
