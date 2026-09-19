@@ -130,6 +130,30 @@ pm.test("Locales — every entry answers the question", function () {
     }),
 
     req({
+      name: 'Swagger UI can fetch its own settings, not just the document',
+      path: '/openapi.json/swagger-config',
+      note: 'springdoc hangs Swagger UI\'s settings off springdoc.api-docs.path, so moving the '
+          + 'document to /openapi.json moves this to /openapi.json/swagger-config. The security '
+          + 'allowlist named the document and not the subtree, so this one request was refused '
+          + 'while everything around it was open — and Swagger UI reports that as "Failed to '
+          + 'load remote configuration" over an empty page, which names neither the path nor the '
+          + 'status. Asserted separately from the document below because they are two rules and '
+          + 'only one of them was there.',
+      status: 200,
+      json: { 'url': { $exists: true } },
+    }),
+
+    req({
+      name: 'And the document itself, which is what that config points at',
+      path: '/openapi.json',
+      note: 'Open only because this profile sets sujula.docs.enabled. Production leaves it off: '
+          + 'a complete map of every path, role-gated write and request shape is reconnaissance '
+          + 'handed to anybody who asks.',
+      status: 200,
+      json: { 'openapi': { $exists: true }, 'paths': { $exists: true } },
+    }),
+
+    req({
       name: 'The metrics scrape is not public',
       path: '/actuator/prometheus',
       note: 'It carries request counts, error rates and timings per endpoint — enough '

@@ -351,6 +351,93 @@
           ]
         },
         {
+          "name": "Swagger UI can fetch its own settings, not just the document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openapi.json/swagger-config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openapi.json",
+                "swagger-config"
+              ]
+            },
+            "description": "springdoc hangs Swagger UI's settings off springdoc.api-docs.path, so moving the document to /openapi.json moves this to /openapi.json/swagger-config. The security allowlist named the document and not the subtree, so this one request was refused while everything around it was open — and Swagger UI reports that as \"Failed to load remote configuration\" over an empty page, which names neither the path nor the status. Asserted separately from the document below because they are two rules and only one of them was there."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Swagger UI can fetch its own settings, not just the document — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Swagger UI can fetch its own settings, not just the document — url exists\", function () {",
+                  "  const actual = H.get($body, \"url\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"url\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And the document itself, which is what that config points at",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openapi.json",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openapi.json"
+              ]
+            },
+            "description": "Open only because this profile sets sujula.docs.enabled. Production leaves it off: a complete map of every path, role-gated write and request shape is reconnaissance handed to anybody who asks."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And the document itself, which is what that config points at — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"And the document itself, which is what that config points at — openapi exists\", function () {",
+                  "  const actual = H.get($body, \"openapi\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"openapi\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"And the document itself, which is what that config points at — paths exists\", function () {",
+                  "  const actual = H.get($body, \"paths\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"paths\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "The metrics scrape is not public",
           "request": {
             "method": "GET",

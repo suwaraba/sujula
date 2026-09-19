@@ -161,12 +161,24 @@ public class SecurityConfig {
                         auth.requestMatchers(
                                 "/swagger-ui.html", "/swagger-ui/**",
                                 "/v3/api-docs", "/v3/api-docs/**",
-                                // The spec's own path for the same document.
+                                // The spec's own path for the same document,
+                                // which springdoc.api-docs.path moves the
+                                // document to — and springdoc hangs Swagger
+                                // UI's own settings off that same path, at
+                                // <path>/swagger-config. Listing the document
+                                // without the subtree left that one request
+                                // refused while everything around it was open,
+                                // and Swagger UI answers a refusal there with
+                                // "Failed to load remote configuration" and an
+                                // empty page. The /v3/api-docs entries above
+                                // are the same two rules for a deployment that
+                                // does not override the path.
+                                //
                                 // Gated by the same flag: in production this
                                 // block does not run, and a full description of
                                 // every endpoint is not handed to anybody who
                                 // asks.
-                                "/openapi.json").permitAll();
+                                "/openapi.json", "/openapi.json/**").permitAll();
                     }
                     auth
                         // ── Machines and probes ──────────────────────────────
