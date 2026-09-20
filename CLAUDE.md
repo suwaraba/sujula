@@ -103,3 +103,18 @@ or an invalid query fails there rather than on the first request that touches it
 
 Development seed: `src/main/resources/db/seed/dev-seed.sql` — run by hand, never
 auto-loaded. Its own header explains how.
+
+Sample data in Java: `com.sujula.config.seed`, off unless asked for.
+
+```
+mvn -o spring-boot:run -Dspring-boot.run.profiles=sample
+```
+
+Fills every entity in the model — all of them, checked against Hibernate's
+metamodel by `SampleDataSeederTest` — with rows in every state each one can
+hold: an order in each `OrderStatus`, a shipment in each `ShipmentStatus`, a
+driver who was rejected and one out delivering, a dispute open and one resolved
+either way. It runs against whatever database the application booted with, so it
+works on MySQL and on the in-memory H2 alike, and it writes nothing when the
+database already holds users. Prefer it over the SQL seed when what you need is
+a coherent dataset rather than a description of a MySQL schema.
