@@ -13,6 +13,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.sujula.dto.response.driver.DriverResponses;
 import com.sujula.model.constant.ShipmentStatus;
+import com.sujula.service.StorageService;
 import com.sujula.service.driver.DriverCustodyService;
 import com.sujula.service.driver.DriverProfileService;
 
@@ -51,6 +52,9 @@ class DriverRoutingTest {
 
     @MockitoBean
     private DriverCustodyService custody;
+
+    @MockitoBean
+    private StorageService storage;
 
     private static final String HANDOVER =
             "{\"code\":\"123456\",\"lat\":13.4384,\"lng\":-16.6781,\"photoUrl\":\"https://m.invalid/p.jpg\"}";
@@ -100,6 +104,8 @@ class DriverRoutingTest {
                 .andExpect(status().isForbidden());
         mvc.perform(get("/driver/earnings")).andExpect(status().isForbidden());
         mvc.perform(get("/driver/history")).andExpect(status().isForbidden());
+        mvc.perform(post("/driver/evidence/presign").param("contentType", "image/jpeg"))
+                .andExpect(status().isForbidden());
     }
 
     @Test
@@ -225,6 +231,42 @@ class DriverRoutingTest {
                 .andExpect(status().isOk());
 
         verify(profiles).setAvailability(eq(950L), any());
+    }
+
+    // ── Somewhere to put a photograph ────────────────────────────────────────
+
+    @Test
+    void presigningEvidenceNamesTheFileAfterTheCallerAndNeverTheParcel() throws Exception {
+        when(storage.presignUpload(eq("custody"), any(), eq("image/jpeg"), any()))
+                .thenReturn("https://storage.invalid/put");
+        when(storage.publicUrl(eq("custody"), any())).thenReturn("https://cdn.invalid/p.jpg");
+
+        mvc.perform(post("/driver/evidence/presign")
+                        .with(authentication(driverAuth())).with(csrf())
+                        .param("contentType", "image/jpeg"))
+                .andExpect(status().isOk())
+                // The bytes go straight to storage; this response is a pair of
+                // URLs and nothing that belongs in a cache.
+                .andExpect(header().string("Cache-Control",
+                        org.hamcrest.Matchers.containsString("no-store")));
+
+        // The key carries the driver's own id and a random one. A key naming a
+        // shipment would let somebody who knew the scheme walk the bucket for
+        // pictures of other people's doorways.
+        verify(storage).presignUpload(eq("custody"),
+                org.mockito.ArgumentMatchers.startsWith("custody-950-"), eq("image/jpeg"), any());
+    }
+
+    @Test
+    void anEvidenceUploadThatIsNotAPictureIsRefusedBeforeStorageIsAsked() throws Exception {
+        // An allow-list, so a driver's app cannot presign a URL for an HTML page
+        // and have it served back from the platform's own domain.
+        mvc.perform(post("/driver/evidence/presign")
+                        .with(authentication(driverAuth())).with(csrf())
+                        .param("contentType", "text/html"))
+                .andExpect(status().isBadRequest());
+
+        verify(storage, never()).presignUpload(any(), any(), any(), any());
     }
 
     // ── What the responses say about themselves ──────────────────────────────

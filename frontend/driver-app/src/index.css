@@ -1,0 +1,947 @@
+/*
+ * The driver app's look, and why it looks like this.
+ *
+ * The person using it is standing in the sun holding a parcel, wearing a
+ * helmet, on a phone with a cracked screen, and may not read the language the
+ * platform is administered in. Everything below follows from that:
+ *
+ *  - **Targets are enormous.** 64px minimum, 88px for the action that ends a
+ *    step. A mis-tap here is a parcel recorded as delivered when it was not.
+ *  - **One action per screen has weight.** The primary action is the widest,
+ *    brightest, lowest thing on the screen — reachable with a thumb on a phone
+ *    held in one hand, which is how a phone is held when the other hand has a
+ *    box in it.
+ *  - **Colour is never the only signal.** Every state carries an icon and a
+ *    word as well, because the screen is being read in direct sunlight and
+ *    roughly one man in twelve cannot tell the green from the amber.
+ *  - **Dark by default.** These rounds run at dusk and after, the screens are
+ *    cheap, and a white screen at night is both blinding and a battery cost.
+ *  - **Type does not go below 16px.** Anything smaller is unreadable through a
+ *    scratched protector, and on iOS a 16px input is also what stops the page
+ *    zooming when it is focused.
+ */
+
+:root {
+  --bg: #0b1220;
+  --bg-raised: #131c2e;
+  --bg-sunken: #070d18;
+  --line: #24314a;
+
+  --ink: #f4f7fc;
+  --ink-soft: #9fb0cc;
+  --ink-faint: #6c7f9e;
+
+  --brand: #f5a623;
+  --brand-ink: #1a1203;
+
+  --go: #22c55e;
+  --go-ink: #04220f;
+  --stop: #ef4444;
+  --stop-ink: #2a0606;
+  --warn: #f59e0b;
+  --info: #3b82f6;
+
+  --radius: 16px;
+  --radius-lg: 22px;
+
+  --tap: 64px;
+  --tap-major: 88px;
+
+  --gutter: 16px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  --shadow: 0 8px 28px rgb(0 0 0 / 45%);
+
+  color-scheme: dark;
+}
+
+/*
+ * A light theme for one situation: bright midday sun, where a dark screen is a
+ * mirror. Offered as a switch rather than followed from the system, because the
+ * system setting tracks the time of day and the driver's problem is the sky.
+ */
+:root[data-theme='light'] {
+  --bg: #f6f8fc;
+  --bg-raised: #ffffff;
+  --bg-sunken: #e8edf6;
+  --line: #ccd7e8;
+  --ink: #0b1220;
+  --ink-soft: #46586f;
+  --ink-faint: #6b7d95;
+  --brand: #b46a00;
+  --brand-ink: #ffffff;
+  --go: #147a3d;
+  --go-ink: #ffffff;
+  --stop: #b91c1c;
+  --stop-ink: #ffffff;
+  --shadow: 0 6px 20px rgb(11 18 32 / 12%);
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 17px;
+  line-height: 1.45;
+  /* A driver's thumb should never scroll the page sideways by accident. */
+  overscroll-behavior-y: contain;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 8px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+h1 {
+  font-size: 26px;
+}
+h2 {
+  font-size: 21px;
+}
+h3 {
+  font-size: 18px;
+}
+
+p {
+  margin: 0 0 12px;
+}
+
+a {
+  color: var(--brand);
+}
+
+:focus-visible {
+  outline: 3px solid var(--info);
+  outline-offset: 2px;
+}
+
+/* ── Shell ────────────────────────────────────────────────────────────────── */
+
+.app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--safe-top);
+}
+
+.screen {
+  flex: 1;
+  padding: var(--gutter);
+  /* Room for the fixed tab bar and the primary action above it. */
+  padding-bottom: calc(var(--tap) + var(--tap-major) + var(--safe-bottom) + 32px);
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.screen--plain {
+  padding-bottom: calc(var(--gutter) + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100dvh;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px var(--gutter);
+  /* Opaque, not translucent. Content scrolls underneath it, and a blurred bar
+     that a phone declines to blur leaves a title sitting on top of a sentence.
+     There is nothing behind here worth seeing through. */
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar__title {
+  font-size: 19px;
+  font-weight: 700;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iconbutton {
+  min-width: 48px;
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 14px;
+  background: var(--bg-raised);
+  color: var(--ink);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+/* ── Tab bar ──────────────────────────────────────────────────────────────── */
+
+.tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  background: var(--bg-raised);
+  border-top: 1px solid var(--line);
+  padding-bottom: var(--safe-bottom);
+}
+
+.tabs__tab {
+  min-height: var(--tap);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.tabs__tab[aria-current='page'] {
+  color: var(--brand);
+}
+
+.tabs__icon {
+  font-size: 26px;
+  line-height: 1;
+}
+
+.tabs__badge {
+  position: absolute;
+  transform: translate(18px, -14px);
+  background: var(--stop);
+  color: #fff;
+  border-radius: 999px;
+  min-width: 20px;
+  height: 20px;
+  font-size: 12px;
+  display: grid;
+  place-items: center;
+  padding: 0 5px;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: var(--tap);
+  width: 100%;
+  padding: 0 20px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+  font-family: inherit;
+  /* Several of these are anchors — a Directions link has to be a real link so
+     the phone hands it to the Maps app — and an underlined button reads as a
+     mistake. */
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 80ms ease;
+}
+
+.button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.button--major {
+  min-height: var(--tap-major);
+  font-size: 22px;
+  border-radius: var(--radius-lg);
+}
+
+.button--go {
+  background: var(--go);
+  color: var(--go-ink);
+}
+
+.button--brand {
+  background: var(--brand);
+  color: var(--brand-ink);
+}
+
+.button--stop {
+  background: var(--stop);
+  color: #fff;
+}
+
+.button--ghost {
+  background: transparent;
+  border: 2px solid var(--line);
+  color: var(--ink);
+}
+
+.button__icon {
+  font-size: 26px;
+  line-height: 1;
+}
+
+/* The action that ends a step: pinned above the tab bar, thumb-reachable. */
+.primary-slot {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--tap) + var(--safe-bottom));
+  z-index: 25;
+  padding: 12px var(--gutter);
+  background: linear-gradient(to top, var(--bg) 62%, transparent);
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.primary-slot--alone {
+  bottom: var(--safe-bottom);
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* ── Cards ────────────────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.card--tap {
+  display: block;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.card__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.card__title {
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.card__meta {
+  color: var(--ink-soft);
+  font-size: 15px;
+}
+
+.money {
+  font-size: 24px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.route {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 4px 10px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+.route__dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  justify-self: center;
+}
+
+.route__dot--from {
+  background: var(--brand);
+}
+.route__dot--to {
+  background: var(--go);
+}
+
+.route__line {
+  width: 3px;
+  height: 22px;
+  background: var(--line);
+  justify-self: center;
+}
+
+.route__label {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+/* ── Status ───────────────────────────────────────────────────────────────── */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  background: var(--bg-sunken);
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.pill--go {
+  background: color-mix(in srgb, var(--go) 22%, transparent);
+  color: var(--go);
+  border-color: color-mix(in srgb, var(--go) 45%, transparent);
+}
+.pill--warn {
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.pill--stop {
+  background: color-mix(in srgb, var(--stop) 22%, transparent);
+  color: var(--stop);
+  border-color: color-mix(in srgb, var(--stop) 45%, transparent);
+}
+
+.banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+}
+
+.banner--warn {
+  background: color-mix(in srgb, var(--warn) 16%, var(--bg-raised));
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.banner--stop {
+  background: color-mix(in srgb, var(--stop) 16%, var(--bg-raised));
+  border-color: color-mix(in srgb, var(--stop) 45%, transparent);
+}
+.banner--go {
+  background: color-mix(in srgb, var(--go) 16%, var(--bg-raised));
+  border-color: color-mix(in srgb, var(--go) 45%, transparent);
+}
+
+.banner__icon {
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.offline-bar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 12px;
+  background: var(--warn);
+  color: #241a02;
+  font-weight: 800;
+  font-size: 16px;
+  text-align: center;
+}
+
+/* ── Forms ────────────────────────────────────────────────────────────────── */
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field__label {
+  display: block;
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--ink-soft);
+}
+
+.field__input,
+.field__select,
+.field__textarea {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 2px solid var(--line);
+  background: var(--bg-sunken);
+  color: var(--ink);
+  /* 16px minimum: anything smaller makes iOS zoom the page on focus. */
+  font-size: 18px;
+  font-family: inherit;
+}
+
+.field__textarea {
+  min-height: 96px;
+  padding-top: 14px;
+  resize: vertical;
+}
+
+.field__error {
+  color: var(--stop);
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.chip {
+  min-height: 56px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 2px solid var(--line);
+  background: var(--bg-sunken);
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chip[aria-pressed='true'] {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 22%, var(--bg-sunken));
+}
+
+/* ── The keypad ───────────────────────────────────────────────────────────── */
+
+.codepad__display {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: 18px 0 22px;
+}
+
+.codepad__cell {
+  width: 46px;
+  height: 62px;
+  border-radius: 12px;
+  border: 2px solid var(--line);
+  background: var(--bg-sunken);
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.codepad__cell--filled {
+  border-color: var(--brand);
+}
+
+.codepad__cell--error {
+  border-color: var(--stop);
+}
+
+.codepad__keys {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.codepad__key {
+  min-height: 72px;
+  border-radius: 16px;
+  border: 0;
+  background: var(--bg-raised);
+  color: var(--ink);
+  font-size: 30px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.codepad__key:active {
+  background: var(--line);
+}
+
+.codepad__key--soft {
+  font-size: 24px;
+  background: transparent;
+  border: 2px solid var(--line);
+}
+
+/* ── Scanner ──────────────────────────────────────────────────────────────── */
+
+.scanner {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.scanner__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.scanner__frame {
+  position: relative;
+  width: min(72vw, 300px);
+  aspect-ratio: 1;
+  border: 4px solid var(--brand);
+  border-radius: 24px;
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 55%);
+}
+
+.scanner__hint {
+  position: relative;
+  margin-top: 24px;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+  padding: 0 24px;
+  text-shadow: 0 2px 8px #000;
+}
+
+.scanner__problem {
+  position: relative;
+  color: #fff;
+  background: var(--stop);
+  padding: 12px 16px;
+  border-radius: 14px;
+  margin: 12px 24px 0;
+  font-weight: 700;
+}
+
+.scanner__actions {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(24px + var(--safe-bottom));
+  display: flex;
+  gap: 12px;
+}
+
+.scanner__actions .button {
+  background: rgb(255 255 255 / 12%);
+  color: #fff;
+  border-color: rgb(255 255 255 / 30%);
+  backdrop-filter: blur(6px);
+}
+
+/* ── Map and photo ────────────────────────────────────────────────────────── */
+
+.map {
+  width: 100%;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  margin-bottom: 12px;
+  background: var(--bg-sunken);
+}
+
+.photo {
+  position: relative;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 2px dashed var(--line);
+  background: var(--bg-sunken);
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 12px;
+}
+
+.photo--taken {
+  border-style: solid;
+  border-color: var(--go);
+}
+
+.photo__image {
+  width: 100%;
+  display: block;
+  max-height: 320px;
+  object-fit: cover;
+}
+
+.photo__prompt {
+  text-align: center;
+  color: var(--ink-soft);
+  padding: 24px;
+  font-weight: 600;
+}
+
+/* ── Sheet ────────────────────────────────────────────────────────────────── */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgb(0 0 0 / 60%);
+  display: flex;
+  align-items: flex-end;
+}
+
+.sheet {
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  background: var(--bg);
+  border-radius: 24px 24px 0 0;
+  border-top: 1px solid var(--line);
+  padding: 20px var(--gutter) calc(20px + var(--safe-bottom));
+  max-height: 92dvh;
+  overflow-y: auto;
+  box-shadow: var(--shadow);
+}
+
+.sheet__grip {
+  width: 46px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--line);
+  margin: 0 auto 16px;
+}
+
+/* ── Chain ────────────────────────────────────────────────────────────────── */
+
+.chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.chain__item {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 12px;
+  padding-bottom: 14px;
+  position: relative;
+}
+
+.chain__item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  top: 32px;
+  bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+
+.chain__icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--bg-sunken);
+  border: 2px solid var(--line);
+  font-size: 16px;
+  z-index: 1;
+}
+
+.chain__when {
+  color: var(--ink-faint);
+  font-size: 14px;
+}
+
+/* ── Odds and ends ────────────────────────────────────────────────────────── */
+
+.stack > * + * {
+  margin-top: 12px;
+}
+
+.muted {
+  color: var(--ink-soft);
+}
+
+.center {
+  text-align: center;
+}
+
+.spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 4px solid var(--line);
+  border-top-color: var(--brand);
+  animation: spin 900ms linear infinite;
+  margin: 24px auto;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--ink-soft);
+}
+
+.empty__icon {
+  font-size: 56px;
+  display: block;
+  margin-bottom: 12px;
+}
+
+/*
+ * Anchored to the top, under the title bar.
+ *
+ * It used to sit above the tab bar, which put it exactly where the button that
+ * finishes a step is — and on a screen that covers the tab bar it landed on the
+ * photograph. The top is the one strip of this app that never holds an action.
+ */
+.toast {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  top: calc(var(--safe-top) + 72px);
+  z-index: 70;
+  margin: 0 auto;
+  max-width: 560px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  font-weight: 700;
+  font-size: 17px;
+  box-shadow: var(--shadow);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+}
+
+.toast--go {
+  background: var(--go);
+  color: var(--go-ink);
+  border-color: transparent;
+}
+.toast--stop {
+  background: var(--stop);
+  color: #fff;
+  border-color: transparent;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ── A step that takes over the screen ────────────────────────────────────── */
+
+/*
+ * Covers the tab bar rather than sitting above it. A fixed action button and a
+ * fixed tab bar were competing for the bottom forty pixels of the phone, and
+ * the tab bar won — which made the button that finishes a collection
+ * untappable. The footer here is a flex row inside the layer, so there is
+ * nothing left for it to end up underneath.
+ */
+.focus-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--safe-top);
+}
+
+.focus-layer__body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.focus-layer__footer {
+  padding: 12px var(--gutter) calc(12px + var(--safe-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* A screen inside a focus layer needs no room for the bars it has replaced. */
+.screen--inline {
+  padding-bottom: 24px;
+}
