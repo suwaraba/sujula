@@ -5,9 +5,9 @@ Five of them, against one API:
 | | |
 |---|---|
 | `admin/` | the platform's own console — desktop, all 95 `/admin` endpoints |
+| `driver-app/` | the courier's phone — an installable PWA, built to work with no signal |
 | *buyer* | not yet built |
 | *vendor* | not yet built |
-| *driver* | not yet built |
 | *pickup* | not yet built |
 
 Each is a separate application with its own build. They share nothing but the
