@@ -61,51 +61,62 @@ class DriverRoutingTest {
 
     // ── Nothing here is open ─────────────────────────────────────────────────
 
+    /**
+     * 401, not 403: the caller presented no credential at all.
+     *
+     * <p>The two are different instructions — "say who you are and try again"
+     * against "signing in will not help" — and a driver's app acts on the
+     * difference. A 401 sends it to refresh its token and then to the sign-in
+     * screen; a 403 on this surface means an account that has applied and has
+     * not been approved yet, which is a waiting screen rather than a login.
+     * Answering the wrong one sends an approved driver to sign in again, or
+     * leaves an applicant staring at a password box.
+     */
     @Test
     void everyDriverRouteRefusesAnAnonymousCaller() throws Exception {
         mvc.perform(post("/driver/profile").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/driver/profile")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/driver/profile")).andExpect(status().isUnauthorized());
         mvc.perform(patch("/driver/profile").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(put("/driver/availability").contentType("application/json")
                         .content("{\"availability\":\"ONLINE\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/location").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/driver/assignments")).andExpect(status().isForbidden());
-        mvc.perform(post("/driver/assignments/1/accept")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/driver/assignments")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/driver/assignments/1/accept")).andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/assignments/1/decline").contentType("application/json")
                         .content("{\"reason\":\"too far\"}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/driver/shipments/1")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/driver/shipments/1")).andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/arrived-at-origin")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/collect")
                         .contentType("application/json").content(HANDOVER))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/deposit-at-pickup")
                         .contentType("application/json").content(HANDOVER))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/deliver")
                         .contentType("application/json").content(HANDOVER))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/delivery-failed")
                         .contentType("application/json").content("{\"reason\":\"NOBODY_HOME\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/request-recipient-code"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/transfer")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/custody-events/sync")
                         .contentType("application/json").content("{\"events\":[]}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/driver/earnings")).andExpect(status().isForbidden());
-        mvc.perform(get("/driver/history")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/driver/earnings")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/driver/history")).andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/evidence/presign").param("contentType", "image/jpeg"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

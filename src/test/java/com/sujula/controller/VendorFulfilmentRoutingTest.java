@@ -61,19 +61,19 @@ class VendorFulfilmentRoutingTest {
 
     @Test
     void everyFulfilmentRouteRefusesAnAnonymousCaller() throws Exception {
-        mvc.perform(get("/vendor/orders")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/orders/1")).andExpect(status().isForbidden());
-        mvc.perform(post("/vendor/orders/1/accept")).andExpect(status().isForbidden());
+        mvc.perform(get("/vendor/orders")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/orders/1")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/vendor/orders/1/accept")).andExpect(status().isUnauthorized());
         mvc.perform(post("/vendor/orders/1/reject")
                 .contentType("application/json").content("{\"reason\":\"none\"}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(post("/vendor/orders/1/ready")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/orders/1/handoff-code")).andExpect(status().isForbidden());
-        mvc.perform(post("/vendor/orders/1/handoff-code/regenerate")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/orders/1/label")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/vendor/orders/1/ready")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/orders/1/handoff-code")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/vendor/orders/1/handoff-code/regenerate")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/orders/1/label")).andExpect(status().isUnauthorized());
         mvc.perform(post("/vendor/orders/1/lines/2/assign-imei")
                 .contentType("application/json").content("{\"imei\":\"356938035643809\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

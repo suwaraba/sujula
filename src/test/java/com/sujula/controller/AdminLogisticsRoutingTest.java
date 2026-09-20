@@ -51,10 +51,10 @@ class AdminLogisticsRoutingTest {
     @Test
     void theLogisticsSurfaceIsNotOpen() throws Exception {
         // 403 rather than 401, as everywhere else in this application.
-        mvc.perform(get("/admin/drivers")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/zones")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/rate-cards")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/pickup-points")).andExpect(status().isForbidden());
+        mvc.perform(get("/admin/drivers")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/zones")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/rate-cards")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/pickup-points")).andExpect(status().isUnauthorized());
 
         verify(logistics, never()).listDrivers(any(), any(), any(), any(), any(), any());
     }

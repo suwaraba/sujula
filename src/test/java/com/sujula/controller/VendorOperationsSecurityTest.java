@@ -42,33 +42,33 @@ class VendorOperationsSecurityTest {
 
     @Test
     void stockAndHandsetsRefuseAnAnonymousCaller() throws Exception {
-        mvc.perform(get("/vendor/inventory")).andExpect(status().isForbidden());
+        mvc.perform(get("/vendor/inventory")).andExpect(status().isUnauthorized());
         mvc.perform(patch("/vendor/inventory/1")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/vendor/inventory/bulk")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/inventory/1/movements")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/imei-units")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/inventory/1/movements")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/imei-units")).andExpect(status().isUnauthorized());
         mvc.perform(post("/vendor/imei-units")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(patch("/vendor/imei-units/1")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
     void promotionsAndCouponsDoToo() throws Exception {
-        mvc.perform(get("/vendor/promotions")).andExpect(status().isForbidden());
+        mvc.perform(get("/vendor/promotions")).andExpect(status().isUnauthorized());
         mvc.perform(post("/vendor/promotions")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(post("/vendor/promotions/1/activate")).andExpect(status().isForbidden());
-        mvc.perform(delete("/vendor/promotions/1")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/coupons")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/coupons/1/redemptions")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/vendor/promotions/1/activate")).andExpect(status().isUnauthorized());
+        mvc.perform(delete("/vendor/promotions/1")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/coupons")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/coupons/1/redemptions")).andExpect(status().isUnauthorized());
     }
 
     @Test

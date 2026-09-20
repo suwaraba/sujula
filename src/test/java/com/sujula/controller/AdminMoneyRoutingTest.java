@@ -51,11 +51,11 @@ class AdminMoneyRoutingTest {
 
     @Test
     void theMoneySurfaceIsNotOpen() throws Exception {
-        mvc.perform(get("/admin/payments")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/ledger")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/balances")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/payouts/batches")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/fx/rates")).andExpect(status().isForbidden());
+        mvc.perform(get("/admin/payments")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/ledger")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/balances")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/payouts/batches")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/fx/rates")).andExpect(status().isUnauthorized());
 
         verify(money, never()).listPayments(any(), any(), any(), any(), any(), any(), any());
     }

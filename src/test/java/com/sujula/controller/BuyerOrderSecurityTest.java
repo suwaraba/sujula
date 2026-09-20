@@ -52,10 +52,10 @@ class BuyerOrderSecurityTest {
      */
     @Test
     void aBuyersOrdersAreNotReadableWithoutSigningIn() throws Exception {
-        mvc.perform(get("/orders")).andExpect(status().isForbidden());
-        mvc.perform(get("/orders/1")).andExpect(status().isForbidden());
-        mvc.perform(get("/orders/1/tracking")).andExpect(status().isForbidden());
-        mvc.perform(get("/orders/1/invoice")).andExpect(status().isForbidden());
+        mvc.perform(get("/orders")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/orders/1")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/orders/1/tracking")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/orders/1/invoice")).andExpect(status().isUnauthorized());
     }
 
     @Test

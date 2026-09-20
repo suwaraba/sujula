@@ -54,17 +54,17 @@ class VendorCatalogueRoutingTest {
 
     @Test
     void nothingHereIsOpenToAnAnonymousCaller() throws Exception {
-        mvc.perform(get("/vendor/products")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/products/1")).andExpect(status().isForbidden());
+        mvc.perform(get("/vendor/products")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/products/1")).andExpect(status().isUnauthorized());
         mvc.perform(post("/vendor/products").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(post("/vendor/products/1/publish")).andExpect(status().isForbidden());
-        mvc.perform(delete("/vendor/products/1/media/2")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post("/vendor/products/1/publish")).andExpect(status().isUnauthorized());
+        mvc.perform(delete("/vendor/products/1/media/2")).andExpect(status().isUnauthorized());
         mvc.perform(put("/vendor/products/1/translations/fr-SN")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/products/export")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/imports/IMP-ABC")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/products/export")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/imports/IMP-ABC")).andExpect(status().isUnauthorized());
     }
 
     @Test
