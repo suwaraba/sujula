@@ -1,0 +1,13 @@
+{
+  "name": "@sujula/buyer-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sujula for shoppers — browse against where the parcel is going, pay in your own currency, and follow it to somebody else's door.",
+  "type": "module",
+  "scripts": {
+    "dev": "node dev-server.mjs",
+    "build": "node -e \"console.log('Nothing to build: this client ships the files in this directory. See README.md.')\"",
+    "preview": "node dev-server.mjs",
+    "check": "node tools/check.mjs"
+  }
+}

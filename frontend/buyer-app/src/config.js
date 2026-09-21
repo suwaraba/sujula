@@ -1,20 +1,25 @@
 /*
  * Where the API is, and the handful of knobs a deployment may want to turn.
  *
- * On the web the answer is "the same origin this file came from", which is how
- * the Spring application serves it. In the Android and iOS wrappers there is no
- * such origin — the shell is loaded from the local bundle — so the base URL is
- * baked in at build time by writing window.SUJULA_CONFIG before this module is
- * imported. See NATIVE.md.
+ * On the web the answer is "this origin", which is what the supported
+ * deployment gives it: the client served from the API's own host. In the
+ * Android and iOS wrappers there is no such origin — the shell is loaded from
+ * the local bundle — so the base URL is written into window.SUJULA_CONFIG
+ * before this module is imported. See NATIVE.md.
  */
 
 const injected = (typeof window !== 'undefined' && window.SUJULA_CONFIG) || {};
 
+/**
+ * The API is on this origin.
+ *
+ * That is the supported deployment for every client on this platform: the same
+ * host, with the API's prefixes reverse-proxied to Spring and everything else
+ * falling back to index.html. SecurityConfig publishes no CORS configuration at
+ * all, so a separate front-end origin fails its first preflight.
+ */
 function sameOriginBase() {
-  // The shell lives at /app/; the API sits at the root beside it.
-  const { origin, pathname } = window.location;
-  const cut = pathname.indexOf('/app/');
-  return cut === -1 ? origin : origin + pathname.slice(0, cut);
+  return window.location.origin;
 }
 
 export const config = {

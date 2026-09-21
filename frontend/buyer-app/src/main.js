@@ -18,16 +18,16 @@ import { openDeliveryModal, shouldAskOnEntry } from './components/deliveryModal.
 import { syncCartContext, refreshCart } from './components/cart.js';
 import { toast } from './ui.js';
 
-import { homeView } from './views/home.js';
-import { browseView, searchView, categoryView } from './views/browse.js';
-import { productView } from './views/product.js';
-import { storeView } from './views/store.js';
-import { cartView } from './views/cartView.js';
-import { checkoutView } from './views/checkout.js';
-import { ordersView, orderView } from './views/orders.js';
-import { trackView } from './views/track.js';
-import { pickupPointsView } from './views/pickupPoints.js';
-import { signInView, registerView, accountView } from './views/account.js';
+import { homeView } from './screens/home.js';
+import { browseView, searchView, categoryView } from './screens/browse.js';
+import { productView } from './screens/product.js';
+import { storeView } from './screens/store.js';
+import { cartView } from './screens/cartView.js';
+import { checkoutView } from './screens/checkout.js';
+import { ordersView, orderView } from './screens/orders.js';
+import { trackView } from './screens/track.js';
+import { pickupPointsView } from './screens/pickupPoints.js';
+import { signInView, registerView, accountView } from './screens/account.js';
 
 /* ── Reference data and the payer's currency ─────────────────────────────── */
 

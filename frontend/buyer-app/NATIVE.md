@@ -15,12 +15,14 @@ Capacitor wraps a directory of web assets. It wants that directory to contain
 an `index.html`, which this one does.
 
 ```bash
-mkdir sujula-app && cd sujula-app
+mkdir sujula-buyer-native && cd sujula-buyer-native
 npm init -y
 npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/ios
 
-# Point Capacitor at a copy of this directory.
-cp -r ../src/main/resources/static/app ./www
+# Point Capacitor at a copy of this client. There is no dist/ to build:
+# the files in frontend/buyer-app are the files that ship.
+rsync -a --exclude node_modules --exclude 'dev-server.mjs' --exclude tools \
+      ../frontend/buyer-app/ ./www/
 ```
 
 `capacitor.config.json`:
@@ -63,8 +65,9 @@ npx cap open ios         # builds in Xcode
 
 ## What the server needs for a native build
 
-The web build is served from the same origin as the API, so nothing is needed.
-A packaged app is not, and two things follow:
+The web build is served from the same origin as the API — the shape every
+client on this platform deploys in — so nothing is needed there. A packaged app
+is not on that origin, and two things follow:
 
 * **CORS.** The API must allow the origins Capacitor uses —
   `https://localhost` on Android and `capacitor://localhost` on iOS — with
@@ -79,6 +82,10 @@ A packaged app is not, and two things follow:
   which is the reason the auth and basket paths are already there) or keep the
   cookie flowing. The read paths, the basket, checkout and sign-in all work as
   they are.
+
+`vendor-app/` hit both of these first and its README records what it settled
+on, including the two load-bearing settings in its `capacitor.config.ts` —
+read that before deciding this differently.
 
 Neither is a change this directory can make, and neither is needed for the web
 build, so both are left as a deployment decision.

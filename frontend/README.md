@@ -8,7 +8,7 @@ Five of them, against one API:
 | `driver-app/` | the courier's phone — an installable PWA, built to work with no signal |
 | `vendor-app/` | the seller's shop — web, and the same bundle wrapped for Android and iOS |
 | `pickup-app/` | the counter that holds parcels — an installable PWA for a shop tablet |
-| *buyer* | not yet built |
+| `buyer-app/` | the shop — the only client whose users did not sign up to use it |
 
 Each is a separate application with its own build. They share nothing but the
 API, deliberately: a driver's phone and an administrator's desktop have almost
@@ -31,4 +31,15 @@ production if a client is served from the API's origin, so each client's README
 says where it must live.
 
 **Ports:** `admin/` 5173, `vendor-app/` 5174, `driver-app/` 5175, `pickup-app/`
-5176, so more than one can run against the same backend.
+5176, `buyer-app/` 5177, so more than one can run against the same backend.
+
+## The one that is not on the house toolchain
+
+`buyer-app/` is plain ES modules with no build step, where the other four are
+React and TypeScript on Vite. Its README argues the case: its users are on the
+worst connections and the cheapest phones on the platform, and it is the only
+client somebody abandons rather than persists with. It still follows the shape
+this index recommends — one function per endpoint, a client owning the token,
+the CSRF double-submit and the refresh single-flight, and money formatted to
+each currency's own scale — and it has a `npm run check` standing in for
+`tsc --noEmit`. If it grows past one maintainer, port it rather than extend it.

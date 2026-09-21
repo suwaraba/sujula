@@ -6,9 +6,12 @@
  *  1. The Android and iOS wrappers load this shell from the local bundle.
  *     There is no server there to answer a deep link with index.html, so a
  *     path-routed application shows a blank screen on every route but the
- *     first. A fragment never reaches a server at all.
- *  2. The API owns the bare paths on this origin (/products, /orders, /search).
- *     A catch-all at the root would sit in front of them.
+ *     first.
+ *  2. The API owns the bare paths on this origin (/products, /orders, /search),
+ *     and this client is served from that origin. Routing in the path would
+ *     put a screen at a URL the reverse proxy sends to Spring — the collision
+ *     the clients index warns about, which cost vendor-app its /orders and
+ *     /products deep links. A fragment never reaches a server at all.
  *  3. Back and forward keep working, for free, on both.
  */
 
