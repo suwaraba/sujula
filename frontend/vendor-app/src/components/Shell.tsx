@@ -23,6 +23,14 @@ const SIDEBAR: { section: string; items: NavEntry[] }[] = [
       { to: '/orders', label: 'Orders', icon: '▣' },
       { to: '/products', label: 'Products', icon: '☰' },
       { to: '/inventory', label: 'Stock', icon: '▤' },
+      { to: '/handsets', label: 'Handsets', icon: '▥' },
+    ],
+  },
+  {
+    section: 'Offers',
+    items: [
+      { to: '/promotions', label: 'Promotions', icon: '◇' },
+      { to: '/coupons', label: 'Coupons', icon: '◷' },
     ],
   },
   {

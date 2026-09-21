@@ -38,3 +38,30 @@ export function flattenCategories(
   }
   return out;
 }
+
+/**
+ * Whether an IMEI's own check digit agrees with the rest of it.
+ *
+ * The server checks this and refuses the handset if it fails, with a message
+ * saying one of the numbers is wrong. Checking it here too is not duplication
+ * for its own sake: a seller pasting forty IMEIs off a spreadsheet should find
+ * out which one has a typo before sending the batch, not after.
+ *
+ * It is the Luhn algorithm, the same one a card number uses: double every
+ * second digit from the right, subtract nine from anything over nine, and the
+ * total must divide by ten.
+ */
+export function imeiCheckDigitValid(imei: string): boolean {
+  if (!/^\d{15}$/.test(imei)) return false;
+
+  let total = 0;
+  for (let index = 0; index < 15; index += 1) {
+    let digit = Number(imei[14 - index]);
+    if (index % 2 === 1) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    total += digit;
+  }
+  return total % 10 === 0;
+}

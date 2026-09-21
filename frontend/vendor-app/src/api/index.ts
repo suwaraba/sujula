@@ -8,4 +8,5 @@ export { ordersApi } from './endpoints/orders';
 export { inventoryApi } from './endpoints/inventory';
 export { moneyApi } from './endpoints/money';
 export { analyticsApi } from './endpoints/analytics';
+export { promotionsApi } from './endpoints/promotions';
 export * from './types';

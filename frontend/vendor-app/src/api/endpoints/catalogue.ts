@@ -1,7 +1,7 @@
 import { api } from '../client';
 import type {
-  PresignedUpload, ProductCondition, ProductDetail, ProductPage,
-  ProductRemoved, ProductSaved, ProductStatus,
+  CatalogueJob, ImportTemplate, PresignedUpload, ProductCondition, ProductDetail,
+  ProductPage, ProductRemoved, ProductSaved, ProductStatus,
 } from '../types';
 
 export type ProductInput = {
@@ -130,6 +130,41 @@ export const catalogueApi = {
 
   deleteMedia: (productId: number, mediaId: number) =>
     api.delete<ProductDetail>(`/vendor/products/${productId}/media/${mediaId}`),
+
+  // ── Bulk ──────────────────────────────────────────────────────────────────
+  //
+  // Both directions are jobs rather than blocking calls: four hundred listings
+  // is not something to hold a connection open for, and a seller on a market
+  // stall's connection would lose it halfway.
+
+  /** Which columns an import understands, required ones first. */
+  importTemplate: () => api.get<ImportTemplate>('/vendor/products/import-template'),
+
+  /**
+   * Reads a spreadsheet already in storage into draft listings. The format is
+   * checked against the file's own bytes rather than trusted, because a
+   * filename is a claim.
+   */
+  bulkImport: (
+    input: {
+      fileUrl: string;
+      originalFilename?: string;
+      format?: string;
+      /** Update listings whose SKU already exists rather than refusing them. */
+      updateExisting?: boolean;
+    },
+    idempotencyKey?: string,
+  ) => api.post<CatalogueJob>('/vendor/products/bulk-import', input, {
+    idempotent: idempotencyKey ?? true,
+  }),
+
+  /** Asks for the catalogue as a file. Answers a job, not the bytes. */
+  requestExport: (includeArchived = false) =>
+    api.get<CatalogueJob>('/vendor/products/export', { query: { includeArchived } }),
+
+  /** How an import or export went. Errors are paged: a wrong template makes one per row. */
+  job: (reference: string, params: { page?: number; size?: number } = {}) =>
+    api.get<CatalogueJob>(`/vendor/imports/${reference}`, { query: params }),
 
   putTranslation: (
     productId: number,

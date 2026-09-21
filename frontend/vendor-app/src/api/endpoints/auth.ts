@@ -1,6 +1,8 @@
-import { api } from '../client';
+import { api, request } from '../client';
 import { clearTokens, getRefreshToken, storeTokens } from '../tokens';
-import type { LoginResult, Me, Profile, SessionRow, Tokens } from '../types';
+import type {
+  LoginResult, Me, MfaActivation, MfaSetup, Profile, SessionRow, Tokens,
+} from '../types';
 
 export const authApi = {
   /**
@@ -72,10 +74,23 @@ export const authApi = {
   confirmPhoneCode: (phone: string, code: string) =>
     api.post<void>('/auth/verify-phone/confirm', { phone, code }),
 
-  mfaSetup: () => api.post<{ secret: string; otpauthUrl: string; qrCodeDataUri?: string }>('/auth/mfa/setup'),
+  // ── Multi-factor ───────────────────────────────────────────────────────────
+  //
+  // Note which of these takes a code and which takes a password. Activating
+  // proves possession of the authenticator, so it takes the code. Turning it
+  // off and replacing the recovery codes are the calls an attacker inside the
+  // session would want, so they take the password instead — a second factor
+  // that can be removed with the session that is already open protects nothing.
 
-  mfaActivate: (code: string) =>
-    api.post<{ recoveryCodes: string[] }>('/auth/mfa/activate', { code }),
+  mfaSetup: () => api.post<MfaSetup>('/auth/mfa/setup'),
 
-  mfaDisable: (code: string) => api.delete<void>('/auth/mfa', { body: { code } } as never),
+  mfaActivate: (code: string) => api.post<MfaActivation>('/auth/mfa/activate', { code }),
+
+  mfaRecoveryCodes: (password: string) =>
+    api.post<MfaActivation>('/auth/mfa/recovery-codes', { password }),
+
+  mfaDisable: (password: string) => request<void>('/auth/mfa', {
+    method: 'DELETE',
+    body: { password },
+  }),
 };

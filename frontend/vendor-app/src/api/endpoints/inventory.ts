@@ -1,7 +1,7 @@
 import { api } from '../client';
 import type {
-  ImeiGrade, ImeiStatus, ImeiUnit, ImeiUnitPage, InventoryPage,
-  StockAdjusted, StockMovementReason, StockMovements,
+  HandsetsRegistered, ImeiGrade, ImeiStatus, ImeiUnit, ImeiUnitPage,
+  InventoryPage, StockAdjusted, StockMovementReason, StockMovements,
 } from '../types';
 
 export const inventoryApi = {
@@ -74,7 +74,7 @@ export const inventoryApi = {
       }[];
     },
     idempotencyKey?: string,
-  ) => api.post<{ requested: number; registered: number; units: ImeiUnit[] }>('/vendor/imei-units', input, {
+  ) => api.post<HandsetsRegistered>('/vendor/imei-units', input, {
     idempotent: idempotencyKey ?? true,
   }),
 

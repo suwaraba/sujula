@@ -10,6 +10,7 @@ import {
 } from '@/components/ui';
 import { TextField, fieldError } from '@/components/form';
 import { ConfirmSheet } from '@/components/Sheet';
+import { MfaCard } from '@/components/MfaCard';
 import { useToast } from '@/components/Toast';
 
 export function Account() {
@@ -79,21 +80,7 @@ export function Account() {
 
       <PasswordCard onChanged={() => void reload()} />
 
-      <Card title="Two-step sign-in">
-        <div className="stack stack--tight">
-          <div className="row row--between">
-            <span>Authenticator app</span>
-            <Badge tone={me.profile.mfaEnabled ? 'ok' : 'warn'} dot>
-              {me.profile.mfaEnabled ? 'On' : 'Off'}
-            </Badge>
-          </div>
-          <p className="small muted">
-            {me.profile.mfaEnabled
-              ? 'Your authenticator code is asked for at sign-in and again when you change where your money is sent.'
-              : 'A password alone protects the account that receives your money. Turn this on in the Sujula web app under account security.'}
-          </p>
-        </div>
-      </Card>
+      <MfaCard onChanged={() => void reload()} />
 
       <Card title="Where you are signed in" flush>
         {sessions.isLoading ? (

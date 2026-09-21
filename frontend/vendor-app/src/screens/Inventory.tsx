@@ -240,7 +240,8 @@ function AdjustSheet({ item, onClose }: { item: InventoryItem; onClose: () => vo
         {item.serialised ? (
           <Notice tone="warn" title="This item is counted in handsets">
             Its stock is however many handsets are registered and still on the shelf — there is no
-            number to type. Register a handset, sell it, or write it off, and the count follows.
+            number to type. <Link to="/handsets">Register a handset</Link>, sell it, or write it
+            off, and the count follows.
           </Notice>
         ) : null}
 

@@ -19,6 +19,10 @@ import { Products } from '@/screens/Products';
 import { ProductNew } from '@/screens/ProductNew';
 import { ProductEdit } from '@/screens/ProductEdit';
 import { Inventory } from '@/screens/Inventory';
+import { Handsets } from '@/screens/Handsets';
+import { BulkCatalogue } from '@/screens/BulkCatalogue';
+import { Promotions } from '@/screens/Promotions';
+import { Coupons } from '@/screens/Coupons';
 import { StockHistory } from '@/screens/StockHistory';
 import { Earnings } from '@/screens/Earnings';
 import { Analytics } from '@/screens/Analytics';
@@ -85,8 +89,12 @@ export function App() {
                 <Route path="/products" element={<Products />} />
                 <Route path="/products/new" element={<ProductNew />} />
                 <Route path="/products/:productId" element={<ProductEdit />} />
+                <Route path="/products-bulk" element={<BulkCatalogue />} />
                 <Route path="/inventory" element={<Inventory />} />
                 <Route path="/inventory/:variantId/history" element={<StockHistory />} />
+                <Route path="/handsets" element={<Handsets />} />
+                <Route path="/promotions" element={<Promotions />} />
+                <Route path="/coupons" element={<Coupons />} />
                 <Route path="/earnings" element={<Earnings />} />
                 <Route path="/analytics" element={<Analytics />} />
                 <Route path="/store" element={<StoreSettings />} />

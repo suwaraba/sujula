@@ -12,6 +12,10 @@ import { Badge, Button, Card, PageHeader } from '@/components/ui';
  */
 const LINKS: { to: string; label: string; icon: string; description: string }[] = [
   { to: '/inventory', label: 'Stock', icon: '▤', description: 'What you have, and what is running low' },
+  { to: '/handsets', label: 'Handsets', icon: '▥', description: 'Every phone, by IMEI' },
+  { to: '/promotions', label: 'Promotions', icon: '◇', description: 'Discounts that apply themselves' },
+  { to: '/coupons', label: 'Coupons', icon: '◷', description: 'Codes a customer has to know' },
+  { to: '/products-bulk', label: 'Import and export', icon: '⇅', description: 'Listings in and out as a spreadsheet' },
   { to: '/analytics', label: 'Insights', icon: '◈', description: 'What sold, and how deliveries went' },
   { to: '/store', label: 'Shop details', icon: '⌂', description: 'Name, policies, holiday mode' },
   { to: '/store/collection', label: 'Collection point', icon: '◉', description: 'Where drivers collect and when' },

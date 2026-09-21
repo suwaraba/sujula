@@ -47,8 +47,9 @@ export type PayoutStatus = 'REQUESTED' | 'APPROVED' | 'PROCESSING' | 'PAID' | 'F
 export type LedgerEntryType = string;
 export type StockMovementReason =
   | 'RESTOCK' | 'CORRECTION' | 'DAMAGE' | 'LOSS' | 'RETURN' | 'MANUAL' | string;
-export type ImeiGrade = 'A' | 'B' | 'C' | 'D' | string;
-export type ImeiStatus = 'IN_STOCK' | 'RESERVED' | 'SOLD' | 'RETURNED' | 'LOST' | string;
+export type ImeiGrade = 'NEW' | 'A_GRADE' | 'B_GRADE' | 'C_GRADE' | 'FOR_PARTS';
+export type ImeiStatus =
+  | 'IN_STOCK' | 'RESERVED' | 'SOLD' | 'RETURNED' | 'LOST' | 'WRITTEN_OFF' | string;
 export type DayOfWeek =
   | 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY' | 'SUNDAY';
 
@@ -98,6 +99,19 @@ export type Me = {
   linkedAccounts: { provider: string; email: string | null }[];
   activeSessions: number;
 };
+
+// ── Multi-factor ────────────────────────────────────────────────────────────
+
+/**
+ * `provisioningUri` is the `otpauth://` URI an authenticator scans. The server
+ * sends no QR image — rendering one is the client's job, and there is no reason
+ * for a shared secret to make a second trip through a PNG encoder.
+ */
+export type MfaSetup = { secret: string; provisioningUri: string; issuer: string };
+
+export type MfaActivation = { recoveryCodes: string[]; remaining: number };
+
+export type MfaStatus = { enabled: boolean; recoveryCodesRemaining: number };
 
 export type SessionRow = {
   id: number;
@@ -295,6 +309,108 @@ export type VendorProfile = {
   createdAt: string;
 };
 
+// ── Promotions and coupons ──────────────────────────────────────────────────
+
+export type PromotionType = 'PERCENT' | 'FIXED' | 'BUY_X_GET_Y' | 'FREE_SHIPPING' | 'BUNDLE';
+export type PromotionStatus = 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'CANCELLED';
+export type CouponType = 'PERCENTAGE' | 'FIXED_AMOUNT' | 'FREE_SHIPPING';
+
+export type Promotion = {
+  id: number;
+  name: string;
+  description: string | null;
+  type: PromotionType;
+  status: PromotionStatus;
+  /** Active *and* inside its window. A promotion can be ACTIVE and not running yet. */
+  running: boolean;
+  blockedReason: string | null;
+  percentOff: number | null;
+  amountOff: number | null;
+  /** Present when the promotion takes an amount rather than a percentage. */
+  currency: string | null;
+  buyQuantity: number | null;
+  getQuantity: number | null;
+  getDiscountPercent: number | null;
+  bundlePrice: number | null;
+  minimumBasket: number | null;
+  maximumDiscount: number | null;
+  /** True when it names neither products nor categories: the whole shop. */
+  storeWide: boolean;
+  productIds: number[] | null;
+  categoryIds: number[] | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  timesApplied: number;
+  activatedAt: string | null;
+  createdAt: string;
+};
+
+export type PromotionPage = {
+  items: Promotion[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
+
+/**
+ * What activating produced.
+ *
+ * `conflicts` is declared because the DTO carries it, and is always empty in
+ * practice: the server *refuses* an overlapping activation with a 400 whose
+ * message names the promotion already discounting those goods and says what to
+ * do about it. Two discounts on one item do not add up to a price anybody can
+ * predict. So the failure path is where the conflict is handled, not this.
+ */
+export type PromotionActivated = {
+  id: number;
+  status: PromotionStatus;
+  running: boolean;
+  conflicts: { promotionId: number; name: string; overlap: string; productIds: number[] }[];
+  message: string;
+};
+
+export type Coupon = {
+  id: number;
+  code: string;
+  description: string | null;
+  type: CouponType;
+  value: number | null;
+  currency: string | null;
+  minimumOrderAmount: number | null;
+  maximumDiscountAmount: number | null;
+  usageLimit: number | null;
+  timesUsed: number;
+  remaining: number | null;
+  perUserLimit: number | null;
+  active: boolean;
+  /** Whether a buyer typing it right now would have it accepted. */
+  redeemable: boolean;
+  blockedReason: string | null;
+  startsAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+};
+
+export type CouponPage = {
+  items: Coupon[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
+
+export type Redemptions = {
+  code: string;
+  timesUsed: number;
+  usageLimit: number | null;
+  redemptions: { id: number; customer: string | null; orderId: number | null; usedAt: string }[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
+
 // ── Catalogue ───────────────────────────────────────────────────────────────
 
 export type ProductSummary = {
@@ -428,6 +544,42 @@ export type ProductRemoved = {
 
 export type PresignedUpload = { uploadUrl: string; publicUrl: string };
 
+// ── Bulk import and export ──────────────────────────────────────────────────
+
+export type CatalogueJobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'PARTIAL' | string;
+export type CatalogueJobType = 'IMPORT' | 'EXPORT' | string;
+
+export type RowError = { row: number; field: string | null; message: string; value: string | null };
+
+/**
+ * An import or an export, in progress or finished.
+ *
+ * Both are jobs rather than requests that block: a spreadsheet of four hundred
+ * listings is not something to hold a connection open for. `reference` is how
+ * the job is read back.
+ */
+export type CatalogueJob = {
+  reference: string;
+  type: CatalogueJobType;
+  status: CatalogueJobStatus;
+  originalFilename: string | null;
+  format: string | null;
+  totalRows: number;
+  succeededRows: number;
+  failedRows: number;
+  failureReason: string | null;
+  errors: RowError[] | null;
+  errorsShown: number;
+  errorsTotal: number;
+  downloadUrl: string | null;
+  downloadExpiresAt: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+export type ImportTemplate = { requiredColumns: string[]; optionalColumns: string[] };
+
 // ── Inventory ───────────────────────────────────────────────────────────────
 
 export type InventoryItem = {
@@ -517,6 +669,22 @@ export type ImeiUnit = {
   soldAt: string | null;
   note: string | null;
   registeredAt: string;
+};
+
+/**
+ * What a batch registration did.
+ *
+ * Partial by design: a sheet of forty handsets with two bad check digits
+ * registers thirty-eight and tells you which two, rather than refusing the lot.
+ * `rejected` is why the screen must show it.
+ */
+export type HandsetsRegistered = {
+  requested: number;
+  registered: number;
+  units: ImeiUnit[];
+  rejected: { variantId: number | null; message: string }[];
+  stockAfter: number | null;
+  message: string;
 };
 
 export type ImeiUnitPage = {

@@ -72,7 +72,12 @@ export function Products() {
       <PageHeader
         title="Products"
         subtitle="Write it, send it to be checked, then put it on sale."
-        actions={<Link to="/products/new" className="btn btn--primary">＋ New listing</Link>}
+        actions={
+          <>
+            <Link to="/products-bulk" className="btn btn--secondary">⇅ Import</Link>
+            <Link to="/products/new" className="btn btn--primary">＋ New listing</Link>
+          </>
+        }
       />
 
       <div className="tabs" role="tablist">

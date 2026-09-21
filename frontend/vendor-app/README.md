@@ -30,13 +30,17 @@ application form). Every seeded password is `Sujula123!`.
 | **Opening a shop** | Store application with address and pin, settlement currency, registration numbers |
 | **Verification** | KYC documents, what is still missing, what was rejected and why |
 | **Products** | Write, edit, variants, photos, the review-and-publish ladder, archive |
+| **Bulk** | Import a spreadsheet into drafts with per-row errors; export the catalogue |
 | **Stock** | Counts and movements, low-stock and out-of-stock views, per-item history |
+| **Handsets** | Register phones by IMEI, grade them, move them — what a serialised listing's stock *is* |
+| **Offers** | Promotions that apply themselves, and coupon codes a customer has to know |
 | **Orders** | The queue by stage, what to pack, accept, reject, scan handsets, mark ready |
 | **Handover** | The collection code a driver must present, its countdown, reissuing it |
 | **Custody** | Where the parcel is and who is holding it — read-only, with the proof behind each step |
 | **Money** | Balances per currency, the ledger, payout requests, the payout account |
 | **Insights** | Sales over time, what sold against what was only looked at, delivery outcomes |
 | **Staff** | Invitations and per-permission access to this shop |
+| **Security** | Password, devices, and turning two-step sign-in on and off |
 
 ## Three things this app does not do, on purpose
 
@@ -105,6 +109,24 @@ so on the forms that create them, and `StoreAlerts` says so everywhere else.
 **Not-found is the right answer for someone else's row.** The API answers 404
 rather than 403 for another shop's order, because "forbidden" would confirm the
 id is real. The screens present that as "that is not here", not as an error.
+
+**An IMEI carries its own check digit, and this app checks it.** Not
+duplication for its own sake: the server refuses a mistyped one, and a seller
+pasting forty IMEIs off a spreadsheet should find the typo before sending the
+batch rather than after. Registration is partial by design — thirty-eight go
+in, two come back named — so the sheet stays open on a rejection and re-offers
+the refused ones.
+
+**Two promotions cannot discount the same goods.** Activation is *refused* with
+a message naming the promotion already covering them; the `conflicts` array on
+the response is always empty. Two discounts on one item do not add up to a
+price anybody can predict.
+
+**MFA calls take different proofs, deliberately.** Activating takes the
+authenticator's code, because that proves possession. Turning it off and
+reissuing recovery codes take the account password, because those are exactly
+what somebody holding a stolen session would want — a second factor the session
+can remove protects nothing.
 
 ## Serving it
 
@@ -182,13 +204,11 @@ src/
 - **Image and document upload needs object storage configured.** With
   `sujula.r2.*` unset, `POST /api/products/images/presign` answers 400 and the
   photo and KYC uploads surface that message. Nothing to fix in this app.
-- **MFA enrolment is not built here.** The app reads whether MFA is on and asks
-  for the code at sign-in and at the payout account, but turning it on is left
-  to the main web app.
-- **Promotions and coupons are not built.** `/vendor/promotions` and
-  `/vendor/coupons` exist on the API and have no screen yet.
-- **Bulk product import is not built.** `/vendor/products/bulk-import` and the
-  catalogue export exist on the API and have no screen yet.
+- **A promotion cannot be narrowed to a variant**, only to listings or
+  categories — which is all the API accepts.
+- **Recovery codes are shown once and never stored.** If a seller closes that
+  sheet without writing them down, the only way back is to reissue them, which
+  needs the password.
 - **`@capacitor/cli` pulls a `uuid` advisory** through `xcode`, used only when
   generating the iOS project. It does not ship in the app, and the "fix" is a
   downgrade of the CLI.
