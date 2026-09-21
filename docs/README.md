@@ -61,19 +61,19 @@ Profiles, the full configuration reference, database and backups, reverse proxy,
 rate limiting, background jobs, health and metrics, deployment steps, startup
 refusals, troubleshooting and runbooks.
 
-### [`frontend/`](frontend/README.md) — Client specifications
-**There is no front-end code in this repository.** These are build
-specifications, one per client application the API is shaped to serve.
+### [`frontend/`](frontend/README.md) — Front-end technical documents
+`frontend/` holds **five separate client applications** against one API, about
+46,700 lines in all. Each has its own README saying what it does; these
+documents say how each is built and how good the code is.
 
 | | |
 |---|---|
-| [`frontend/README.md`](frontend/README.md) | **Shared contract** — auth, refresh, CSRF, errors, idempotency, money formatting, first paint. Read before any of the others |
-| [`BUYER-STOREFRONT.md`](frontend/BUYER-STOREFRONT.md) | Shoppers and guests |
-| [`VENDOR-CONSOLE.md`](frontend/VENDOR-CONSOLE.md) | Sellers — 66 operations |
-| [`DRIVER-APP.md`](frontend/DRIVER-APP.md) | Couriers — offline-first, evidence capture |
-| [`PICKUP-COUNTER.md`](frontend/PICKUP-COUNTER.md) | Shop counters holding parcels |
-| [`ADMIN-CONSOLE.md`](frontend/ADMIN-CONSOLE.md) | Staff — 95 operations |
-| [`RECIPIENT-PAGE.md`](frontend/RECIPIENT-PAGE.md) | **Somebody with no account** — six operations, and the point of the platform |
+| [`frontend/README.md`](frontend/README.md) | **Read first** — the shared client contract (auth, refresh single-flight, CSRF, errors, money, idempotency), cross-app architecture, and the **cross-application code review** |
+| [`ADMIN-CONSOLE.md`](frontend/ADMIN-CONSOLE.md) | `admin/` — React + TS, ~16,300 lines, all 95 `/admin` endpoints |
+| [`VENDOR-APP.md`](frontend/VENDOR-APP.md) | `vendor-app/` — one bundle for web, Android and iOS |
+| [`DRIVER-APP.md`](frontend/DRIVER-APP.md) | `driver-app/` — offline-first PWA. **The best-engineered client of the five** |
+| [`PICKUP-APP.md`](frontend/PICKUP-APP.md) | `pickup-app/` — the counter tablet |
+| [`BUYER-APP.md`](frontend/BUYER-APP.md) | `buyer-app/` — plain ES modules, no build step, zero dependencies. Also carries the recipient's tracking page |
 
 ### [`GLOSSARY.md`](GLOSSARY.md)
 Domain terms, statuses, enums and the vocabulary this codebase uses.
@@ -114,10 +114,12 @@ when its tests pass.
 | HTTP operations | **432** |
 | Controllers · services · repositories · entities | 47 · 47 · 84 · 87 |
 | `@Query` declarations | 332 |
-| Main source | ~87,000 lines |
-| Tests | **1,233**, 90 classes — **0 failures, 0 errors, 0 skipped** |
+| Backend source | ~87,000 lines |
+| Backend tests | **1,233**, 90 classes — **0 failures, 0 errors, 0 skipped** |
 | Scheduled background jobs | 7 |
 | `TODO` / `FIXME` markers | **0** |
+| Client applications | **5** — `admin`, `vendor-app`, `driver-app`, `pickup-app`, `buyer-app` |
+| Client source | ~46,700 lines, **0 `any`**, **0 tests** |
 
 ---
 
@@ -142,6 +144,12 @@ Four hours, in this order:
 7. **[`LIMITATIONS.md`](LIMITATIONS.md)** — 20 minutes. Especially §1 and §9.
 8. **Run it** — 15 minutes. `cd e2e && ./run.sh`, then poke at it as the people
    in [`TESTING.md` §2](TESTING.md).
+9. **Run a client against it** — 15 minutes.
+   `mvn spring-boot:run -Dspring-boot.run.profiles=e2e`, then
+   `cd frontend/driver-app && npm install && npm run dev`. Go offline in
+   DevTools, record a collection, close the tab, reopen, come back online, and
+   watch the outbox drain in order. It is the clearest demonstration of what
+   this platform is for.
 
 ### Three things to know before you decide anything
 
@@ -157,6 +165,13 @@ migration tool, so there is no reviewed way to create a production schema
 integrated, so card payments are impossible
 ([`LIMITATIONS.md` §1.3](LIMITATIONS.md)).
 
+**🟠 The front end has no tests at all.** Five applications, ~46,700 lines, zero
+test files — against a backend with 1,233 passing tests. The untested behaviour
+includes the driver app's offline outbox, whose own source says *"this is the
+part of the app that has to be right"*, and the refresh single-flight whose
+failure mode is signing a user out for real.
+[`frontend/README.md` §6](frontend/README.md#6-cross-application-code-review).
+
 **✅ The codebase is unusually disciplined, and the discipline is structural.**
 Dangerous states are made unrepresentable rather than validated against.
 Derived figures are derived every time — balances are sums of ledger entries,
@@ -165,6 +180,13 @@ chain. A large fraction of the test suite asserts what the application *refuses*
 And nearly every gap in [`LIMITATIONS.md`](LIMITATIONS.md) was named by the code
 itself, in the class that owns it, before anyone audited it.
 
-The defects cluster on the **legacy `/api/**` surface** — the part written
-before the constitution the rest of the application is built to. That is a good
-sign about the trajectory, not a bad one.
+The same discipline reaches the clients: `buyer-app` keeps the payer's location
+and the delivery location as two fields with a comment forbidding either from
+deriving the other; every money module refuses arithmetic and cites C2;
+`pickup-app` never displays a collection code and `driver-app` never requests
+one. These are not restatements of the backend's rules — they are the same rules
+enforced a second time, in the layer that could otherwise have undermined them.
+
+The backend defects cluster on the **legacy `/api/**` surface** — the part
+written before the constitution the rest of the application is built to. That is
+a good sign about the trajectory, not a bad one.

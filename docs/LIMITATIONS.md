@@ -388,6 +388,81 @@ asserted logically but never under real contention.
 
 ---
 
+## 5A. The front end
+
+Five client applications, ~46,700 lines, reviewed in full in
+[`frontend/README.md` §6](frontend/README.md#6-cross-application-code-review).
+
+### 🟠 5A.1 No tests in any of the five applications
+
+Zero test files across `admin`, `vendor-app`, `driver-app`, `pickup-app` and
+`buyer-app`. Type-checking is real coverage of *shape* — **zero `any` in 46,700
+lines**, which is genuinely rare — but it cannot test behaviour, and the
+behaviour here is difficult and consequential:
+
+| Untested | Cost if it regresses |
+|---|---|
+| The **driver outbox** — ordering, dedup, backoff, restart survival | **Lost custody evidence.** A seller is not paid and nobody can say why. Its own source calls it *"the part of the app that has to be right"* |
+| The **PIN vault** — PBKDF2, AES-GCM, the five-try wipe | A driver locked out mid-round, or a stolen phone that still works |
+| **Refresh single-flight** (all five) | Two concurrent 401s sign the user out for real |
+| **Money scale per currency** (all five) | An XOF total with two decimal places |
+| **HTML escaping** in `buyer-app` | XSS, with a 30-day refresh token to steal (§5A.2) |
+| The **support/admin decide split** | Support offered actions the server will refuse |
+
+Six test files would cover most of it, and Vitest ships with Vite in four of the
+five. See each app's document for the specific ones.
+
+### 🟠 5A.2 `buyer-app` keeps both tokens in `localStorage`
+
+The other four keep the access token in a module variable, for a reason the
+admin store states plainly: *"a token that survives in storage is a token a
+single injected script can take away with it and use from anywhere."*
+
+`buyer-app` is also the app that renders the most user-generated text, through
+**79 `innerHTML` assignments**, with safety resting on one hand-applied `esc()`
+helper. The discipline currently holds — every free-text interpolation is
+escaped — but it is untested, and one omission would lift a 30-day refresh token
+rather than a 10-minute access token.
+
+**Fix:** move the access token out of storage (small — the refresh token already
+rebuilds the session on boot), and add a test for `esc()`.
+
+### 🟠 5A.3 The idempotency key is minted per attempt in three of five apps
+
+The server's idempotency layer exists for one case: *"a request that times out
+on a slow connection is indistinguishable, from the client's side, from one that
+never arrived."* It only works if the key is **stable across retries of one user
+intention**.
+
+`driver-app` gets this right — the key is a required parameter, minted when the
+driver taps and stored in IndexedDB beside the event — and says why: *"a key
+generated at send time is a new key every retry, which is the same as having
+none."*
+
+`admin` and `buyer-app` mint inside the call; `vendor-app` and `pickup-app` do
+so by default unless a screen passes one. The worst instance is
+`POST /checkout` in `buyer-app`: a shopper whose checkout times out and who
+tries again places a **second order** and takes a **second payment**.
+
+**Fix:** mint where the user acts, hold it for that intention, pass it to every
+attempt. Four lines in `buyer-app`.
+
+### 🟡 5A.4 No error boundary in four of five apps
+
+Only `driver-app` has one. A render-time exception blanks the screen with no
+message and no way back — worst on `pickup-app`, where it happens with a
+customer standing at the counter.
+
+### 🔵 5A.5 Five API clients that must stay in step
+
+~250 lines of token handling, CSRF, refresh and error mapping duplicated five
+ways. The decision is defensible — the apps ship independently and `buyer-app`
+has no build step — but the correctness rules live in those 250 lines, and
+§5A.3 is what drift looks like. A shared **test suite** would have caught it
+where a shared package would not.
+
+---
+
 ## 6. Features that are modelled but not driven
 
 The schema and services exist ahead of the endpoints or the integrations that
@@ -451,6 +526,10 @@ Things the marketplace does not do, which a reviewer may reasonably expect.
 | 12 | 🟡 Price order assembly from the quote's snapshot (§2.3) | Checkout stops failing on rate moves | days |
 | 13 | 🟠 Tests for `CartOwner` and the workers (§5) | The cart ownership decision is untested | days |
 | 14 | 🟠 Deprecate, instrument, then delete `/api/**` (§3.1) | Removes the surface every finding lives on | weeks |
+| **F1** | 🟠 **Stable idempotency keys in the clients (§5A.3)** | A timed-out checkout places a second order | hours |
+| **F2** | 🟠 Move `buyer-app`'s access token out of `localStorage` (§5A.2) | Halves the payoff of any XSS | hours |
+| **F3** | 🟠 The six front-end tests (§5A.1) | The outbox and the vault are untested | days |
+| **F4** | 🟡 An error boundary in the four apps missing one (§5A.4) | A blank screen at a counter | hours |
 
 Items 1, 3 and 4 are each under an hour and each close something that is wrong
 right now. They are worth doing before anything else on this list.

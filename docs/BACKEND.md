@@ -5,6 +5,10 @@
 > *is*, not what it should be; where something is unfinished it says so and
 > points at `LIMITATIONS.md`.
 >
+> **Scope.** This document is the **backend**. The repository also holds five
+> client applications under `frontend/` (~46,700 lines), documented in
+> [`frontend/`](frontend/README.md).
+>
 > **Companion documents.** [`CODE-REVIEW.md`](CODE-REVIEW.md) (quality findings),
 > [`SECURITY.md`](SECURITY.md) (written for non-specialists),
 > [`TESTING.md`](TESTING.md) (manual test plan),
@@ -181,7 +185,9 @@ Notable mappings:
 | `BadCredentialsException` | 401 | message is **fixed**, so the endpoint cannot be used to test which addresses hold accounts |
 | `DisabledException` / `LockedException` | 403 | credentials were right, the account is not usable |
 | `ObjectOptimisticLockingFailureException` | 409 | concurrent edit, e.g. two people counting one shelf |
-| `AccessDeniedException` | 403 |  |
+| `AccessDeniedException` | 403 | signed in, not permitted |
+
+**Refusals made in the filter chain**, before any controller is reached, are handled by `FilterChainRefusals`, which is registered as *both* the authentication entry point and the access-denied handler. It fixes two separate problems: the default answered **403 to callers who had presented no credential at all** (401 means "say who you are and try again"; 403 means "signing in will not help"), and it answered with an **empty body** while every controller-level failure speaks JSON. The object reads the security context itself and picks the status, so which of the two routes the filter takes stops mattering — necessary because a bearer-token filter fills the context late, and "is the caller anonymous" is not reliably answered by the time the exception unwinds.
 
 ---
 
@@ -982,6 +988,33 @@ the wrong way round. `/actuator/**` additionally requires `ROLE_ADMIN`.
 
 ---
 
+## 11A. The clients
+
+Five applications, one API, sharing nothing but the contract — *"a driver's
+phone and an administrator's desktop have almost no screen in common."*
+
+| | Users | Stack | Size |
+|---|---|---|---|
+| `frontend/admin` | ADMIN, SUPPORT | React + TS + Vite | ~16,300 lines |
+| `frontend/vendor-app` | Sellers | Same, + Capacitor (Android, iOS) | ~13,300 |
+| `frontend/driver-app` | Couriers | Same, + IndexedDB, ZXing — PWA | ~7,900 |
+| `frontend/pickup-app` | Counter operators | Same — PWA | ~4,700 |
+| `frontend/buyer-app` | Shoppers, guests, **and recipients** | Plain ES modules, no build step | ~4,500 |
+
+Two facts about deployment that constrain the backend as much as the clients:
+
+- **Same origin, always.** `SecurityConfig` publishes no CORS configuration, and
+  the CSRF protection is a double-submit cookie only a same-origin page can
+  read. Every client is served behind one reverse proxy with the API.
+- **Client routes collide with API paths.** Spring serves the API at the root,
+  so `vendor-app`'s `/orders` and `/products` screens collide with real
+  endpoints. Each client's README says where it must live.
+
+See [`frontend/README.md`](frontend/README.md) for the shared client contract
+and the cross-application code review.
+
+---
+
 ## 12. Where to start reading
 
 | If you want to understand… | Read |
@@ -996,3 +1029,5 @@ the wrong way round. `/actuator/**` additionally requires `ROLE_ADMIN`.
 | C5 | `RecipientParcelController`, `PublicTrackingController`, `DriverCustodyServiceImpl` |
 | Who may reach what | `SecurityConfig` — it is commented rule by rule |
 | What is *not* done | [`LIMITATIONS.md`](LIMITATIONS.md) |
+| How a client is meant to use all this | [`frontend/README.md`](frontend/README.md) |
+| The clearest demonstration of the platform | `frontend/driver-app/src/offline/outbox.ts` |

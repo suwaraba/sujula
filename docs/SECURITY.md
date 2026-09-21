@@ -571,7 +571,9 @@ useful.
 | Gap | What it means | Where to fix it |
 |---|---|---|
 | **`@PostAuthorize` on writes** ([§2.1](CODE-REVIEW.md)) | An ordinary signed-in customer can delete or edit other accounts through `/api/users/**`. The response is 403; the change persists. | **Fix this first.** Swap to `@PreAuthorize` and add path rules. |
-| **No CORS policy** | The API is same-origin only. A browser client on a different domain simply cannot call it. | Deploy behind one reverse proxy (see `OPERATIONS.md`), or add an explicit configured allow-list. Never `*` with credentials. |
+| **No CORS policy** | The API is same-origin only. A browser client on a different domain simply cannot call it. **All five clients are built assuming this**, and it is what lets the cookie, the CSRF token and the bearer token work with no cross-origin request. | Deploy behind one reverse proxy (see `OPERATIONS.md`). If you must add CORS, use an explicit configured allow-list. Never `*` with credentials. |
+| **`buyer-app` stores both tokens in `localStorage`** | The other four clients keep the access token in memory. `buyer-app` is also the one rendering the most seller- and buyer-written text through `innerHTML`, so one missed escape would lift a 30-day refresh token. | Move the access token to a module variable, and add a test for the `esc()` helper. [`frontend/BUYER-APP.md` §8.1](frontend/BUYER-APP.md) |
+| **Clients defeat the idempotency layer** | Three of five mint a new `Idempotency-Key` on each attempt, so a retried checkout places a second order and takes a second payment. | Mint the key where the user acts and reuse it across retries, as `driver-app` does. [`frontend/README.md` §6.3](frontend/README.md#63-the-idempotency-key-is-minted-per-attempt-in-three-of-five-apps) |
 | **No general rate limiting** | Targeted limits exist (sign-ins, phone codes, release codes, imports, staff invites) but nothing limits the surface as a whole. `POST /geo/validate-address` spends a paid Google call per request. | Do it at the reverse proxy or gateway, not in application code. |
 | **No SMS** | C5's stated target is a code the recipient reads out. Today it is emailed to the buyer, who relays it. | Add an `SmsGateway` beside `PaymentGateway`. |
 | **No real payment provider** | Only the mock gateway exists. It refuses to run under `prod`, so a production deployment cannot take card payments at all yet. | Integrate a provider; the webhook and callback plumbing is already built and verified. |
@@ -606,6 +608,14 @@ Before this application serves a single real account:
 - [ ] Webhook secrets set per provider; none left blank while that provider is live.
 - [ ] Database backups encrypted, and the encryption key stored somewhere the backup is not.
 - [ ] Logs reviewed for anything that should not be in them, once, by a person.
+
+**Client-side, before release**
+
+- [ ] All five clients served **same-origin** with the API, behind one proxy.
+- [ ] Client routes do not collide with API paths in the proxy config (`OPERATIONS.md` §4A).
+- [ ] `buyer-app`'s access token is no longer in `localStorage`, or the risk is accepted in writing.
+- [ ] `POST /checkout` sends a **stable** `Idempotency-Key` across retries.
+- [ ] Android build performs a write successfully (`androidScheme: 'https'`).
 
 **Verify by hand after deploying**
 

@@ -1,327 +1,327 @@
-# Admin Console — Client Specification
+# `frontend/admin` — Administration Console
 
-> The staff back office. **95 operations under `/admin/**`** — the largest
-> surface in the system — covering users, moderation, logistics, money,
-> disputes, communications and the platform itself.
+> **The platform's own surface.** All 95 endpoints under `/admin`, plus the
+> sign-in and account screens the people who work it need.
 >
-> Read [`README.md`](README.md) first.
+> This document covers **architecture and code quality**. For what each screen
+> does, read [`frontend/admin/README.md`](../../frontend/admin/README.md).
+> For the shared client contract — auth, CSRF, refresh, money — read
+> [`README.md`](README.md) first.
 
----
-
-## 1. Two roles, and the rule that shapes every screen
-
-| Role | May |
+| | |
 |---|---|
-| `SUPPORT` | **Read everything.** Answer people. Decide nothing |
-| `ADMIN` | Everything, including moving money and suspending accounts |
-
-**Support reads; admin decides.** The split is enforced per endpoint, not per
-path — a read and a write sit next to each other under the same prefix, so a URL
-rule could not tell them apart.
-
-**Render the split, do not discover it.** A support agent should not see a button
-that will refuse them. The refusal they get is deliberately the same one a
-stranger gets — *"you may look but not touch" is a rule the client should already
-be rendering, and repeating it in the error is how a message ends up telling
-somebody what to try next.*
-
-Get the role from `GET /me` and `GET /me/permissions` at sign-in, and gate every
-write control on it.
-
-> The admin surface also does not confirm its own shape to somebody who should
-> not be on it. A non-staff caller gets "Authentication is required", not "you
-> are not an admin". Do not try to be more helpful than the server.
+| **Stack** | React 18 · TypeScript · Vite · React Router · TanStack Query |
+| **Size** | ~16,300 lines, 64 files — the largest client |
+| **Port** | 5173 |
+| **Users** | `ADMIN` and `SUPPORT`, on a desktop, all day |
+| **Design posture** | *"dense, keyboard-reachable, and deliberately plain"* |
 
 ---
 
-## 2. Dashboard
+## 1. Module map
 
 ```
-GET /admin/dashboard        the platform at a glance
+src/
+├── App.tsx                  37 routes under one authenticated layout
+├── main.tsx
+├── hooks.ts
+├── api/
+│   ├── client.ts            ~310 lines: token · CSRF · refresh · error model
+│   ├── endpoints.ts         one typed function per endpoint, grouped as the
+│   │                        six Admin*Controllers are
+│   ├── types.ts  enums.ts   response shapes; enums mirrored from the server
+│   ├── requests.ts          request bodies
+│   └── policy.ts            server constants the forms need to know
+├── auth/
+│   ├── tokenStore.ts        access token in memory, refresh in sessionStorage
+│   ├── AuthContext.tsx      lifecycle, impersonation state, cross-tab logout
+│   ├── guards.tsx           RequireStaff
+│   └── LoginPage.tsx        password → MFA → recovery code
+├── money/currency.ts        formatting only, never arithmetic
+├── components/              DataTable · Decide · StepUp · Money · Modal ·
+│                            ActionModal · Pagination · Time · Toast · forms
+└── pages/                   35 screens in eight folders, mirroring the API
+    ├── orders/  shipments/  money/  disputes/
+    └── moderation/  users/  logistics/  platform/
+```
+
+**Routes (37)**, matching the server's grouping exactly:
+
+```
+dashboard
+orders · orders/:orderId
+shipments · shipments/unassigned · shipments/:id/custody-chain
+payments · payments/:id · ledger · reconciliation · balances
+payouts · payouts/:batchId · fx · reports/revenue · reports/exports
+disputes · disputes/:id · callbacks
+stores · kyc · moderation/products · moderation/reviews · moderation/cases
+users · users/:userId
+drivers · pickup-points · zones · zones/:zoneId · rate-cards
+announcements · feature-flags · jobs · audit-log
+account
 ```
 
 ---
 
-## 3. Users — 11 operations
+## 2. The three ideas worth copying
 
+### 2.1 `endpoints.ts` — the API as a list read twice
+
+> *"Grouped the way the server groups them, so the six `Admin*Controller`s and
+> the six objects below are the same list read twice. Nothing above this layer
+> builds a URL or picks a verb."*
+
+This is the single reason a 16,000-line console is auditable. Reviewing whether
+the client calls the API correctly means reading one file against six
+controllers — not grepping 35 screens for string literals.
+
+`frontend/README.md` names this module as the shape the other four clients
+should copy, and they do.
+
+### 2.2 `tokenStore.ts` — two tokens, two places, one stated reason
+
+```ts
+/**
+ * The access token lives in a module variable and nowhere else. It is never
+ * written to `localStorage`, because this surface can refund a payment,
+ * impersonate a customer and reset somebody's second factor, and a token that
+ * survives in storage is a token a single injected script can take away with
+ * it and use from anywhere.
+ *
+ * The refresh token is in `sessionStorage`, which is the compromise that makes
+ * the console usable: a reload keeps you signed in, closing the tab does not.
+ */
 ```
-GET   /admin/users                        search accounts
-POST  /admin/users                        create an actor by hand
-GET   /admin/users/{id}                   one account, with the shape of its history
-PATCH /admin/users/{id}
-POST  /admin/users/{id}/roles             change what kind of actor this is
-POST  /admin/users/{id}/suspend           for a stated number of days
-POST  /admin/users/{id}/deactivate        indefinitely
-POST  /admin/users/{id}/activate          lift whatever is holding it out
-POST  /admin/users/{id}/force-logout      end every open session
-POST  /admin/users/{id}/reset-mfa         clear somebody's second factor
-POST  /admin/users/{id}/impersonate       open a short session as somebody else
+
+Three details beyond that:
+
+- **Cross-tab sign-out.** A `sujula.admin.logout` key is written to
+  `localStorage` on sign-out specifically because *"the storage event only
+  crosses tabs for `localStorage`"* — `sessionStorage` would not propagate. An
+  admin signing out of one tab signs out of all of them.
+- **Impersonation is tracked in the store**, so every screen can know the
+  session was opened as somebody else.
+- **Nothing here talks to the network.** `client.ts` owns that, `AuthContext`
+  owns the lifecycle, and this is only the box the values sit in. A clean
+  separation that most token stores do not keep.
+
+### 2.3 `policy.ts` — mirroring server rules without becoming a second authority
+
+```ts
+/**
+ * Everything here mirrors a constant or a check in the backend, and every one
+ * of them is named with where it lives. A mirror drifts, so nothing in this
+ * file is allowed to *block* a request: the server decides, and these only
+ * decide what the form shows before it asks. When a mirror is out of date the
+ * worst outcome is a box that appears a moment late, never a refusal the
+ * console invented on its own.
+ */
+export const REFUND_STEP_UP_ABOVE = 5000;   // AdminMoneyServiceImpl
 ```
 
-**Every account action requires a reason.** No account is locked without one, and
-the reason is what a support agent reads three weeks later. Make the field
-required in the UI and make it free text, not a dropdown of four options.
-
-**`suspend` takes a number of days; `deactivate` does not.** They are different
-decisions and the UI should not merge them into one "disable" toggle.
-
-**Impersonation is audited.** Show that prominently on the confirmation — both
-because it is true and because it changes how people use it. While impersonating,
-the console should be visually unmistakable (a persistent banner, a different
-colour) so nobody forgets which account they are acting as.
-
-> ⚠ **Do not build against `/api/users/**`.** It is the legacy surface and it
-> currently carries an authorization defect
-> ([`../CODE-REVIEW.md` §2.1](../CODE-REVIEW.md)). Use `/admin/users/**`.
+This is the correct relationship between a client-side rule and a server-side
+one, and it is almost never written down. The `refundNeedsStepUp` helper goes
+further: when it **cannot tell** — a partial refund entered in the vendor's own
+currency, where knowing the display amount would mean converting it in the
+client, *"which is exactly what C2 forbids"* — it returns **true**, because
+*"offering the box and not needing it costs a moment, and needing it and not
+offering it costs the whole form."*
 
 ---
 
-## 4. Moderation — 19 operations
+## 3. The support/admin split, rendered rather than discovered
 
-```
-GET  /admin/moderation/products               listings waiting for review
-POST /admin/products/{id}/approve  ·  /reject  ·  /suspend
-PATCH /admin/products/{id}                    edit somebody else's listing, with a reason
-POST /admin/products                          list something on a seller's behalf
-GET  /admin/moderation/reviews                reviews somebody has reported
-POST /admin/reviews/{id}/publish  ·  /reject
-GET  /admin/moderation/cases                  every policy case, soonest deadline first
-POST /admin/moderation/cases/{id}/resolve     decide, and issue what it warrants
-GET  /admin/kyc/queue
-POST /admin/kyc/{documentId}/approve  ·  /reject
-GET  /admin/stores
-POST /admin/stores/{vendorId}/approve  ·  /reject  ·  /suspend
-PATCH /admin/stores/{vendorId}/commission     from a date
+The server draws the line at `StaffCaller.decider`: support reads every queue on
+this surface and decides nothing on it. `Decide.tsx` renders that line.
+
+```tsx
+export const SUPPORT_CANNOT_DECIDE =
+  'Support can read this but not decide it. Ask an administrator.';
 ```
 
-**A rejection is worthless without a reason the seller can act on.** The API
-takes a reason code **and** words. Require both. *"Rejected"* sends a seller back
-to upload the same document again; *"the proof of address is for the depot, not
-the shop"* does not.
+`DecideButton` is disabled for a support principal, with that sentence as its
+`title`. The reasoning is explicit and correct:
 
-**Queues are sorted by deadline, not age.** Preserve that order; do not re-sort
-by "newest first" out of habit.
+> *"Rendering the button and disabling it — rather than hiding it — is
+> deliberate. An agent who cannot see the action does not know it exists and
+> asks nobody; an agent who can see it greyed out knows exactly what to
+> escalate."*
 
-**Suspending a store cascades.** The response says what else it affected. Show
-the cascade before confirming.
-
-**Commission changes are effective from a date**, never retroactive. Make the
-date mandatory and show what it means for orders already placed.
+One component, one sentence, used everywhere. This is exactly the failure mode
+the server guards against — *"the annotation that gets forgotten is on the one
+endpoint that mattered"* — solved the same way on the client: by making the
+correct thing the only convenient thing.
 
 ---
 
-## 5. Logistics and dispatch — 29 operations
+## 4. Step-up
 
-```
-GET  /admin/shipments                              the dispatch board
-GET  /admin/shipments/unassigned                   parcels nobody is carrying, with who could
-POST /admin/shipments/{id}/assign  ·  /reassign  ·  /unassign  ·  /cancel
-GET  /admin/shipments/{id}/custody-chain           the whole chain, with its evidence
-POST /admin/shipments/{id}/override-handoff        break-glass
-GET  /admin/drivers
-POST /admin/drivers/{id}/approve  ·  /suspend
-PATCH /admin/drivers/{id}/zones
-GET|POST /admin/pickup-points  ·  PATCH /admin/pickup-points/{id}  ·  /suspend
-GET|POST /admin/zones  ·  GET|PATCH /admin/zones/{id}
-GET|POST /admin/rate-cards  ·  PATCH /admin/rate-cards/{id}
-GET  /admin/rate-cards/preview
-```
+`StepUp.tsx` re-asks for the administrator's own credentials on **six
+operations**: a refund, preparing a payout run, releasing one, deciding a
+dispute, clearing somebody's second factor, and recording a handover nobody
+could prove.
 
-### 5.1 The custody chain viewer
+> *"They are the ones that move money or that the next person to look cannot
+> undo."*
 
-This is the most important read-only screen in the console. It is what somebody
-opens when a parcel is disputed.
-
-Render it as a **timeline of events with their evidence**, not as a status
-history:
-
-- who recorded each event and when it **occurred** (not when it was uploaded);
-- the position, and **whether it corroborated the handover**;
-- the proof — the code presented, the photograph;
-- **flagged events rendered as flagged, not hidden.** An event captured 4.3 km
-  from the shop with `withinGeofence: false` was recorded deliberately. Showing
-  it plainly is the whole point.
-
-### 5.2 Break-glass
-
-```http
-POST /admin/shipments/{id}/override-handoff
-```
-
-Records a handover that could not be proven the ordinary way. **The one route
-that bypasses the custody rules**, and it is named for exactly that.
-
-Treat it like a destructive action: a reason, a confirmation that states what is
-being overridden, and a visible mark on the chain afterwards. It is audited.
-
-### 5.3 Zones and rate cards
-
-`GET /admin/zones/{id}` returns **GeoJSON exactly as it was uploaded** — do not
-normalise, reproject or re-order it before showing it back. A map view plus the
-raw text.
-
-Zones are polygons around a **destination**, not around a buyer.
-
-`GET /admin/rate-cards/preview` shows what the live cards would charge for three
-sample legs. **Put it next to the edit form**, live, so an operator sees the
-effect before saving. Rate cards are effective from a date.
+Paired with `ApiError.isCredentialChallenge` (§3.5 of [README.md](README.md)),
+which keeps a wrong password on a step-up from being mistaken for a dead session
+and triggering a refresh.
 
 ---
 
-## 6. Money — 19 operations
+## 5. Money, and the rule the console keeps
+
+`money/currency.ts` formats and does nothing else. No totals, no conversions, no
+sums across currencies — `GET /admin/balances` returns every seller's balances
+in every currency they hold, and the console renders them as separate figures
+because a combined one would require applying a rate after the fact to amounts
+each frozen at their own.
+
+Scale comes from `GET /currencies`, with a fallback chain that is careful rather
+than convenient:
 
 ```
-GET  /admin/balances                        every seller, every currency they hold
-GET  /admin/ledger                          the journal, across every seller
-GET  /admin/ledger/reconciliation           escrow vs payments vs paid out
-GET  /admin/payments  ·  GET /admin/payments/{id}
-POST /admin/payments/{id}/refund            ONE seller's part
-GET|POST /admin/payouts/batches
-GET  /admin/payouts/batches/{id}
-POST /admin/payouts/batches/{id}/approve    never your own
-POST /admin/payouts/batches/{id}/cancel
-POST /admin/payouts/items/{payoutId}/retry
-GET|PATCH /admin/fx/spread                  every spread ever set, and which is live
-GET  /admin/fx/rates  ·  POST /admin/fx/refresh
-GET  /admin/reports/revenue                 per settlement currency
-POST /admin/reports/{type}/export
-GET  /admin/reports/exports
+catalogue.minorUnits  →  Intl's own table (right for XOF and JPY too)  →  2
 ```
 
-### 6.1 Never sum across currencies
-
-`GET /admin/balances` returns **every seller's balances in every currency they
-hold**. There is no total, and the console must not compute one. `GET
-/admin/reports/revenue` is per settlement currency for the same reason.
-
-A combined figure would require a rate, and a rate applied after the fact to
-figures that were each frozen at their own rate is a number nobody can explain.
-
-### 6.2 Payout batches — the four-eyes rule
-
-```
-assemble  →  approve (by a DIFFERENT admin)  →  release
-```
-
-**Approving your own batch is refused.** Build the UI for that: show who
-assembled it, and disable the approve button for that person with an explanation
-rather than letting them click into a 403.
-
-`cancel` abandons a run before release. After release there is no undo — say so
-on the confirmation.
-
-### 6.3 Refunds
-
-`POST /admin/payments/{id}/refund` refunds **one seller's part** of a payment,
-never a proportion of the order. The screen must be per sub-order.
-
-A refund priced at today's rate would hand the buyer a different number from the
-one the vendor is not being paid, so refunds carry the **order's own frozen
-rate**. Show the rate and its date on the confirmation.
-
-### 6.4 FX spread
-
-`GET /admin/fx/spread` returns **every spread ever set and which one is live**.
-Render the history — a margin change is a thing somebody will need to explain
-later. Changes are effective from a moment; make it explicit.
-
-### 6.5 Reconciliation
-
-`GET /admin/ledger/reconciliation` compares escrow, payments and payouts. **This
-is the screen that tells an operator whether the platform's books balance.**
-Give it a prominent place and make a mismatch loud.
+> *"A wrong scale is visible in the number, so this never silently guesses
+> without a source."*
 
 ---
 
-## 7. Disputes and support — 12 operations
+## 6. The screens that carry the most weight
 
-```
-GET  /admin/disputes                        sorted by DEADLINE, not age
-GET  /admin/disputes/{id}                   both currencies and both clocks
-POST /admin/disputes/{id}/assign            take it, or give it to somebody
-POST /admin/disputes/{id}/notes             for the next agent, never for the parties
-POST /admin/disputes/{id}/request-callback  arrange for somebody to be telephoned
-POST /admin/disputes/{id}/resolve           decide it, and move the money that follows
-GET  /admin/callbacks                       calls somebody still owes, soonest first
-POST /admin/callbacks/{id}/outcome
-```
-
-**"Both currencies and both clocks"** is the design of the dispute detail screen:
-the buyer's currency and the vendor's, the buyer's timezone and the vendor's.
-Show both, side by side, labelled. An agent working a Madrid–Serrekunda dispute
-needs to know that "yesterday" means different days to the two parties.
-
-**Notes are internal.** Mark the field unmistakably — *"the next agent will read
-this; the buyer and the seller will not"* — and keep it visually distinct from
-the message composer.
-
-**Resolving moves money.** Show exactly what will move, in which currency, at
-which rate, before confirming.
-
----
-
-## 8. Platform — 17 operations
-
-```
-GET   /admin/audit-log                      who did what, and when
-GET   /admin/feature-flags  ·  PATCH /admin/feature-flags/{key}
-GET   /admin/jobs  ·  GET /admin/jobs/history  ·  POST /admin/jobs/{name}/run
-POST  /admin/announcements                  a role, a country, or everybody
-POST  /admin/notifications/send             one person
-GET   /admin/orders  ·  POST /admin/orders  ·  GET /admin/orders/{id}
-POST  /admin/orders/{id}/cancel
-POST  /admin/orders/{id}/vendor-orders/{vid}/force-status
-```
-
-**The audit log is append-only.** There is no edit and no delete, and the console
-should say so on the screen. It is the answer to "who did this", and a log that
-could be edited is not.
-
-**Feature flags record who last moved each one, and a reason is required.**
-
-**Job history includes passes that found nothing** — *a job that runs is a job
-that leaves a row*. Do not filter empty passes out; a gap in the history is the
-signal that a worker stopped.
-
-**`force-status` is break-glass**, like `override-handoff`. It sets a sub-order's
-status by hand, bypassing the rules. Reason required, confirmation that names
-what is being bypassed, and a visible mark afterwards.
-
-**`POST /admin/orders`** places an order for somebody who telephoned. This is a
-real workflow in this market. Build it as a full checkout on the customer's
-behalf, honouring the same two locations — the caller's delivery address, and a
-currency and payment method appropriate to whoever is paying.
-
----
-
-## 9. Rules this client must not break
-
-| Never | Because |
+| Screen | Why |
 |---|---|
-| Show a write control to SUPPORT | The refusal is deliberately uninformative |
-| Sum balances or revenue across currencies | It requires a rate applied after the fact |
-| Let an admin approve their own payout batch | Refused, and the four-eyes rule is the point |
-| Offer a refund at the order level | Refunds are per sub-order, at the order's frozen rate |
-| Re-sort a deadline-ordered queue by date | The deadline is the priority |
-| Hide flagged custody events | The flag is the information |
-| Filter empty job passes out of history | A gap is how you notice a worker stopped |
-| Normalise GeoJSON before showing it back | It is returned exactly as uploaded, on purpose |
-| Make a reason field optional | No account is locked without one |
-| Treat break-glass as an ordinary action | `override-handoff` and `force-status` bypass the platform's core guarantees |
-| Build against `/api/admin/**` | Legacy; `/admin/**` is the real surface |
+| `shipments/CustodyChainPage` | What somebody opens when a parcel is disputed. Renders the chain **with its evidence** — who recorded each event, when it *occurred*, the position and whether it corroborated, the proof presented — and shows flagged events **as flagged** rather than hiding them |
+| `money/ReconciliationPage` | Escrow against payments against payouts. The screen that says whether the platform's books balance |
+| `money/PayoutsPage` + `BatchDetailPage` | The four-eyes rule: approving your own batch is refused by the server, and the console shows who assembled it rather than letting an admin click into a refusal |
+| `disputes/DisputeDetailPage` | Both currencies and both clocks — an agent working a Madrid–Serrekunda dispute needs to know that "yesterday" means different days to the two parties |
+| `platform/AuditLogPage` | Append-only, and the screen says so |
+| `platform/JobsPage` | Job history **including passes that found nothing** — a gap is how you notice a worker stopped |
+| `orders/PlaceOrderOnBehalf` | A real workflow in this market: an order placed for somebody who telephoned |
 
 ---
 
-## 10. Build order
+## 7. Code review
 
-1. Sign-in, role detection, and **write-control gating on `SUPPORT` vs `ADMIN`**.
-2. Dashboard.
-3. Users and account actions with mandatory reasons.
-4. Moderation queues (products, reviews, KYC, stores) with deadline ordering.
-5. The **custody chain viewer** — highest value per hour of the read-only screens.
-6. Dispatch board, assignment, zones with a map, rate cards with live preview.
-7. Money: balances, ledger, **reconciliation**, refunds.
-8. Payout batches with the four-eyes rule.
-9. Disputes with both currencies and both clocks.
-10. Platform: audit log, feature flags, jobs.
-11. Break-glass actions, built last and deliberately awkward.
+### Strengths
+
+1. **Zero `any` in 16,300 lines.** Response types written out, enums mirrored,
+   `endpoints.ts` typed end to end.
+2. **Zero `console.*`** and zero `innerHTML`/`dangerouslySetInnerHTML`.
+3. **The token store is the strictest of the five clients**, and correctly so
+   given what this surface can do.
+4. **`policy.ts` refuses to be an authority.** Rare and correct.
+5. **`Decide.tsx` makes the permission model visible** instead of letting users
+   discover it through 403s.
+6. **No global store.** TanStack Query for server state, one context for auth.
+   For an application that is almost entirely server data, right.
+
+### Findings
+
+#### 7.1 The idempotency key is minted per attempt — **High**
+
+```ts
+function idem() {
+  return { idempotencyKey: newIdempotencyKey() };
+}
+```
+
+Called inside each endpoint function, so **every attempt gets a new key**. The
+comment above it claims the opposite:
+
+> *"Writes that the server idempotency-guards send a fresh `Idempotency-Key` per
+> attempt. That is what stops a retry after a timeout from releasing a second
+> payout batch or placing a second order."*
+
+A fresh key per attempt is precisely what does **not** stop that. `driver-app`
+states the rule correctly — *"a key generated at send time is a new key every
+retry, which is the same as having none"* — and implements it by passing the key
+in as a parameter.
+
+**Affected here:** `POST /admin/payouts/batches`,
+`…/batches/{id}/approve`, `…/items/{id}/retry`,
+`POST /admin/payments/{id}/refund`, `POST /admin/orders`,
+`POST /admin/disputes/{id}/resolve`. Every one of them moves money or is
+irreversible.
+
+**Mitigations that exist and do not cover it:** buttons disable while busy, and
+TanStack Query mutations are `retry: false`. Neither helps when a request times
+out or its response is lost and the operator tries again.
+
+**Fix.** Mint the key where the operator acts, hold it in the modal's state for
+that intention, pass it to every attempt:
+
+```tsx
+const [idemKey] = useState(() => newIdempotencyKey());   // once per modal open
+// …
+mutation.mutate({ …, idempotencyKey: idemKey });
+```
+
+Then change `idem()` to take a key rather than make one, so the type system
+requires a caller to have one. Cross-referenced as
+[`README.md` §6.3](README.md#63-the-idempotency-key-is-minted-per-attempt-in-three-of-five-apps).
+
+#### 7.2 No error boundary — **Medium**
+
+A render-time exception blanks the console with no message and no way back. This
+is a surface used all day by people working queues; a white screen mid-dispute
+is an incident.
+
+**Fix.** One `<ErrorBoundary>` around the routed outlet in `App.tsx`, showing
+the error, a reload and a link to the dashboard. An hour.
+
+#### 7.3 No tests — **High**
+
+Zero test files. `npm run typecheck` is real coverage of shape, but the
+behaviour that matters is untested: refresh single-flight under concurrency,
+CSRF priming when the cookie is absent, `Decide` gating for a SUPPORT principal,
+and money scale per currency.
+
+**Three tests, highest value first:**
+
+1. Two concurrent 401s issue **one** `/auth/refresh`.
+2. A SUPPORT principal renders every `DecideButton` disabled.
+3. XOF formats to 0 places; an unknown code falls back to `Intl`, not to 2.
+
+Vitest comes with Vite; this is an afternoon.
+
+#### 7.4 `isCredentialChallenge` matches prose — **Low**
+
+```ts
+return this.status === 401 && /password|code|confirm/i.test(this.message);
+```
+
+Correct behaviour from a fragile signal: the server is free to reword that
+message. The proper fix is server-side — a stable `error` code in the existing
+JSON body. Until then, a comment naming the server strings it depends on would
+make the coupling visible.
+
+---
+
+## 8. Running it
+
+```bash
+cd frontend/admin
+cp .env.example .env          # defaults are right for local work
+npm install
+npm run dev                   # http://localhost:5173
+
+# and a backend beside it
+cd ../.. && mvn spring-boot:run -Dspring-boot.run.profiles=e2e
+```
+
+| Sign in as | Role |
+|---|---|
+| `fatou.admin@sujula.gm` | ADMIN — everything |
+| `binta.support@sujula.gm` | SUPPORT — **read-only**, and the right account for checking §3 |
+
+Password `Sujula123!`. Served **same-origin** through Vite's proxy; see
+[`README.md` §2](README.md#2-deployment-same-origin-no-exceptions).
+
+```bash
+npm run build       # tsc + vite build into dist/
+npm run typecheck
+```

@@ -13,6 +13,12 @@
 > pattern; full endpoint inventory (432 operations) cross-checked against the
 > filter-chain rules; `mvn test` executed.
 >
+> **Scope.** This document reviews the **backend**. The five client
+> applications in `frontend/` are reviewed in
+> [`frontend/README.md` §6](frontend/README.md#6-cross-application-code-review)
+> and in one document per application. §10 below summarises what that review
+> found.
+>
 > **Verified state at review time:** `mvn test` → **1,233 tests, 0 failures, 0
 > errors, 0 skipped**, 90 test classes, build exit 0.
 
@@ -658,3 +664,32 @@ file, which is part of why §2.1 and §3.2 both live there.
 
 Items 1–4 are small, independent, and each closes something that is currently
 wrong. They are worth doing before anything else on this list.
+
+---
+
+## 10. The front end, in one page
+
+Reviewed in full in [`frontend/README.md` §6](frontend/README.md#6-cross-application-code-review).
+Five applications, ~46,700 lines, and the same character as the backend: careful,
+well-reasoned, with the rules of the platform enforced a second time in the layer
+that could have undermined them.
+
+| # | Finding | Severity |
+|---|---|---|
+| FE-1 | **No tests in any of the five applications** | **High** |
+| FE-2 | `buyer-app` keeps **both** tokens in `localStorage`, and is also the app rendering the most user text through `innerHTML` | **High** |
+| FE-3 | The **idempotency key is minted per attempt** in `admin` and `buyer-app`, and by default in `vendor-app` and `pickup-app`. `driver-app` gets it right and says why | **High** |
+| FE-4 | No error boundary in four of five apps | Medium |
+| FE-5 | A 401 is classified by regex against the server's prose | Low |
+| FE-6 | Five API clients that must stay in step | Low (structural) |
+
+**FE-3 is the one to fix first**, and it is the counterpart of §2.1 on this side
+of the wire: the server built an idempotency layer for a case — *"a request that
+times out on a slow connection is indistinguishable, from the client's side, from
+one that never arrived"* — and three of the five clients defeat it by minting a
+new key on each attempt. The worst instance is `POST /checkout` in `buyer-app`,
+where the consequence is a second order and a second payment.
+
+**FE-5 has a server-side fix**: give the step-up refusal a stable machine-readable
+`error` code in the JSON body it already returns, so no client has to match
+prose.

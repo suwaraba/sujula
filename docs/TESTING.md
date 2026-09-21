@@ -169,7 +169,7 @@ Modou Sanneh is seeded mid-verification (neither email nor phone proved).
 | A20 | `POST /auth/verify-phone/confirm` for Modou with `445120` | Accepted | |
 | A21 | Repeat A20 | Refused — the challenge is consumed | |
 | A22 | `GET /me/permissions` as a **pending** vendor | Lists what the server will actually allow, not what the role implies. A back office rendered from the role alone would show buttons the API then refuses | |
-| A23 | `GET /me` with no token | 403 | |
+| A23 | `GET /me` with **no token** | **401**, with a JSON body — not 403 and not an empty body. `FilterChainRefusals` splits the two: 401 means *say who you are and try again*, 403 means *signing in will not help* | |
 | A24 | `POST /me/export`, then `GET /me/export` | A request is created, the worker picks it up within the minute, a download link appears | |
 | A25 | `DELETE /me` twice | The **same** erasure request comes back, not a second one | |
 
@@ -402,7 +402,8 @@ These are the rows to run **twice**: once as written, once trying to break them.
 |---|---|---|---|
 | K1 | ⚠ **As an ordinary CUSTOMER:** `DELETE /api/users/{someone else}/permanent` | **Should be 403 with the account intact.** **Today the response is 403 and the account is deleted.** This is `CODE-REVIEW.md` §2.1 — **must be fixed before release** | |
 | K2 | As a CUSTOMER: `PUT /api/users/{someone else}` with a changed name | Same defect. Check the row afterwards, not just the status code | |
-| K3 | As a CUSTOMER: `GET /api/users?role=ADMIN` | 403 (this one is a read, so nothing is written) | |
+| K3 | As a CUSTOMER: `GET /api/users?role=ADMIN` | 403 — signed in, not permitted (a read, so nothing is written) | |
+| K3b | Anonymous: `GET /orders` | **401**, JSON body, not an empty 403 | |
 | K4 | `GET /v3/api-docs` and `/openapi.json` on a **prod-profile** server, anonymously | **Not 200.** The document maps every path and request shape | |
 | K5 | `GET /actuator/prometheus` anonymously | Refused. Request counts, error rates and timings per endpoint tell an outsider when the platform is struggling and which path to press on | |
 | K6 | `GET /health/liveness`, `/health/readiness` anonymously | 200, and **nothing a stranger can use** | |
@@ -446,6 +447,51 @@ These are the rows to run **twice**: once as written, once trying to break them.
 
 ---
 
+## 14A. Suite M — The client applications
+
+Five applications now exist under `frontend/`, with **no automated tests of
+their own**, so every row here has to be done by hand. Run each against a
+backend on `:8080` under the `e2e` profile.
+
+```bash
+mvn -o spring-boot:run -Dspring-boot.run.profiles=e2e
+cd frontend/<app> && npm install && npm run dev
+```
+
+| # | App | Do | Expect | P/F |
+|---|---|---|---|---|
+| M1 | all | `npm run typecheck` (or `npm run check` for `buyer-app`) | Clean | |
+| M2 | all | Sign in, then open DevTools → Application → Local Storage | **Only `buyer-app` should hold an access token.** The other four keep it in memory. This is finding `frontend/README.md` §6.2 | |
+| M3 | all | Sign in, then in two tabs let both hit a 401 at once (expire the token) | **One** `/auth/refresh` request in the network tab. Two would revoke the session | |
+| M4 | all | View any XOF amount (sign in as `awa.teranga@sujula.sn` in `vendor-app`) | **No decimal places** | |
+| M5 | all | Force a render error (edit a screen to throw) | **Only `driver-app` shows a message.** The other four blank — finding §6.4 | |
+| M6 | `admin` | Sign in as `binta.support@sujula.gm` | Every decide button **rendered and disabled**, with *"Support can read this but not decide it"* on hover. Not hidden | |
+| M7 | `admin` | Open a shipment's custody chain | Timeline with evidence; a **flagged** event shown as flagged, not hidden | |
+| M8 | `admin` | Approve a payout batch you assembled | Refused — and the console should show who assembled it rather than let you click into it | |
+| M9 | `admin` | Start a refund, then **kill the network** mid-request and retry | ⚠ Today a **new** idempotency key is sent — finding §6.3. Check the request header in DevTools | |
+| M10 | `vendor-app` | Sign in as `modou.sanneh@example.gm` (a customer) | Lands on the **application form**, not an error | |
+| M11 | `vendor-app` | Open a delivered order | The custody chain **reports** SHIPPED and DELIVERED and offers **no control** for them | |
+| M12 | `vendor-app` | As a two-currency seller, open Earnings | **Two figures**, never summed | |
+| M13 | `vendor-app` | Android build: sign in and perform a write | Succeeds. Under the default `http` scheme the CSRF cookie is blocked — `androidScheme: 'https'` is what fixes it | |
+| M14 | `vendor-app` | Native: force-quit and reopen | Still signed in (Keychain / SharedPreferences, not `localStorage`) | |
+| M15 | `driver-app` | Set a PIN, then enter a wrong one five times | The stored session is **destroyed** | |
+| M16 | `driver-app` | **Go offline. Record a collection and a failed attempt. Close the tab. Reopen. Come back online.** | Both upload, **in order**, each exactly once. **This is the most important manual check in this document** | |
+| M17 | `driver-app` | Offline, record the same event twice by tapping twice | One event. The UI confirms from the local write, so a second tap should not be possible | |
+| M18 | `driver-app` | Open a job you already delivered | **No destination block** — absent, not blank | |
+| M19 | `driver-app` | Try to transfer a parcel while three other events are queued | The transfer goes on **its own endpoint**, never in the batch | |
+| M20 | `pickup-app` | Open the release sheet | A **numeric keypad**, not a text input. No autocorrect, no autofill, no history | |
+| M21 | `pickup-app` | Enter a code with no collector name | Submit disabled. And a name with no code: also disabled | |
+| M22 | `pickup-app` | Look anywhere for a collection code | **Nowhere.** Not on the shelf, not on the parcel, not after `resend-code` — only a masked hint at where it went | |
+| M23 | `pickup-app` | Sign in as Isatou and open counter **1097** | The closed state, rendered as a state rather than an error | |
+| M24 | `buyer-app` | Load it fresh | It asks **where the parcel is going** before anything else — and never phrases it as "your address" | |
+| M25 | `buyer-app` | Change the destination only | Ranking moves, **currency does not**. Then change country only: currency moves, ranking does not | |
+| M26 | `buyer-app` | Set a product name in the seed to `<img src=x onerror=alert(1)>` and view it | **Rendered as text.** If it executes, `esc()` was missed — finding §6.2/§8.2 | |
+| M27 | `buyer-app` | At checkout, kill the network after tapping Place order, then retry | ⚠ Today a **new** idempotency key is sent, so the server places a **second order** — finding §8.3. **The highest-consequence client bug** | |
+| M28 | `buyer-app` | Open `#/track/K7MPQ4RTVX2ND9YH` with no account | The parcel page, with **fixed phrases** and no driver free text | |
+| M29 | `buyer-app` | Throttle to slow 3G and load the home screen | First paint is markup, one stylesheet and a few kilobytes. This is the app's entire reason for having no build step | |
+
+---
+
 ## 15. What the automated suites already prove
 
 Do not repeat these by hand.
@@ -464,7 +510,12 @@ cd e2e && ./run.sh                # 432 operations against a live server
 | `*SecurityTest` / `*RoutingTest` | **Who may reach which URL** — asserted against a booted application with the real filter chain, not read off the config |
 | `e2e/` | Every endpoint, called by every kind of person who can call it, against the seed |
 
-**Gaps the automated suites do not cover** (so test these by hand — `CODE-REVIEW.md` §7):
+**The five client applications have no automated tests at all**, so the whole of
+Suite M is manual. See
+[`frontend/README.md` §6.1](frontend/README.md#61-no-tests-in-any-of-the-five-applications)
+for the six test files that would cover most of that risk.
+
+**Gaps the backend suites do not cover** (so test these by hand — `CODE-REVIEW.md` §7):
 
 - The legacy `/api/cart` surface and `CartOwner`, which is the single place that
   decides whose cart a request touches.
@@ -493,11 +544,13 @@ cd e2e && ./run.sh                # 432 operations against a live server
 | J — Admin | 16 | | | | | |
 | K — Security | 26 | | | | | |
 | L — Resilience | 10 | | | | | |
-| **Total** | **211** | | | | | |
+| M — Client applications | 29 | | | | | |
+| **Total** | **240** | | | | | |
 
 **Environment tested against:**
 
 - [ ] `e2e` profile (H2, in-memory) — behaviour
+- [ ] All five clients against that backend (Suite M)
 - [ ] `dev` or staging against **real MySQL** — schema. **Required before release**
 - [ ] Behind the real reverse proxy, over HTTPS
 
@@ -507,6 +560,8 @@ cd e2e && ./run.sh                # 432 operations against a live server
 - [ ] Every row in Suite K passes
 - [ ] Every **refusal** row across all suites refuses
 - [ ] The `SECURITY.md` §9 deployment checklist is complete
+- [ ] **M16 and M27 pass** — the driver outbox drains correctly, and a retried
+      checkout does not place a second order
 - [ ] `LIMITATIONS.md` has been read by whoever is signing off, and every ⚠ item
       in it is either fixed or knowingly accepted in writing
 

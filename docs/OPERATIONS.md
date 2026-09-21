@@ -250,6 +250,50 @@ recovery. A backup stored beside its own key is not a backup.
 
 ---
 
+## 4A. Serving the five clients
+
+`frontend/` holds five separate applications. Four build to static files
+(`npm run build` → `dist/`); `buyer-app` has **no build step** — the files in
+the directory are the files that ship.
+
+```bash
+cd frontend/admin       && npm ci && npm run build   # → dist/
+cd frontend/vendor-app  && npm ci && npm run build
+cd frontend/driver-app  && npm ci && npm run build
+cd frontend/pickup-app  && npm ci && npm run build
+# buyer-app: serve the directory as it is
+```
+
+**Every client must be served same-origin with the API.** There is no CORS
+configuration, and the CSRF protection is a double-submit cookie only a
+same-origin page can read. One reverse proxy fronts both.
+
+> ### ⚠ Client routes collide with API paths
+>
+> Spring serves the API at the **root**. `vendor-app` has screens at `/orders`
+> and `/products`; both are also real API paths. Proxying either to the backend
+> sends deep links to Spring, which answers 401 instead of opening the app.
+>
+> **Proxy only the prefixes that client calls**, and give each client its own
+> path prefix or its own hostname. Each client's README states where it must
+> live — read it before writing the proxy config.
+
+Development ports, so all five can run against one backend:
+`admin` 5173 · `vendor-app` 5174 · `driver-app` 5175 · `pickup-app` 5176 ·
+`buyer-app` 5177.
+
+`driver-app` and `pickup-app` are **installable PWAs**; they must be served over
+HTTPS with their manifests and service workers at the app root.
+
+`vendor-app` and `buyer-app` also ship as **native builds** via Capacitor. Those
+bundle their UI and take an **absolute API origin** at build time
+(`SUJULA_NATIVE_DEV_URL` / `window.SUJULA_CONFIG`), since a packaged app has no
+proxy. Android must use `androidScheme: 'https'`, or the WebView origin is
+treated as insecure and the `Secure` CSRF cookie is blocked — every write then
+fails on Android and nowhere else.
+
+---
+
 ## 5. Reverse proxy
 
 The application does not terminate TLS. `prod` sets:
@@ -351,15 +395,21 @@ into one Prometheus can be told apart.
 ## 9. Deploying
 
 ```bash
-# 1. Build and test
+# 1. Build and test the backend
 mvn -B clean package -Djava.version=21          # 1,233 tests must pass
 
 # 2. End-to-end, needs no external services
 cd e2e && ./run.sh
 
-# 3. Apply any reviewed DDL (§4.1)
+# 3. Build the clients (§4A). No tests exist for them — see LIMITATIONS §5A.1
+for app in admin vendor-app driver-app pickup-app; do
+  (cd frontend/$app && npm ci && npm run typecheck && npm run build)
+done
+(cd frontend/buyer-app && npm run check)
 
-# 4. Deploy the WAR
+# 4. Apply any reviewed DDL (§4.1)
+
+# 5. Deploy the WAR and the client bundles
 
 # 5. Verify
 curl -s  https://host/health/readiness
@@ -403,6 +453,10 @@ deliberate.
 | Orders marked paid with no money | **The mock gateway is on.** Check the profile |
 | Two of everything from the workers | More than one instance and no distributed lock |
 | An XOF total with two decimal places | Known: [`LIMITATIONS.md` §2.1](LIMITATIONS.md) |
+| A client deep link answers 401 instead of opening the app | The proxy is sending a client route to Spring. See §4A |
+| Writes fail only in the Android build | `androidScheme` is not `https`, so the `Secure` CSRF cookie is blocked. See §4A |
+| A browser client cannot reach the API at all | It is being served cross-origin. There is no CORS configuration — see §5 |
+| A seller is signed out after their phone ran low on storage | A WebView evicted `localStorage`. The native build should be using Capacitor Preferences |
 
 ---
 

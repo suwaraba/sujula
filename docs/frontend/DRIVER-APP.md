@@ -1,321 +1,372 @@
-# Driver App — Client Specification
+# `frontend/driver-app` — Courier Application
 
-> A mobile application for couriers. **19 operations under `/driver/**`.**
+> **The phone in a courier's hand between a shop in Banjul and a doorway in
+> Serrekunda.** An installable PWA, built so that losing signal is the normal
+> case rather than the edge case.
 >
-> This is the client with the hardest physical constraints in the system: it is
-> used one-handed, outdoors, on a motorbike, in the dark, on a connection that
-> comes and goes. It is also the client that produces the evidence the whole
-> custody chain rests on.
+> This document covers **architecture and code quality**. For what it does, read
+> [`frontend/driver-app/README.md`](../../frontend/driver-app/README.md). Read
+> [`README.md`](README.md) first for the shared client contract.
 >
-> Read [`README.md`](README.md) first.
+> **This is the best-engineered client of the five**, and the two modules that
+> make it so — `offline/outbox.ts` and `auth/vault.ts` — are worth reading
+> whatever you are working on.
 
----
-
-## 1. The model this client must hold
-
-**A status is never set. It is derived from events.**
-
-The server has no endpoint that sets a shipment's status. What the driver's app
-sends are *events* — arrived, collected, delivered, failed, transferred — each
-with proof, and the status is recomputed from the whole chain afterwards.
-
-That is not a stylistic preference. A status field somebody can set is a custody
-chain with a hole in it: it lets a parcel reach DELIVERED without anyone having
-handed it to anyone.
-
-So this client's job is: **capture evidence accurately, and get it to the server
-eventually.** Not "update the status".
-
----
-
-## 2. The working day
-
-```
-POST  /driver/profile                       apply to carry parcels
-GET   /driver/profile                       where the application has got to
-PATCH /driver/profile                       vehicle, area covered
-PUT   /driver/availability                  go online / off
-GET   /driver/assignments                   offers + accepted work
-POST  /driver/assignments/{legId}/accept
-POST  /driver/assignments/{legId}/decline
-GET   /driver/shipments/{id}                one parcel
-POST  /driver/shipments/{id}/arrived-at-origin
-POST  /driver/shipments/{id}/collect
-POST  /driver/shipments/{id}/request-recipient-code
-POST  /driver/shipments/{id}/deliver
-POST  /driver/shipments/{id}/delivery-failed
-POST  /driver/shipments/{id}/deposit-at-pickup
-POST  /driver/shipments/{id}/transfer
-POST  /driver/custody-events/sync           offline batch
-POST  /driver/location
-GET   /driver/history   ·   GET /driver/earnings
-```
-
-Every path resolves the driver from the session. There is no driver id to send,
-and no path variable that opens another driver's parcel.
-
----
-
-## 3. Assignments
-
-```http
-GET /driver/assignments
-```
-
-Returns offers and accepted work. **Lapsed offers are deliberately absent.**
-
-> A driver shown a dead offer will tap it and read the refusal as a broken app.
-> So do not cache the list and re-render it from memory when the network is
-> flaky — re-fetch, and if you cannot, mark the list stale rather than showing
-> offers that may have gone.
-
-Accepting a lapsed offer is refused with a message saying **the offer went back
-to the pool** rather than blaming the driver. Show that message; it is the
-difference between "you were too slow" and "somebody else has it".
-
-**Accepting a job is not holding the parcel.** Several operations check that the
-parcel was actually collected, not merely assigned.
-
----
-
-## 4. The parcel screen, and the field that disappears
-
-```http
-GET /driver/shipments/{id}
-```
-
-**The destination block is present only while the driver is carrying the
-parcel.** Once it is handed over, the block is **absent — not blank**. A driver
-who delivered a parcel yesterday has no reason to still hold somebody's front
-door.
-
-> **Build for the field being absent.** Not empty-string, not null-rendered-as-a-dash:
-> gone. A history screen that shows "Address: —" is a screen somebody will file a
-> bug about, and a history screen that crashes on a missing key is worse.
-
-While carrying, the block carries the recipient's name, street and number.
-Treat it as the most sensitive data in the app: no screenshots in analytics, no
-copying to the clipboard by default, no leaving it on screen when the app
-backgrounds.
-
----
-
-## 5. The custody events, in order
-
-### 5.1 At the shop
-
-```http
-POST /driver/shipments/{id}/arrived-at-origin
-{ "occurredAt": "…", "latitude": …, "longitude": …, "clientEventId": "…" }
-```
-
-### 5.2 Collecting
-
-```http
-POST /driver/shipments/{id}/collect
-{ "code": "871460", "occurredAt": "…", "latitude": …, "longitude": …,
-  "clientEventId": "…" }
-```
-
-The seller presents the collection code. **No code, no transfer.** The code is
-burned in the same transaction, so it cannot open a second handover.
-
-Collecting a parcel on a leg nobody has accepted is refused — the parcel is not
-this driver's to move.
-
-### 5.3 Asking for the recipient's code
-
-```http
-POST /driver/shipments/{id}/request-recipient-code
-```
-
-**The driver never sees the code.** One who could read it could mark a parcel
-delivered without meeting anybody. The response confirms it was sent and to
-where, masked.
-
-Refused before collection, with a message saying so: emailing a delivery code
-for something still on the seller's shelf tells the buyer their parcel is on its
-way when it is not, and burns one of the few sends before the driver is anywhere
-near the door.
-
-**Rate limited per shipment per hour**, and the refusal explains that sending
-more will not make the recipient answer faster. Show it verbatim and offer
-"contact support" as the next step.
-
-> ⚠ Today the code is emailed to **the buyer**, who relays it to the recipient.
-> Design the screen's wording around that — *"we have asked the buyer to send
-> the code"* — and be ready to change it when SMS arrives
-> ([`../LIMITATIONS.md` §2.2](../LIMITATIONS.md)).
-
-### 5.4 Delivering — three pieces of proof, all required
-
-```http
-POST /driver/shipments/{id}/deliver
-{ "code": "540913",
-  "latitude": …, "longitude": …,
-  "photoKey": "…",
-  "occurredAt": "…", "clientEventId": "…" }
-```
-
-**The code, a position, and a photograph. All three.** This is the link somebody
-would forge if any one of them were enough alone.
-
-So the delivery screen is a three-step wizard with no skip:
-
-1. Ask the recipient for their six digits.
-2. Capture position (the phone already has it).
-3. Take the photograph — upload it to storage first, send the key.
-
-Each piece is refused independently. Validate locally before sending so a driver
-standing at a door does not discover the photo failed after typing the code.
-
-### 5.5 When it does not work
-
-```http
-POST /driver/shipments/{id}/delivery-failed
-{ "reason": "…", "latitude": …, "longitude": …, "occurredAt": "…", "clientEventId": "…" }
-```
-
-Counts toward the shipment's attempt count, which is derived from the chain like
-everything else.
-
-### 5.6 Leaving it at a counter
-
-```http
-POST /driver/shipments/{id}/deposit-at-pickup
-{ "pickupPointId": 1096, … }
-```
-
-The counter must then accept it. A counter that is closed, suspended, switched
-off or full **refuses, and says which of the four it is.** Surface that so the
-driver goes somewhere else rather than waiting.
-
-### 5.7 Driver to driver
-
-```http
-POST /driver/shipments/{id}/transfer
-```
-
-**Both drivers attest.** Neither side can record a handover alone.
-
----
-
-## 6. Offline — the part that decides whether this app is usable
-
-A driver out of signal for six hours is Tuesday here, not an exception. Build
-offline-first.
-
-### 6.1 Queue everything, send when you can
-
-```http
-POST /driver/custody-events/sync
-{ "events": [ { "clientEventId": "…", "type": "COLLECTED", "shipmentId": …,
-                "occurredAt": "…", "latitude": …, "longitude": …,
-                "code": "…", "photoKey": "…" }, … ] }
-```
-
-**`clientEventId` is mandatory and must be stable.** Generate it once when the
-driver taps, persist it with the queued event, and reuse it across every retry.
-The server deduplicates on it, so a phone that uploads, loses signal before the
-reply, and uploads again records each event **once**.
-
-Never regenerate the id on retry. That is the whole mechanism.
-
-### 6.2 The clock rules, and what they mean for your UI
-
-| Event timestamp | Server |
+| | |
 |---|---|
-| More than **5 minutes ahead** of the server | **Refused.** A device clock is something its holder can set |
-| More than **14 days** old | **Refused** — that is a mistake, not a late upload |
-| Anything in between | **Accepted** |
-
-So:
-
-- **Stamp `occurredAt` when the driver acts**, not when you upload. A six-hour-old
-  event is accepted and is the honest record.
-- **Never stamp a future time.** If the phone's clock is fast, every event is
-  refused and the driver sees an app that does not work. Measure the offset
-  against a server response's `Date` header at sign-in and correct for it.
-- Warn the driver if the queue holds anything approaching 14 days old.
-
-### 6.3 Position is evidence, not a gate
-
-An event captured 4.3 km from where the parcel was expected is **recorded and
-flagged**, not refused — the parcel may genuinely have changed hands, and
-refusing would strand it. The chain simply says the position does not corroborate
-the handover.
-
-> **Do not block the driver on a weak GPS fix.** Send the best position you
-> have, with its accuracy. A refused handover leaves a parcel in limbo; a flagged
-> one is a note for an investigator who may never need it.
-
-### 6.4 Photos
-
-Upload to object storage first and queue the **key**, not the bytes. A queued
-event whose photo has not uploaded is not yet sendable — show it as "waiting to
-upload" rather than "failed".
+| **Stack** | React · TypeScript · Vite · TanStack Query · **IndexedDB (`idb`)** · **ZXing** |
+| **Size** | ~7,900 lines, 42 files |
+| **Port** | 5175 |
+| **Form** | Installable PWA, not React Native |
+| **Users** | Couriers, outdoors, one-handed, on a connection that comes and goes |
 
 ---
 
-## 7. Location reporting
+## 1. Why a PWA and not a native build
 
-```http
-POST /driver/location
-{ "latitude": …, "longitude": …, "at": "…" }
-```
+Three reasons, all specific to this job:
 
-Where the driver has been all day is, with recipients' addresses, **the sharpest
-data on the platform** — and it belongs to somebody who never agreed to be
-visible to anyone but the person bringing the parcel.
+1. **It installs from a link dispatch sends**, rather than from a store account
+   a driver may not have.
+2. **It updates the moment a fix is deployed**, rather than when somebody
+   accepts an update over a metered connection.
+3. **It is the same origin as the API**, which is what lets the session cookie,
+   the CSRF token and the bearer token all work without a single cross-origin
+   request.
 
-- Report only while **on shift**. Stop the moment availability goes off.
-- Make the on/off state unmistakable on screen.
-- Batch rather than streaming. It is a battery cost on a phone that also has to
-  last the round.
-
----
-
-## 8. Earnings and history
-
-```
-GET /driver/earnings
-GET /driver/history
-```
-
-History is finished jobs — **with destination details absent**, per §4.
+The third is the one that generalises: the whole platform's client security
+model assumes same origin ([`README.md` §2](README.md#2-deployment-same-origin-no-exceptions)),
+and a native shell would have had to solve it separately.
 
 ---
 
-## 9. Rules this client must not break
+## 2. Module map
 
-| Never | Because |
+```
+src/
+├── App.tsx                  7 routes — the app is one decision per screen
+├── ErrorBoundary.tsx        ← the only client of the five that has one
+├── api/     http.ts · endpoints.ts · types.ts
+├── auth/
+│   ├── session.tsx
+│   └── vault.ts             refresh token encrypted under a PIN     §4
+├── offline/
+│   ├── db.ts                four IndexedDB stores                   §3
+│   └── outbox.ts            the part that has to be right           §3
+├── media/photos.ts          camera → downscale → upload → key       §5
+├── location/
+│   ├── position.ts          a fix, with its accuracy
+│   └── tracker.ts           live position, only while on duty       §6
+├── scan/    Scanner.tsx · qr.ts        label scanning                §7
+├── maps/    LiveMap.tsx · loader.ts · navigate.ts
+├── i18n/index.tsx           a map and a hook, no library             §8
+├── lib/     connectivity.ts · format.ts · ids.ts
+├── components/
+└── screens/  Jobs · Job · Handover · FailedAttempt · Transfer ·
+              Earnings · History · Me · SignIn · PinGate · Apply
+```
+
+**Seven routes:** `/` `/jobs` `/jobs/:id` `/earnings` `/history` `/me` `*`.
+
+The route count is the design. Everything that happens to a parcel happens on
+`/jobs/:id`, because a driver holding a phone in one hand does not navigate.
+
+---
+
+## 3. The outbox — the part that has to be right
+
+> *"A driver works a round through an area with no coverage; every collection,
+> every doorstep, every failed attempt is recorded on the phone and exists
+> nowhere else until they come back within range. **Losing one is losing the
+> evidence that a parcel changed hands, which on this platform is the evidence
+> that a seller gets paid.**"*
+
+Four rules, each of which the backend is built to meet halfway:
+
+### 3.1 Write first, send second
+
+Every action lands in IndexedDB **before** a request is attempted. The UI
+confirms from the write, not from the response, *"so a driver in a dead spot
+sees the same 'recorded' they see in town and does not tap twice."*
+
+This is the correct inversion. A client that confirmed from the response would
+teach drivers to double-tap, and double-tapping a handover is how a parcel gets
+two collection events.
+
+### 3.2 One id per event, for its whole life
+
+`clientEventId` is minted when the driver taps and **never changes**, across
+retries and across restarts. The server deduplicates on it, so *"a retry is a
+retry rather than a second collection of the same parcel."*
+
+This is the server's `POST /driver/custody-events/sync` contract honoured
+exactly.
+
+### 3.3 One idempotency key per request, stored beside the event
+
+> *"A key generated at send time is a new key every retry, which is the same as
+> having none."*
+
+**This is the rule three of the other four clients get wrong**
+([`README.md` §6.3](README.md#63-the-idempotency-key-is-minted-per-attempt-in-three-of-five-apps)).
+Here the key is a required parameter on every endpoint function:
+
+```ts
+collect: (id: number, body: HandoverRequest, idempotencyKey: string) =>
+  api.post<CustodyRecorded>(`/driver/shipments/${id}/collect`, body, { idempotencyKey }),
+```
+
+The type system forces the caller to have one. That is what makes it correct
+rather than merely intended.
+
+### 3.4 Oldest first, stop on the first network failure
+
+> *"A delivery applied before its collection is refused by the chain —
+> correctly, and for entirely the wrong reason. And a phone with one bar should
+> not fire twelve parallel requests at it."*
+
+The first half is the important one: the server's `CustodyChain` validates
+sequence against the events already recorded, so uploading out of order produces
+a refusal that looks like a bug and is not.
+
+**Backoff:** `[0, 5s, 15s, 60s, 300s]`, capped — *"a driver is waiting."*
+
+**Batching:** past three queued events, one batch round trip beats twelve. But
+not everything may be batched:
+
+```ts
+/**
+ * A transfer is not among them: `/custody-events/sync` has no field for the
+ * other driver or for the second code, and a transfer attested by one person is
+ * exactly the link that would be forged. It always goes on its own endpoint.
+ */
+```
+
+That is a client refusing an optimisation because it would weaken a custody
+guarantee. It is the clearest example in the repository of a rule surviving into
+a layer that could have quietly broken it.
+
+### 3.5 Four IndexedDB stores, split by purpose rather than tidiness
+
+The `outbox` is the one that matters and is kept separate from cached reads
+specifically so a cache clear cannot take the evidence with it.
+
+---
+
+## 4. The vault — a refresh token that survives a stolen phone
+
+> *"A driver's phone is shared between shifts, left in a vehicle, and sometimes
+> stolen with the parcels. A refresh token sitting in `localStorage` on such a
+> phone is a working session for whoever picks it up — and the session it opens
+> can read every recipient address on that driver's round."*
+
+**The mechanism.** The refresh token is encrypted at rest under a key derived
+from a four-digit PIN: **PBKDF2-SHA256, 310,000 iterations, AES-GCM**. The PIN
+never leaves the device and is never stored, *"not even hashed: the only test of
+whether it is right is whether the token decrypts."*
+
+**Five wrong attempts destroy the ciphertext** — mirroring what the backend does
+to a handover code after five wrong guesses, because *"a six-digit secret is a
+hundred thousand tries to somebody determined and three to somebody who
+mistyped, and the count is what tells them apart."*
+
+**Why a PIN at all, when the driver already typed a password:**
+
+> *"The password is long, is typed on a small keyboard in the sun, and unlocks a
+> screen showing where people live. Asking for it every five minutes means it
+> gets written on the case. Four digits on a huge keypad is the trade that
+> actually holds."*
+
+**And it is honest about its limits:**
+
+> *"it does not buy: protection from malicious code running in this origin.
+> Nothing in a browser does. The mitigations for that are same-origin
+> deployment, no third-party scripts, and the access token living only in
+> memory."*
+
+Security code that states what it does not protect against is rarer than
+security code that works.
+
+The access token, correspondingly:
+
+> *"An access token in persistent storage on a shared phone survives the driver
+> handing it over; one in memory does not survive closing the app, which is the
+> correct lifetime for a credential that the refresh token can always re-mint."*
+
+A **60-second slack** is applied to expiry, because *"a token that expires while
+the request is in the air is a 401 the driver sees as 'it did not save'."*
+
+---
+
+## 5. Photographs
+
+A delivery is refused without one — it is what settles a dispute months later —
+*"so this path has to work on the worst connection the platform runs on."*
+
+The image is **downscaled and re-encoded on the phone before it is sent**, and
+the outbox queues the resulting **key**, not the bytes. An event whose photo has
+not uploaded is not yet sendable, and the UI shows that as *waiting to upload*
+rather than *failed*.
+
+---
+
+## 6. Location
+
+> *"Telling the platform where the driver is — live, and only while it is theirs
+> to know."*
+
+Two constraints taken straight from the backend and *"not the app's to soften"*:
+`POST /driver/location` is refused while off duty, and the reporting cadence is
+whatever the server asks for.
+
+The privacy posture is correct and is the app's own: nothing is offered and
+nothing is tracked until the driver says they are working. Where a driver has
+been all day is, with recipients' addresses, the sharpest data on the platform.
+
+---
+
+## 7. Scanning
+
+Native `BarcodeDetector` where the phone has it, **ZXing everywhere else**,
+torch included. The fallback matters — `BarcodeDetector` is absent on iOS Safari
+and on older Android.
+
+`qr.ts` lifts the last path segment of the label's URL and sends it as
+`qrToken` alongside the handover, where the backend verifies the signature. It
+handles both the absolute form and the relative `/parcels/<token>` a deployment
+with no configured base produces.
+
+---
+
+## 8. Words
+
+> *"Deliberately tiny — a map and a hook, no library. The app is built so that
+> the words are the smallest part of it: every action is an icon with a colour
+> and a fixed position, the flow is one decision per screen, and **a driver who
+> reads nothing can still work the whole round by the pictures.** The strings
+> are here for everyone else."*
+
+Designing for a driver who cannot read the interface, in a region where that is
+a real constraint, is a product decision most teams would not make and this one
+made first.
+
+---
+
+## 9. The handover screen
+
+Collection, deposit and delivery are **one component**, because they are the
+same shape with different parties — which is also why they are one request
+record on the backend.
+
+> *"What differs is what counts as enough evidence, and that is decided by the
+> server — this screen gathers, it does not adjudicate."*
+
+Three things are gathered, *"in this order, because that is the order they
+happen in on a doorstep"*:
+
+1. **The code the other person reads out.** *"The driver never sees it and is
+   never sent it. That is the entire point of a code: it proves two people were
+   in the same place at the same time, and a driver who could read it could mark
+   a parcel delivered without meeting anybody."*
+2. **A photograph**, required on delivery.
+3. **The position**, taken **fresh at the moment of recording** rather than
+   reused from the map, and shown to the driver **with its accuracy** so they
+   know what is being attested to.
+
+C5 and C4 both, enforced a second time in the client that had the most to gain
+from cutting a corner.
+
+---
+
+## 10. Code review
+
+### Strengths
+
+1. **The outbox and the vault.** Jointly the most carefully reasoned code in the
+   repository, front or back, and both honest about their limits.
+2. **The only client with an `ErrorBoundary`.**
+3. **The idempotency key is a required parameter.** The one client that gets
+   this right, and it explains why in a comment the others should have read.
+4. **It refuses an optimisation to protect a custody guarantee** — a transfer is
+   never batched, for a stated reason.
+5. **It declines to soften server constraints** rather than working around them.
+6. **Designed for a driver who cannot read it.**
+7. **Zero `any`.** One `console.*` in 7,900 lines.
+
+### Findings
+
+#### 10.1 No tests — **High**, and highest of any client
+
+This is the app whose own source says *"This is the part of the app that has to
+be right"* about a module with no test covering it.
+
+**Untested behaviour, ranked by what it would cost:**
+
+| Untested | Failure if it regresses |
 |---|---|
-| Try to set a shipment status | There is no such endpoint. Send events |
-| Regenerate `clientEventId` on retry | Deduplication depends on it; the driver ends up with duplicate events |
-| Stamp `occurredAt` at upload time | The honest record is when it happened |
-| Send a future timestamp | Refused outright — check the clock offset |
-| Show a lapsed offer | The driver taps it and reads the refusal as a broken app |
-| Expect a destination on a delivered parcel | The field is **absent**, by design |
-| Block delivery on a weak GPS fix | Position is evidence, not a gate |
-| Try to read the recipient's code | The driver is not shown it, on purpose |
-| Report location while off shift | It is somebody's whole day |
-| Cache the destination block beyond the trip | Same reason the server drops it |
-| Let a driver skip a delivery step | All three pieces of proof are required together |
+| Outbox ordering, dedup, backoff, restart survival | **Lost custody evidence** — a seller is not paid and nobody can say why |
+| `clientEventId` stability across retries and restarts | Duplicate collections of one parcel |
+| Idempotency key stability | Same |
+| Vault: wrong PIN, five-try wipe, decrypt after restart | A driver locked out mid-round, or a stolen phone that still works |
+| Batch exclusion of transfers | A transfer attested by one person |
+| Photo compression and the key-not-bytes queueing | Delivery refused, or a queue that never drains |
+
+**Recommendation.** Three test files, and they are the highest-value tests
+anywhere in this repository:
+
+1. `outbox.test.ts` — queue three events, fail the first send, assert the retry
+   reuses both ids; assert order is preserved; assert a transfer is never in a
+   batch; assert a reload rehydrates the queue.
+2. `vault.test.ts` — right PIN decrypts, wrong PIN fails, five wrong destroys.
+   WebCrypto is available in Vitest's jsdom with a polyfill, or run this file in
+   the browser runner.
+3. `photos.test.ts` — an oversized image is downscaled below the threshold.
+
+#### 10.2 The PIN is four digits with a five-try wipe — **Accepted, worth stating**
+
+Four digits is 10,000 combinations, and 310,000 PBKDF2 iterations make an
+offline attack expensive but not impossible against a determined attacker with
+the ciphertext. The five-try wipe is what closes it in practice, and the source
+reasons about exactly this.
+
+**Not a finding, but worth stating in a threat model:** the wipe is client-side,
+so an attacker with the raw IndexedDB file can copy it before attacking. The
+real mitigation is the one the source names — the server rotates the refresh
+token out from under them — plus the 30-day TTL. Worth noting explicitly in
+`README.md` so nobody later "improves" the wipe and thinks the problem is
+solved.
+
+#### 10.3 Offline state is not surfaced as a first-class status — **Low**
+
+`lib/connectivity.ts` exists and the screens show queued state, but there is no
+single persistent indicator of *"n events waiting to upload"* on every screen. On
+a long round out of coverage, a driver's confidence depends on seeing that the
+phone is holding their work rather than losing it.
+
+**Fix.** A persistent chip in the header bound to the outbox count, with a tap
+target that lists what is waiting.
 
 ---
 
-## 10. Build order
+## 11. Running it
 
-1. Sign-in, profile, application status.
-2. **The offline queue with stable `clientEventId`s.** Build this before any
-   screen that produces an event — retrofitting it is a rewrite.
-3. Clock-offset measurement against the server.
-4. Assignments with re-fetch and staleness.
-5. The parcel screen, built for an absent destination block.
-6. Collect (code capture).
-7. The delivery wizard — code, position, photo, no skip.
-8. Failed attempt, deposit at pickup, transfer.
-9. Location reporting tied hard to the shift switch.
-10. Earnings and history.
+```bash
+cd frontend/driver-app
+cp .env.example .env      # then read it; every setting is explained there
+npm install
+npm run dev               # http://localhost:5175
 
-Steps 2 and 3 are the ones that decide whether this app works on the road.
+cd ../.. && mvn spring-boot:run -Dspring-boot.run.profiles=e2e
+```
+
+Sign in as `ebrima.driver@sujula.gm`, password `Sujula123!`. He has leg **1911**
+in progress and leg **1912** as a **lapsed offer that must not appear in the
+list** — the seed is built to test exactly that.
+
+`vite dev` proxies `/auth`, `/me`, `/driver`, `/notifications`, `/config`,
+`/countries` and `/currencies`, so the app talks to the API on its own origin
+exactly as it does in production.
+
+**To exercise the part that matters:** open DevTools, go offline, record a
+collection and a failed attempt, close the tab, reopen it, come back online, and
+watch the outbox drain in order.
