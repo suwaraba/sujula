@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Sujula">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17563f"/>
+      <stop offset="1" stop-color="#c9761a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#g)"/>
+  <path d="M256 118c-46 0-83 37-83 83 0 62 83 155 83 155s83-93 83-155c0-46-37-83-83-83z"
+        fill="none" stroke="#fff" stroke-width="26" stroke-linejoin="round"/>
+  <circle cx="256" cy="200" r="30" fill="#fff"/>
+  <path d="M140 392h232" stroke="#fff" stroke-width="26" stroke-linecap="round" opacity=".75"/>
+</svg>

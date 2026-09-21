@@ -131,6 +131,24 @@ public class SecurityConfig {
                                 "/openapi.json").permitAll();
                     }
                     auth
+                        // ── The storefront itself ────────────────────────────
+                        //
+                        // The buyer application is a static shell — markup, a
+                        // stylesheet and script — served from this deployment
+                        // and talking to the same API everything else does. It
+                        // holds no data and no secret: every figure on every
+                        // screen is fetched at runtime from an endpoint whose
+                        // own rule decides whether the caller may have it.
+                        //
+                        // Open, because the first screen a shopper sees is the
+                        // one that asks where their parcel is going, and that
+                        // has to render before there is an account. Closing it
+                        // would also make the native build unreachable: the
+                        // Android and iOS wrappers load these exact files.
+                        .requestMatchers(HttpMethod.GET,
+                                "/", "/app", "/app/**",
+                                "/manifest.webmanifest", "/favicon.ico").permitAll()
+
                         // ── Machines and probes ──────────────────────────────
                         //
                         // Open at the filter chain and defended inside the

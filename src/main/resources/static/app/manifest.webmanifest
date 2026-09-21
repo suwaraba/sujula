@@ -1,0 +1,16 @@
+{
+  "name": "Sujula",
+  "short_name": "Sujula",
+  "description": "Buy from sellers at home, pay from where you are, delivered to whoever it is for.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f6f3",
+  "theme_color": "#0f3d2e",
+  "categories": ["shopping"],
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
