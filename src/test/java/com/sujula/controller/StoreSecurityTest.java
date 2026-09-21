@@ -44,14 +44,14 @@ class StoreSecurityTest {
     @Test
     void everyStoreEndpointRefusesAnAnonymousCaller() throws Exception {
         mvc.perform(post("/vendor/stores").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/stores/1")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/stores/1/kyc")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/stores/1/staff")).andExpect(status().isForbidden());
-        mvc.perform(delete("/vendor/stores/1/staff/2")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/stores/1")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/stores/1/kyc")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/stores/1/staff")).andExpect(status().isUnauthorized());
+        mvc.perform(delete("/vendor/stores/1/staff/2")).andExpect(status().isUnauthorized());
         mvc.perform(put("/vendor/stores/1/bank-account")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

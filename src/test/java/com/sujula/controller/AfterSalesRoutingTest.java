@@ -68,15 +68,15 @@ class AfterSalesRoutingTest {
         // 403 rather than 401 throughout this application: the entry point
         // refuses without inviting a challenge, which is what the rest of the
         // signed-in surface does and what BuyerOrderSecurityTest asserts too.
-        mvc.perform(get("/returns")).andExpect(status().isForbidden());
-        mvc.perform(get("/returns/1")).andExpect(status().isForbidden());
-        mvc.perform(get("/disputes")).andExpect(status().isForbidden());
-        mvc.perform(get("/messages/threads")).andExpect(status().isForbidden());
+        mvc.perform(get("/returns")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/returns/1")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/disputes")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/messages/threads")).andExpect(status().isUnauthorized());
         mvc.perform(post("/returns").with(csrf()).contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/reviews/1/report").with(csrf())
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
 
         verify(returns, never()).list(any(), any(), any());
         verify(messages, never()).threads(any(), any());

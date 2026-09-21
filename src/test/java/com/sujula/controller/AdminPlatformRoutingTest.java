@@ -51,11 +51,11 @@ class AdminPlatformRoutingTest {
 
     @Test
     void thePlatformSurfaceIsNotOpen() throws Exception {
-        mvc.perform(get("/admin/disputes")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/dashboard")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/audit-log")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/jobs")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/feature-flags")).andExpect(status().isForbidden());
+        mvc.perform(get("/admin/disputes")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/dashboard")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/audit-log")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/jobs")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/feature-flags")).andExpect(status().isUnauthorized());
 
         verify(platform, never()).dashboard();
     }

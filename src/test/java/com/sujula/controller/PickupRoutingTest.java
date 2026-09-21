@@ -91,27 +91,27 @@ class PickupRoutingTest {
     @Test
     void everyOperatorRouteRefusesAnAnonymousCaller() throws Exception {
         mvc.perform(post("/pickup/applications").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/pickup/points")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/pickup/points")).andExpect(status().isUnauthorized());
         mvc.perform(patch("/pickup/points/1").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/pickup/points/1/parcels")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/pickup/points/1/parcels")).andExpect(status().isUnauthorized());
         mvc.perform(post("/pickup/points/1/parcels/2/accept")
                         .contentType("application/json").content("{\"code\":\"123456\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/pickup/points/1/parcels/2/reject")
                         .contentType("application/json").content("{\"reason\":\"DAMAGED\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/pickup/points/1/parcels/2/release")
                         .contentType("application/json")
                         .content("{\"code\":\"123456\",\"collectedByName\":\"X\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/pickup/points/1/parcels/2/return")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/pickup/points/1/parcels/2/resend-code"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/pickup/points/1/earnings")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/pickup/points/1/earnings")).andExpect(status().isUnauthorized());
     }
 
     @Test

@@ -351,6 +351,93 @@
           ]
         },
         {
+          "name": "Swagger UI can fetch its own settings, not just the document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openapi.json/swagger-config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openapi.json",
+                "swagger-config"
+              ]
+            },
+            "description": "springdoc hangs Swagger UI's settings off springdoc.api-docs.path, so moving the document to /openapi.json moves this to /openapi.json/swagger-config. The security allowlist named the document and not the subtree, so this one request was refused while everything around it was open — and Swagger UI reports that as \"Failed to load remote configuration\" over an empty page, which names neither the path nor the status. Asserted separately from the document below because they are two rules and only one of them was there."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Swagger UI can fetch its own settings, not just the document — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Swagger UI can fetch its own settings, not just the document — url exists\", function () {",
+                  "  const actual = H.get($body, \"url\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"url\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "And the document itself, which is what that config points at",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openapi.json",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openapi.json"
+              ]
+            },
+            "description": "Open only because this profile sets sujula.docs.enabled. Production leaves it off: a complete map of every path, role-gated write and request shape is reconnaissance handed to anybody who asks."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"And the document itself, which is what that config points at — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"And the document itself, which is what that config points at — openapi exists\", function () {",
+                  "  const actual = H.get($body, \"openapi\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"openapi\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"And the document itself, which is what that config points at — paths exists\", function () {",
+                  "  const actual = H.get($body, \"paths\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"paths\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "The metrics scrape is not public",
           "request": {
             "method": "GET",
@@ -365,7 +452,7 @@
                 "prometheus"
               ]
             },
-            "description": "It carries request counts, error rates and timings per endpoint — enough to tell a stranger when the platform is struggling and which path to press on."
+            "description": "It carries request counts, error rates and timings per endpoint — enough to tell a stranger when the platform is struggling and which path to press on. 401 rather than 403: this caller presented no credential at all, so the answer is \"say who you are\". An administrator who signs in reaches it; see the 403 rows in folder 91 for the other side."
           },
           "event": [
             {
@@ -376,8 +463,8 @@
                   "const H = eval(pm.collectionVariables.get('helpers'));",
                   "const $body = H.json(pm.response);",
                   "",
-                  "pm.test(\"The metrics scrape is not public — 403\", function () {",
-                  "  pm.expect([403]).to.include(pm.response.code,",
+                  "pm.test(\"The metrics scrape is not public — 401\", function () {",
+                  "  pm.expect([401]).to.include(pm.response.code,",
                   "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
                   "});"
                 ]
@@ -400,7 +487,7 @@
                 "health"
               ]
             },
-            "description": "The two are easy to confuse and are deliberately not the same: /health/* is the public probe pair and answers with nothing a stranger can use, while the actuator tree is administrator-only."
+            "description": "The two are easy to confuse and are deliberately not the same: /health/* is the public probe pair and answers with nothing a stranger can use, while the actuator tree is administrator-only. 401 for the same reason as the row above."
           },
           "event": [
             {
@@ -411,8 +498,8 @@
                   "const H = eval(pm.collectionVariables.get('helpers'));",
                   "const $body = H.json(pm.response);",
                   "",
-                  "pm.test(\"Nor is the actuator health endpoint, which is a different thing from /health — 403\", function () {",
-                  "  pm.expect([403]).to.include(pm.response.code,",
+                  "pm.test(\"Nor is the actuator health endpoint, which is a different thing from /health — 401\", function () {",
+                  "  pm.expect([401]).to.include(pm.response.code,",
                   "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
                   "});"
                 ]
@@ -58142,6 +58229,2011 @@
           ]
         }
       ]
+    },
+    {
+      "name": "91 — Security: what the surface does for somebody it was not built for",
+      "description": "Access control, session and token handling, CSRF, injection and what the error bodies give away. Rows marked KNOWN GAP in their notes are expected to fail against the application as it stands and describe the fix.",
+      "item": [
+        {
+          "name": "A customer asking for a stranger by email learns nothing from the status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/by-email?email=ndeye.sarr@example.sn",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "by-email"
+              ],
+              "query": [
+                {
+                  "key": "email",
+                  "value": "ndeye.sarr@example.sn"
+                }
+              ]
+            },
+            "description": "KNOWN GAP. GET /api/users/by-email is annotated @PostAuthorize(\"hasRole('ADMIN')\"), so the method RUNS for any signed-in caller and only the response is withheld. UserServiceImpl.findByEmail has no guard of its own, so it throws ResourceNotFoundException for an address nobody holds and returns normally for one somebody does — which the caller reads as 404 against 403. That is an oracle over the whole user base, usable by any customer with an account. Fix: @PreAuthorize rather than @PostAuthorize, so the method never runs. The next row is the other half of the same probe."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A customer asking for a stranger by email learns nothing from the status — 403\", function () {",
+                  "  pm.expect([403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "…and the same request for an address nobody holds answers identically",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/by-email?email=nobody-holds-this-address@example.invalid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "by-email"
+              ],
+              "query": [
+                {
+                  "key": "email",
+                  "value": "nobody-holds-this-address@example.invalid"
+                }
+              ]
+            },
+            "description": "KNOWN GAP, and this is the row that makes the previous one an oracle rather than a refusal: it answers 404 where the existing address answered 403. Two statuses for two facts is a yes/no question anybody with an account may ask about any email address. Both rows must answer the SAME status once the annotation is fixed, whichever status that is."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"…and the same request for an address nobody holds answers identically — 403\", function () {",
+                  "  pm.expect([403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Signing in reveals nothing about whether the account exists",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "The same 401 and the same wording as a real account with the wrong password — which the next row checks against. A login that says \"no such user\" for one and \"wrong password\" for the other is a membership oracle on the front door, and it needs no account to use.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nobody-holds-this-address@example.invalid\",\n  \"password\": \"Whatever123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Signing in reveals nothing about whether the account exists — 401\", function () {",
+                  "  pm.expect([401]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Signing in reveals nothing about whether the account exists — message is \\\"Invalid email or password\\\"\", function () {",
+                  "  const actual = H.get($body, \"message\");",
+                  "  const expected = \"Invalid email or password\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"message\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "…and neither does the wrong password on an account that does",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "The control for the row above. Same status, same message, and deliberately not Modou — his account is locked out by the identity suite, which would answer 403 and make this row pass for the wrong reason.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"ndeye.sarr@example.sn\",\n  \"password\": \"DefinitelyNotTheRightOne123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"…and neither does the wrong password on an account that does — 401\", function () {",
+                  "  pm.expect([401]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"…and neither does the wrong password on an account that does — message is \\\"Invalid email or password\\\"\", function () {",
+                  "  const actual = H.get($body, \"message\");",
+                  "  const expected = \"Invalid email or password\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"message\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "One buyer cannot read another buyer's order, and is not told it exists",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1403",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1403"
+              ]
+            },
+            "description": "Order 1403 is Aminata's; Oliver holds 1401. 404 rather than 403 is the assertion — the row exists, and a 403 here would confirm that to somebody counting order ids."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"One buyer cannot read another buyer's order, and is not told it exists — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "…nor her invoice, which carries a home address and a phone number",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/1403/invoice",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "orders",
+                "1403",
+                "invoice"
+              ]
+            },
+            "description": "The invoice endpoint mints a signed link after proving ownership. Ownership failing must stop the link being minted at all, because the link is then the credential and is deliberately open to anybody holding it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"…nor her invoice, which carries a home address and a phone number — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "…nor an address out of her address book",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/addresses/1050",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "addresses",
+                "1050"
+              ]
+            },
+            "description": "The /me surface takes its subject from the session, so the only thing a path variable can reach here is a row belonging to somebody else. 404, again."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"…nor an address out of her address book — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A customer cannot reach a seller's takings",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vendor/balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vendor",
+                "balance"
+              ]
+            },
+            "description": "/vendor/** is authenticated() at the gate rather than role-gated, so this request passes the filter chain and is refused inside. Asserted here as well as in the role matrix because what is behind it — revenue, margins, a shop's trading position — is worth a row that names it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A customer cannot reach a seller's takings — 401 or 403 or 404\", function () {",
+                  "  pm.expect([401,403,404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A customer cannot open a driver's shipment, which names a recipient",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/driver/shipments/1901",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "driver",
+                "shipments",
+                "1901"
+              ]
+            },
+            "description": "The sharpest data on the platform: a recipient's home address and phone number, belonging to somebody who never agreed to be visible to anybody but the person bringing her parcel."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A customer cannot open a driver's shipment, which names a recipient — 401 or 403 or 404\", function () {",
+                  "  pm.expect([401,403,404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A customer blocking another customer is refused",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/1011/block",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "1011",
+                "block"
+              ]
+            },
+            "description": "Refused by UserServiceImpl.requireAdmin() rather than by the controller annotation: @PostAuthorize runs after the method body, so the annotation alone would report 403 on a block that had already been written. The next row is what proves which of the two actually refused it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blocked\": true,\n  \"fraud\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A customer blocking another customer is refused — 401 or 403\", function () {",
+                  "  pm.expect([401,403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "…and she can still sign in afterwards, which is how we know nothing was written",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "The assertion that makes the row above mean something. A blocked account cannot sign in, so a 200 here says the block never reached the database. If this ever goes red while the row above stays green, the service-layer guard has been removed and @PostAuthorize is reporting a refusal for a write that happened.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"ndeye.sarr@example.sn\",\n  \"password\": \"Sujula123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"…and she can still sign in afterwards, which is how we know nothing was written — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"…and she can still sign in afterwards, which is how we know nothing was written — tokens.accessToken exists\", function () {",
+                  "  const actual = H.get($body, \"tokens.accessToken\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"tokens.accessToken\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A customer cannot delete another account",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/1011/permanent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "1011",
+                "permanent"
+              ]
+            },
+            "description": "Permanent erasure, guarded by @PostAuthorize on the controller and requireAdmin() in the service. The row after this one checks the account is still there."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A customer cannot delete another account — 401 or 403\", function () {",
+                  "  pm.expect([401,403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "…and the account is still there",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Same shape as the block pair: the status of the refusal is not evidence, the state of the world afterwards is.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"ndeye.sarr@example.sn\",\n  \"password\": \"Sujula123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"…and the account is still there — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"…and the account is still there — tokens.user.id is 1011\", function () {",
+                  "  const actual = H.get($body, \"tokens.user.id\");",
+                  "  const expected = 1011;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"tokens.user.id\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An unsigned token claiming ADMIN is refused",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{forgedNoneToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            },
+            "description": "The alg=none attack: a well-formed JWT with the signature segment left empty and the administrator's id in the subject. Nimbus's MACVerifier declares only the HS family, so the algorithm never matches and the token never verifies — but this is the first thing anybody tries against a JWT surface and it is worth a row that fails loudly if the verifier is ever swapped for a permissive one."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function b64(o) {",
+                  "  return CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(JSON.stringify(o)))",
+                  "    .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');",
+                  "}",
+                  "pm.collectionVariables.set('forgedNoneToken',",
+                  "  b64({ alg: 'none', typ: 'JWT' }) + '.' + b64({\"sub\":\"1001\",\"role\":\"ADMIN\",\"iss\":\"sujula-e2e\",\"typ\":\"access\",\"exp\":9999999999,\"sid\":1802}) + '.');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"An unsigned token claiming ADMIN is refused — 401 or 403\", function () {",
+                  "  pm.expect([401,403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A token with one character changed in the signature is refused",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tamperedToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            },
+            "description": "Oliver's real token with its last signature character rotated. Proves the signature is actually verified rather than the claims merely parsed — a decoder that reads the payload without checking the MAC passes every other test in this folder and fails this one."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const real = pm.collectionVariables.get('tokenOliver') || '';",
+                  "const last = real.slice(-1);",
+                  "pm.collectionVariables.set('tamperedToken',",
+                  "  real.slice(0, -1) + (last === 'A' ? 'B' : 'A'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A token with one character changed in the signature is refused — 401 or 403\", function () {",
+                  "  pm.expect([401,403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A refresh token is not accepted where an access token belongs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliverRefresh}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            },
+            "description": "The two credentials are deliberately different kinds of thing — one a signed JWT, the other an opaque random string — and the typ claim is checked on top. A refresh token is long-lived, so accepting one as a bearer credential would hand out a session that never lapses."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A refresh token is not accepted where an access token belongs — 401 or 403\", function () {",
+                  "  pm.expect([401,403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An empty bearer is not a credential",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer "
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            },
+            "description": "The shape a collection produces when a token variable was never captured, and the shape a client produces when a login silently failed. It must be treated as no credential rather than as an empty one that matches an empty stored value."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"An empty bearer is not a credential — 401 or 403\", function () {",
+                  "  pm.expect([401,403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A protected endpoint with no credentials at all answers 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            },
+            "description": "No Authorization header and no session. The caller has not said who they are, so the answer is \"say who you are\" rather than \"you are not allowed\" — a client that reads 403 here has been told that signing in will not help, which is the opposite of true. Before the entry point was configured this answered 403 everywhere, which is what sent somebody to a browser address bar wondering what permission they were missing. The body is asserted too: a refusal made in the filter chain never reaches a @ControllerAdvice, so it used to come back empty while every other failure on this application speaks JSON — a client parsing the documented error shape got nothing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A protected endpoint with no credentials at all answers 401 — 401\", function () {",
+                  "  pm.expect([401]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"A protected endpoint with no credentials at all answers 401 — status is 401\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = 401;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A protected endpoint with no credentials at all answers 401 — error is \\\"Unauthorized\\\"\", function () {",
+                  "  const actual = H.get($body, \"error\");",
+                  "  const expected = \"Unauthorized\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"error\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A protected endpoint with no credentials at all answers 401 — message exists\", function () {",
+                  "  const actual = H.get($body, \"message\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"message\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A protected endpoint with no credentials at all answers 401 — timestamp exists\", function () {",
+                  "  const actual = H.get($body, \"timestamp\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"timestamp\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A credential that does not verify is 401, not 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer not.a.real.token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "users"
+              ]
+            },
+            "description": "The distinction the status is read FROM the security context to get right, rather than from the Authorization header: a header carrying a forged or expired token is a caller who has not identified themselves. Answering 403 here would tell them their credential was accepted and only their role fell short, which is both wrong and a hint worth withholding."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A credential that does not verify is 401, not 403 — 401\", function () {",
+                  "  pm.expect([401]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A GET on a POST-only public endpoint answers 401 rather than admitting it exists",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "description": "The permitAll rule for /auth/register is scoped to POST, so a GET falls through to the /auth/** catch-all and is refused unauthenticated. Not 405: Spring Security decides before the dispatcher ever looks for a handler, so the application never discovers there is no GET mapping. Worth a row because this is exactly what a browser address bar produces, and the answer should read as \"you are not signed in\" rather than as a permissions problem."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A GET on a POST-only public endpoint answers 401 rather than admitting it exists — 401\", function () {",
+                  "  pm.expect([401]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The same endpoint by POST is open to anybody, which is the point of the rule",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "description": "The control for the row above: registration IS reachable without a credential, by the method it is published under. A fresh address each run, because the collection creates no fixtures it then depends on — this account is written and never read.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"security-folder-{{$timestamp}}@example.invalid\",\n  \"password\": \"Sujula123!\",\n  \"firstName\": \"Security\",\n  \"lastName\": \"Folder\",\n  \"phone\": \"+2203100999\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The same endpoint by POST is open to anybody, which is the point of the rule — 200 or 201\", function () {",
+                  "  pm.expect([200,201]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"The same endpoint by POST is open to anybody, which is the point of the rule — accessToken exists\", function () {",
+                  "  const actual = H.get($body, \"accessToken\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"accessToken\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A signed-in caller reaching past their role answers 403, not 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tokenOliver}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/prometheus",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "prometheus"
+              ]
+            },
+            "description": "The other half of the split, and the reason the entry point cannot simply answer 401 everywhere. Oliver said who he is and was believed; what he lacks is the role. Telling him to sign in would send him round a loop he cannot leave."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A signed-in caller reaching past their role answers 403, not 401 — 403\", function () {",
+                  "  pm.expect([403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"A signed-in caller reaching past their role answers 403, not 401 — status is 403\", function () {",
+                  "  const actual = H.get($body, \"status\");",
+                  "  const expected = 403;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"status\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A signed-in caller reaching past their role answers 403, not 401 — error is \\\"Forbidden\\\"\", function () {",
+                  "  const actual = H.get($body, \"error\");",
+                  "  const expected = \"Forbidden\";",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"error\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A signed-in caller reaching past their role answers 403, not 401 — message exists\", function () {",
+                  "  const actual = H.get($body, \"message\");",
+                  "  const expected = {\"$exists\":true};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"message\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A signed-in caller reaching past their role answers 403, not 401 — the body never says \\\"ADMIN\\\" — naming the role that would open it describes the way in\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"ADMIN\") < 0,",
+                  "    'found ' + \"\\\"ADMIN\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A signed-in caller reaching past their role answers 403, not 401 — the body never says \\\"prometheus\\\" — nor should a refusal confirm what it was guarding\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"prometheus\") < 0,",
+                  "    'found ' + \"\\\"prometheus\\\"\" + ' in the response').to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A refusal a service raises itself keeps its own status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Sulayman is blocked and his password is correct. This 403 comes from the application rather than from the filter chain — his credentials were read and found wanting, which is not the same as not presenting any — so the entry point must leave it alone. Asserted here because an entry point applied too widely would turn this into a 401 and tell a blocked user to try signing in again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"sulayman.blocked@example.gm\",\n  \"password\": \"Sujula123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A refusal a service raises itself keeps its own status — 403\", function () {",
+                  "  pm.expect([403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"A refusal a service raises itself keeps its own status — message matches\", function () {",
+                  "  const actual = H.get($body, \"message\");",
+                  "  const expected = {\"$matches\":\"blocked\"};",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"message\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "pm.test(\"A refusal a service raises itself keeps its own status — tokens is withheld\", function () {",
+                  "  const actual = H.get($body, \"tokens\");",
+                  "  pm.expect(actual === undefined || actual === null, \"tokens\" + ' was ' + H.show(actual)).to.be.true;",
+                  "});",
+                  "pm.test(\"A refusal a service raises itself keeps its own status — accessToken is withheld\", function () {",
+                  "  const actual = H.get($body, \"accessToken\");",
+                  "  pm.expect(actual === undefined || actual === null, \"accessToken\" + ' was ' + H.show(actual)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /api/users/login leaves a session cookie behind",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "login"
+              ]
+            },
+            "description": "Establishes the session the next four rows are about. Not an attack in itself — the endpoint is a documented cookie login — but it is the fact that makes the CSRF exemptions reachable, and it is asserted here so that a deployment which removes the cookie login sees these rows change together.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"oliver.bennett@example.co.uk\",\n  \"password\": \"Sujula123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"POST /api/users/login leaves a session cookie behind — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"POST /api/users/login leaves a session cookie behind — id is 1005\", function () {",
+                  "  const actual = H.get($body, \"id\");",
+                  "  const expected = 1005;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"id\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});",
+                  "const cookie = pm.cookies.get('JSESSIONID');",
+                  "pm.test('POST /api/users/login — a JSESSIONID was issued', function () {",
+                  "  pm.expect(cookie, 'no JSESSIONID; the cookie-session login may have been removed').to.be.a('string');",
+                  "});",
+                  "",
+                  "// KNOWN GAP. The session cookie is the credential for every CSRF-exempt write",
+                  "// below, and it goes out as \"JSESSIONID=…; Path=/; HttpOnly\" — no SameSite and",
+                  "// no Secure. HttpOnly is right and keeps it away from script; the two that are",
+                  "// missing are the ones that decide whether a cross-site request carries it at",
+                  "// all, and whether it may travel over plaintext. What stops the forgeries in a",
+                  "// browser today is therefore the browser's own SameSite=Lax default rather",
+                  "// than anything this application states.",
+                  "// Fix: server.servlet.session.cookie.same-site=strict and",
+                  "// server.servlet.session.cookie.secure, driven by the same flag as",
+                  "// sujula.cart.cookie-secure. The same applies to the XSRF-TOKEN cookie, which",
+                  "// is checked alongside it here whenever the response re-issues one.",
+                  "const setCookies = pm.response.headers.all()",
+                  "  .filter(function (h) { return h.key.toLowerCase() === 'set-cookie'; })",
+                  "  .map(function (h) { return h.value; });",
+                  "",
+                  "function attributes(name) {",
+                  "  return setCookies.filter(function (v) { return v.indexOf(name + '=') === 0; }).join(' | ');",
+                  "}",
+                  "",
+                  "const session = attributes('JSESSIONID');",
+                  "pm.test('JSESSIONID — the response issued one, so the checks below have something to read', function () {",
+                  "  pm.expect(session, 'no Set-Cookie for JSESSIONID on the login response').to.not.equal('');",
+                  "});",
+                  "pm.test('JSESSIONID — SameSite is stated rather than left to the browser', function () {",
+                  "  pm.expect(/SameSite=/i.test(session), 'Set-Cookie was: ' + session).to.be.true;",
+                  "});",
+                  "pm.test('JSESSIONID — Secure is stated', function () {",
+                  "  pm.expect(/;\\s*Secure/i.test(session), 'Set-Cookie was: ' + session).to.be.true;",
+                  "});",
+                  "pm.test('JSESSIONID — HttpOnly is stated', function () {",
+                  "  pm.expect(/;\\s*HttpOnly/i.test(session), 'Set-Cookie was: ' + session).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "That session alone authenticates /me, with no bearer token anywhere",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            },
+            "description": "No persona, so no Authorization header: the cookie from the previous request is the only credential. A 200 here is what turns every CSRF-exempt write below into a forgeable one."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"That session alone authenticates /me, with no bearer token anywhere — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"That session alone authenticates /me, with no bearer token anywhere — profile.id is 1005\", function () {",
+                  "  const actual = H.get($body, \"profile.id\");",
+                  "  const expected = 1005;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"profile.id\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "With a session live, a revoked bearer token is not what decides the request",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{tamperedToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            },
+            "description": "JwtAuthenticationFilter returns early when the context already carries an authentication — \"an existing authentication wins\" — so with the cookie session above in place, a garbage bearer token is never even parsed and the request succeeds on the cookie. Deliberate, and not a hole on its own, but it is why the token rows in this folder run BEFORE the session is established: run after, they measure the cookie and pass whatever the token says. It also means revoking a token does not end a session established the other way."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"With a session live, a revoked bearer token is not what decides the request — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"With a session live, a revoked bearer token is not what decides the request — profile.id is 1005\", function () {",
+                  "  const actual = H.get($body, \"profile.id\");",
+                  "  const expected = 1005;",
+                  "  pm.expect(H.matches(actual, expected),",
+                  "    \"profile.id\" + ' was ' + H.show(actual) + ', expected ' + H.describe(expected)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A cookie-authenticated write on /me is refused without a CSRF token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/export",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "export"
+              ]
+            },
+            "description": "KNOWN GAP. /me/** is on the CSRF ignore list, so this request — session cookie, no token, no Authorization header, exactly what a cross-site form produces — is accepted and queues an export of the caller's personal data. The same holds for DELETE /me, DELETE /auth/mfa, POST /auth/logout-all and the whole of /checkout/**. In a browser the JSESSIONID cookie is sent without SameSite, so what stops the attack today is the browser's Lax default rather than anything this application does. Fix: take /auth/**, /me/** and /checkout/** off ignoringRequestMatchers, or stop issuing a cookie session and make the bearer token the only credential.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A cookie-authenticated write on /me is refused without a CSRF token — 403\", function () {",
+                  "  pm.expect([403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nor is a cookie-authenticated sign-out-everywhere",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "logout-all"
+              ]
+            },
+            "description": "KNOWN GAP, same cause as the row above and a sharper consequence: a forged request signs somebody out of every device they own. Denial of service rather than disclosure, but it needs nothing from the attacker except that the victim visit a page.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Nor is a cookie-authenticated sign-out-everywhere — 403\", function () {",
+                  "  pm.expect([403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A CSRF-protected path refuses the same cookie without a token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cart/items",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cart",
+                "items"
+              ]
+            },
+            "description": "The negative control, and the reason the two rows above are findings rather than guesses: /api/cart is NOT on the ignore list, so the identical request shape is refused there. The defence works; it is the exemption list that is wrong.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"variantId\": 1350,\n  \"quantity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A CSRF-protected path refuses the same cookie without a token — 403\", function () {",
+                  "  pm.expect([403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The payment callback refuses a caller with no shared secret",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/callback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "callback"
+              ]
+            },
+            "description": "The endpoint that marks money received. Refused without the secret — but note what the secret is: a fixed string in a header, not a signature over the body and not bound to a timestamp. Anybody who sees one valid callback can replay it, and the header is a bearer credential that leaks into any proxy log it passes. /webhooks/psp/{provider} does this properly and is what new providers should use.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"forged-no-secret\",\n  \"status\": \"PAID\",\n  \"amount\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The payment callback refuses a caller with no shared secret — 401 or 403\", function () {",
+                  "  pm.expect([401,403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A wrong shared secret is refused, and the answer says nothing else",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Sujula-Signature",
+                "value": "not-the-configured-secret"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/callback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "payments",
+                "callback"
+              ]
+            },
+            "description": "Refused, and the body must not distinguish \"wrong secret\" from \"no secret configured\" — telling somebody probing which of the two they got right tells them how to make progress.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"forged-bad-secret\",\n  \"status\": \"PAID\",\n  \"amount\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A wrong shared secret is refused, and the answer says nothing else — 401 or 403\", function () {",
+                  "  pm.expect([401,403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"A wrong shared secret is refused, and the answer says nothing else — the body never says \\\"callback-secret\\\" — a refusal must not name the property that holds the secret\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"callback-secret\") < 0,",
+                  "    'found ' + \"\\\"callback-secret\\\"\" + ' in the response').to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The metrics scrape is not public",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/prometheus",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "prometheus"
+              ]
+            },
+            "description": "Request counts, error rates and timings per endpoint: enough to tell somebody outside when the platform is struggling and which path to press on. Asserted from this folder as well as from 00 because the actuator exposure list and the filter rule are two separate settings and either one alone is not the lock."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The metrics scrape is not public — 401 or 403\", function () {",
+                  "  pm.expect([401,403]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A bad path parameter is reported without a stack trace",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/not-a-number",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "not-a-number"
+              ]
+            },
+            "description": "The commonest accidental disclosure on a Spring application: a type conversion that escapes the handler and returns a trace naming every framework, version and package in the process. A version list is a shopping list for anybody matching it against published advisories."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A bad path parameter is reported without a stack trace — 400\", function () {",
+                  "  pm.expect([400]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"A bad path parameter is reported without a stack trace — the body never says \\\"org.springframework\\\" — a stack trace names the framework and its version\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"org.springframework\") < 0,",
+                  "    'found ' + \"\\\"org.springframework\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A bad path parameter is reported without a stack trace — the body never says \\\"com.sujula\\\" — nor should it map the internal package layout\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"com.sujula\") < 0,",
+                  "    'found ' + \"\\\"com.sujula\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A bad path parameter is reported without a stack trace — the body never says \\\"Caused by\\\" — a chained exception is a stack trace by another name\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"Caused by\") < 0,",
+                  "    'found ' + \"\\\"Caused by\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A bad path parameter is reported without a stack trace — the body never says \\\"jdbc\\\" — and a datasource must never reach an error body\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"jdbc\") < 0,",
+                  "    'found ' + \"\\\"jdbc\\\"\" + ' in the response').to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A quote and a comment in a search term are data, not syntax",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/search?q='%20OR%201=1--",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "' OR 1=1--"
+                }
+              ]
+            },
+            "description": "The browse query is native SQL assembled from constants with every filter bound as a named parameter, so this is a search for a string nobody sells rather than a predicate. Asserted rather than assumed: the file it lives in concatenates SQL fragments, and the day somebody concatenates a value instead of binding it this row is what notices."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A quote and a comment in a search term are data, not syntax — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"A quote and a comment in a search term are data, not syntax — the body never says \\\"SQLGrammarException\\\" — a syntax error means the term reached the parser\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"SQLGrammarException\") < 0,",
+                  "    'found ' + \"\\\"SQLGrammarException\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A quote and a comment in a search term are data, not syntax — the body never says \\\"SQL statement\\\" — as does a JDBC error surfacing in the body\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"SQL statement\") < 0,",
+                  "    'found ' + \"\\\"SQL statement\\\"\" + ' in the response').to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "An absurd page size is refused rather than served",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products/featured?size=100000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products",
+                "featured"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "100000"
+                }
+              ]
+            },
+            "description": "An unbounded page size is two problems at once: a way to pull the whole table through one request, and a way to make the process allocate until it stops. Most controllers clamp; /admin/audit-log, /api/users and /api/vendors build their PageRequest without one, which is worth fixing even though all three are behind a role check."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"An absurd page size is refused rather than served — 400\", function () {",
+                  "  pm.expect([400]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Responses carry the framing and sniffing headers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/config/public",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "config",
+                "public"
+              ]
+            },
+            "description": "X-Frame-Options and X-Content-Type-Options come from Spring Security's defaults and are asserted so that a later customisation of the header writers cannot drop them quietly. Referrer-Policy is NOT a default and is checked separately below."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Responses carry the framing and sniffing headers — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Responses carry the framing and sniffing headers — header X-Frame-Options\", function () {",
+                  "  const actual = pm.response.headers.get(\"X-Frame-Options\");",
+                  "  pm.expect(H.matches(actual, \"DENY\"), \"X-Frame-Options\" + ' was ' + H.show(actual)).to.be.true;",
+                  "});",
+                  "pm.test(\"Responses carry the framing and sniffing headers — header X-Content-Type-Options\", function () {",
+                  "  const actual = pm.response.headers.get(\"X-Content-Type-Options\");",
+                  "  pm.expect(H.matches(actual, \"nosniff\"), \"X-Content-Type-Options\" + ' was ' + H.show(actual)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Responses state a referrer policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/config/public",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "config",
+                "public"
+              ]
+            },
+            "description": "KNOWN GAP. Nothing sets Referrer-Policy, so a browser follows its own default. It matters here because several URLs on this platform ARE credentials — the invoice link, the parcel label QR, /parcels/{trackingCode} — and a referrer header carries the whole path to whatever third party the page loads next. Fix: headers(h -> h.referrerPolicy(SAME_ORIGIN)) in SecurityConfig. Strict-Transport-Security is deliberately not asserted here: Spring emits it only on a secure request and this profile is plain HTTP, so the assertion would be about the test environment rather than about the application."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"Responses state a referrer policy — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"Responses state a referrer policy — header Referrer-Policy\", function () {",
+                  "  const actual = pm.response.headers.get(\"Referrer-Policy\");",
+                  "  pm.expect(H.matches(actual, {\"$exists\":true}), \"Referrer-Policy\" + ' was ' + H.show(actual)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A tracking page is worth nothing to a stranger holding the code",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCQ4T8NHRW6JZY",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCQ4T8NHRW6JZY"
+              ]
+            },
+            "description": "Open on purpose — the recipient has a phone number and nothing else — so the defence is not authentication but what the page is allowed to contain. A first name and a town, and none of the things below."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A tracking page is worth nothing to a stranger holding the code — 200\", function () {",
+                  "  pm.expect([200]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});",
+                  "pm.test(\"A tracking page is worth nothing to a stranger holding the code — the body never says \\\"oliver.bennett@example.co.uk\\\" — the payer's email is not the recipient's business, nor a stranger's\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"oliver.bennett@example.co.uk\") < 0,",
+                  "    'found ' + \"\\\"oliver.bennett@example.co.uk\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A tracking page is worth nothing to a stranger holding the code — the body never says \\\"+2207\\\" — no phone number, in any form\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"+2207\") < 0,",
+                  "    'found ' + \"\\\"+2207\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A tracking page is worth nothing to a stranger holding the code — the body never says \\\"+44\\\" — nor the payer's\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"+44\") < 0,",
+                  "    'found ' + \"\\\"+44\\\"\" + ' in the response').to.be.true;",
+                  "});",
+                  "pm.test(\"A tracking page is worth nothing to a stranger holding the code — the body never says \\\"GBP\\\" — nor what anybody paid\", function () {",
+                  "  pm.expect(H.text(pm.response).indexOf(\"GBP\") < 0,",
+                  "    'found ' + \"\\\"GBP\\\"\" + ' in the response').to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A guessed tracking code is a not-found, and is not told it was close",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCAAAAAAAAAAAA",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCAAAAAAAAAAAA"
+              ]
+            },
+            "description": "Sixteen characters from an unambiguous alphabet is the whole of the credential on this surface, so the only thing the application owes a wrong one is 404 — no hint about length, checksum, or how many parcels are live."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A guessed tracking code is a not-found, and is not told it was close — 404\", function () {",
+                  "  pm.expect([404]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "A recipient instruction without the six digits is refused",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/parcels/PARCQ4T8NHRW6JZY/reschedule",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "parcels",
+                "PARCQ4T8NHRW6JZY",
+                "reschedule"
+              ]
+            },
+            "description": "The tracking code reads the page; the emailed six digits authorise a change. Two credentials rather than one, which is what stops somebody who found a code in a photograph redirecting a parcel. Five wrong guesses burn the code and only three may be issued an hour, so the search space is not brute-forceable.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"000000\",\n  \"preferredWindow\": \"AFTERNOON\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"A recipient instruction without the six digits is refused — 400\", function () {",
+                  "  pm.expect([400]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "The cookie session opened above is thrown away",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-XSRF-TOKEN",
+                "value": "{{csrfToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "users",
+                "logout"
+              ]
+            },
+            "description": "Housekeeping with a reason: newman keeps one cookie jar for the whole run, so a JSESSIONID left behind would authenticate requests a later folder means to send as a guest — and a guest request that quietly succeeds is a green row that tested nothing. Ends the folder, and the run, with no ambient credential."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const H = eval(pm.collectionVariables.get('helpers'));",
+                  "const $body = H.json(pm.response);",
+                  "",
+                  "pm.test(\"The cookie session opened above is thrown away — 200 or 204\", function () {",
+                  "  pm.expect([200,204]).to.include(pm.response.code,",
+                  "    'answered ' + pm.response.code + ': ' + H.text(pm.response).slice(0, 300));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "variable": [
@@ -58211,6 +60303,14 @@
     },
     {
       "key": "tokenFatou",
+      "value": ""
+    },
+    {
+      "key": "forgedNoneToken",
+      "value": ""
+    },
+    {
+      "key": "tamperedToken",
       "value": ""
     },
     {
@@ -58323,6 +60423,14 @@
     },
     {
       "key": "tokenFatouSession",
+      "value": ""
+    },
+    {
+      "key": "tokenOliverRefreshRefresh",
+      "value": ""
+    },
+    {
+      "key": "tokenOliverRefreshSession",
       "value": ""
     }
   ]

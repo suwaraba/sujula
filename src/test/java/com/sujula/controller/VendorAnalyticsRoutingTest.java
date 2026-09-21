@@ -58,16 +58,16 @@ class VendorAnalyticsRoutingTest {
 
     @Test
     void everyAnalyticsAndMoneyRouteRefusesAnAnonymousCaller() throws Exception {
-        mvc.perform(get("/vendor/analytics/overview")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/analytics/sales")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/analytics/products")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/analytics/customers")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/analytics/delivery")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/balance")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/transactions")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/payouts")).andExpect(status().isForbidden());
-        mvc.perform(post("/vendor/payouts/request")).andExpect(status().isForbidden());
-        mvc.perform(get("/vendor/statements/2026-09")).andExpect(status().isForbidden());
+        mvc.perform(get("/vendor/analytics/overview")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/analytics/sales")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/analytics/products")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/analytics/customers")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/analytics/delivery")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/balance")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/transactions")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/payouts")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/vendor/payouts/request")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/vendor/statements/2026-09")).andExpect(status().isUnauthorized());
     }
 
     @Test

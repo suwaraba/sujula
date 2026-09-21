@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.tsbuild/
+*.tsbuildinfo
+.env.local
+.env.*.local
+android/
+ios/

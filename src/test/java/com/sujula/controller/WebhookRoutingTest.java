@@ -138,7 +138,10 @@ class WebhookRoutingTest {
         // It carries request counts, error rates and timings per endpoint —
         // enough to tell somebody outside when the platform is struggling and
         // which path to press on.
-        mvc.perform(get("/actuator/prometheus")).andExpect(status().isForbidden());
+        // 401 for the anonymous scrape — no credential was presented at all —
+        // and 403 for the two below, who said who they were and were told it
+        // does not help.
+        mvc.perform(get("/actuator/prometheus")).andExpect(status().isUnauthorized());
         mvc.perform(get("/actuator/prometheus")
                         .with(authentication(auth(970L, UserRole.VENDOR))))
                 .andExpect(status().isForbidden());

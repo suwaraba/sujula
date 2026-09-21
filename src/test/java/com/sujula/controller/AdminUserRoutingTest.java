@@ -54,11 +54,11 @@ class AdminUserRoutingTest {
 
     @Test
     void theAdminSurfaceIsNotOpen() throws Exception {
-        mvc.perform(get("/admin/users")).andExpect(status().isForbidden());
-        mvc.perform(get("/admin/users/1")).andExpect(status().isForbidden());
+        mvc.perform(get("/admin/users")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/admin/users/1")).andExpect(status().isUnauthorized());
         mvc.perform(post("/admin/users").with(csrf())
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
 
         verify(adminUsers, never()).search(any(), any(), any(), any(), any(), any(), any());
     }

@@ -1,6 +1,9 @@
 package com.sujula.controller;
 
+import java.time.Duration;
 import java.time.LocalDate;
+import java.util.Set;
+import java.util.UUID;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -20,7 +23,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sujula.dto.request.driver.DriverRequests;
+import com.sujula.dto.response.PresignedUploadResponse;
 import com.sujula.dto.response.driver.DriverResponses;
+import com.sujula.exceptions.BadRequestException;
+import com.sujula.service.StorageService;
 import com.sujula.service.driver.DriverCustodyService;
 import com.sujula.service.driver.DriverProfileService;
 import com.sujula.service.idempotency.IdempotencyService;
@@ -57,6 +63,17 @@ public class DriverController {
 
     private static final int MAX_PAGE_SIZE = 100;
 
+    /**
+     * What a phone may put in storage as evidence.
+     *
+     * An allow-list, so a driver's app cannot presign a URL for an HTML page or
+     * a script and have it served back from the platform's own domain.
+     */
+    private static final Set<String> EVIDENCE_TYPES = Set.of("image/jpeg", "image/png", "image/webp");
+
+    /** Long enough to upload a photograph on a bad connection, and no longer. */
+    private static final Duration EVIDENCE_TTL = Duration.ofMinutes(15);
+
     private static final String APPLY = "driver.apply";
     private static final String ACCEPT = "driver.assignment.accept";
     private static final String DECLINE = "driver.assignment.decline";
@@ -73,13 +90,16 @@ public class DriverController {
     private final DriverCustodyService custody;
     private final AuthenticatedCaller caller;
     private final IdempotencyService idempotency;
+    private final StorageService storage;
 
     public DriverController(DriverProfileService profiles, DriverCustodyService custody,
-                            AuthenticatedCaller caller, IdempotencyService idempotency) {
+                            AuthenticatedCaller caller, IdempotencyService idempotency,
+                            StorageService storage) {
         this.profiles = profiles;
         this.custody = custody;
         this.caller = caller;
         this.idempotency = idempotency;
+        this.storage = storage;
     }
 
     // ── The driver ───────────────────────────────────────────────────────────
@@ -325,6 +345,49 @@ public class DriverController {
         return uncached(idempotency.execute(
                 IdempotencyService.scopeFor(userId, SYNC), key, request,
                 200, DriverResponses.SyncResult.class, () -> custody.sync(userId, request)));
+    }
+
+    // ── Evidence ─────────────────────────────────────────────────────────────
+
+    @PostMapping("/evidence/presign")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('DELIVERY')")
+    @Operation(summary = "Somewhere to put the photograph",
+               description = "Hands back a short-lived URL the phone uploads straight to, plus "
+                       + "the public URL that upload will have — which is what goes back on the "
+                       + "custody event as its photoUrl. The bytes never pass through this "
+                       + "service, because bytes that pass through an application server are "
+                       + "bytes in an access log and a heap dump. A delivery is refused without a "
+                       + "photograph, so without this a driver's app cannot close the chain at "
+                       + "all.")
+    public ResponseEntity<PresignedUploadResponse> presignEvidence(
+            Authentication authentication,
+            @RequestParam String contentType) {
+
+        if (!EVIDENCE_TYPES.contains(contentType)) {
+            throw new BadRequestException(
+                    "A photograph is a JPEG, a PNG or a WebP. Allowed: " + EVIDENCE_TYPES);
+        }
+
+        // Named by the driver and a random id, never by shipment or recipient.
+        // An object key is guessable by anyone who knows the scheme, and a key
+        // carrying a shipment reference would let somebody walk a bucket for
+        // pictures of other people's doorways.
+        String filename = "custody-" + caller.userId(authentication) + "-"
+                + UUID.randomUUID() + extensionFor(contentType);
+
+        return uncached(PresignedUploadResponse.builder()
+                .uploadUrl(storage.presignUpload("custody", filename, contentType, EVIDENCE_TTL))
+                .publicUrl(storage.publicUrl("custody", filename))
+                .build());
+    }
+
+    private static String extensionFor(String contentType) {
+        return switch (contentType) {
+            case "image/jpeg" -> ".jpg";
+            case "image/png" -> ".png";
+            case "image/webp" -> ".webp";
+            default -> "";
+        };
     }
 
     // ── Money and history ────────────────────────────────────────────────────

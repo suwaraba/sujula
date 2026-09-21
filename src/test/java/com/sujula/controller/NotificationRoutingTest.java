@@ -56,13 +56,13 @@ class NotificationRoutingTest {
 
     @Test
     void theInboxNeedsAnAccount() throws Exception {
-        mvc.perform(get("/notifications")).andExpect(status().isForbidden());
-        mvc.perform(get("/notifications/preferences")).andExpect(status().isForbidden());
+        mvc.perform(get("/notifications")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/notifications/preferences")).andExpect(status().isUnauthorized());
         mvc.perform(post("/notifications/read-all").with(csrf()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/notifications/devices").with(csrf())
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
 
         verify(inbox, never()).inbox(any(), anyBoolean(), any());
     }

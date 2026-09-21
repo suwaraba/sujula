@@ -13,6 +13,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.sujula.dto.response.driver.DriverResponses;
 import com.sujula.model.constant.ShipmentStatus;
+import com.sujula.service.StorageService;
 import com.sujula.service.driver.DriverCustodyService;
 import com.sujula.service.driver.DriverProfileService;
 
@@ -52,54 +53,70 @@ class DriverRoutingTest {
     @MockitoBean
     private DriverCustodyService custody;
 
+    @MockitoBean
+    private StorageService storage;
+
     private static final String HANDOVER =
             "{\"code\":\"123456\",\"lat\":13.4384,\"lng\":-16.6781,\"photoUrl\":\"https://m.invalid/p.jpg\"}";
 
     // ── Nothing here is open ─────────────────────────────────────────────────
 
+    /**
+     * 401, not 403: the caller presented no credential at all.
+     *
+     * <p>The two are different instructions — "say who you are and try again"
+     * against "signing in will not help" — and a driver's app acts on the
+     * difference. A 401 sends it to refresh its token and then to the sign-in
+     * screen; a 403 on this surface means an account that has applied and has
+     * not been approved yet, which is a waiting screen rather than a login.
+     * Answering the wrong one sends an approved driver to sign in again, or
+     * leaves an applicant staring at a password box.
+     */
     @Test
     void everyDriverRouteRefusesAnAnonymousCaller() throws Exception {
         mvc.perform(post("/driver/profile").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/driver/profile")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/driver/profile")).andExpect(status().isUnauthorized());
         mvc.perform(patch("/driver/profile").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(put("/driver/availability").contentType("application/json")
                         .content("{\"availability\":\"ONLINE\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/location").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/driver/assignments")).andExpect(status().isForbidden());
-        mvc.perform(post("/driver/assignments/1/accept")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/driver/assignments")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/driver/assignments/1/accept")).andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/assignments/1/decline").contentType("application/json")
                         .content("{\"reason\":\"too far\"}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/driver/shipments/1")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/driver/shipments/1")).andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/arrived-at-origin")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/collect")
                         .contentType("application/json").content(HANDOVER))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/deposit-at-pickup")
                         .contentType("application/json").content(HANDOVER))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/deliver")
                         .contentType("application/json").content(HANDOVER))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/delivery-failed")
                         .contentType("application/json").content("{\"reason\":\"NOBODY_HOME\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/request-recipient-code"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/shipments/1/transfer")
                         .contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
         mvc.perform(post("/driver/custody-events/sync")
                         .contentType("application/json").content("{\"events\":[]}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/driver/earnings")).andExpect(status().isForbidden());
-        mvc.perform(get("/driver/history")).andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/driver/earnings")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/driver/history")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/driver/evidence/presign").param("contentType", "image/jpeg"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -225,6 +242,42 @@ class DriverRoutingTest {
                 .andExpect(status().isOk());
 
         verify(profiles).setAvailability(eq(950L), any());
+    }
+
+    // ── Somewhere to put a photograph ────────────────────────────────────────
+
+    @Test
+    void presigningEvidenceNamesTheFileAfterTheCallerAndNeverTheParcel() throws Exception {
+        when(storage.presignUpload(eq("custody"), any(), eq("image/jpeg"), any()))
+                .thenReturn("https://storage.invalid/put");
+        when(storage.publicUrl(eq("custody"), any())).thenReturn("https://cdn.invalid/p.jpg");
+
+        mvc.perform(post("/driver/evidence/presign")
+                        .with(authentication(driverAuth())).with(csrf())
+                        .param("contentType", "image/jpeg"))
+                .andExpect(status().isOk())
+                // The bytes go straight to storage; this response is a pair of
+                // URLs and nothing that belongs in a cache.
+                .andExpect(header().string("Cache-Control",
+                        org.hamcrest.Matchers.containsString("no-store")));
+
+        // The key carries the driver's own id and a random one. A key naming a
+        // shipment would let somebody who knew the scheme walk the bucket for
+        // pictures of other people's doorways.
+        verify(storage).presignUpload(eq("custody"),
+                org.mockito.ArgumentMatchers.startsWith("custody-950-"), eq("image/jpeg"), any());
+    }
+
+    @Test
+    void anEvidenceUploadThatIsNotAPictureIsRefusedBeforeStorageIsAsked() throws Exception {
+        // An allow-list, so a driver's app cannot presign a URL for an HTML page
+        // and have it served back from the platform's own domain.
+        mvc.perform(post("/driver/evidence/presign")
+                        .with(authentication(driverAuth())).with(csrf())
+                        .param("contentType", "text/html"))
+                .andExpect(status().isBadRequest());
+
+        verify(storage, never()).presignUpload(any(), any(), any(), any());
     }
 
     // ── What the responses say about themselves ──────────────────────────────
