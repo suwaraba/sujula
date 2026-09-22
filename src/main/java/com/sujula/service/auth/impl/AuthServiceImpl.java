@@ -15,6 +15,7 @@ import com.sujula.repository.auth.PhoneVerificationRepository;
 import com.sujula.repository.auth.UserSessionRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.service.EmailService;
+import com.sujula.service.notification.SmsSender;
 import com.sujula.service.auth.AuthProperties;
 import com.sujula.service.auth.AuthService;
 import com.sujula.service.auth.TokenService;
@@ -77,6 +78,7 @@ public class AuthServiceImpl implements AuthService {
     private final OAuthExchange oauthExchange;
     private final SessionReplayGuard replayGuard;
     private final Environment environment;
+    private final SmsSender sms;
 
     public AuthServiceImpl(UserRepository users, UserSessionRepository sessions,
                            MfaRecoveryCodeRepository recoveryCodes,
@@ -86,7 +88,7 @@ public class AuthServiceImpl implements AuthService {
                            AuthMapper mapper, AuthProperties properties,
                            LoginAttemptTracker loginAttempts, EmailService emailService,
                            OAuthExchange oauthExchange, SessionReplayGuard replayGuard,
-                           Environment environment) {
+                           Environment environment, SmsSender sms) {
         this.users = users;
         this.sessions = sessions;
         this.recoveryCodes = recoveryCodes;
@@ -102,6 +104,7 @@ public class AuthServiceImpl implements AuthService {
         this.oauthExchange = oauthExchange;
         this.replayGuard = replayGuard;
         this.environment = environment;
+        this.sms = sms;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -305,9 +308,12 @@ public class AuthServiceImpl implements AuthService {
         phoneVerifications.save(challenge);
 
         boolean expose = config.isExposeCodeInResponse() && !isProductionProfile();
-        if (!expose) {
-            // No SMS provider is integrated. Logged at info so a developer can
-            // complete the flow; when a provider exists this is where it is sent.
+        if (sms.isConfigured()) {
+            sms.send(phone, "Your Sujula verification code is " + code + ". It expires in "
+                    + config.getCodeTtl().toMinutes() + " minutes. Do not share it.");
+        } else if (!expose && !isProductionProfile()) {
+            // No SMS provider configured. Logged at info so a developer can
+            // complete the flow — never in production, where logs are shipped.
             log.info("[Auth] Phone verification code for user {} ({}): {}", userId, phone, code);
         }
 

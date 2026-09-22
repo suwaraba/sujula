@@ -61,8 +61,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * What a driver may do to a parcel, and what they may know about it.
@@ -95,6 +97,8 @@ class DriverCustodyServiceTest {
     @Autowired private RecipientDirectives recipientDirectives;
 
     @MockitoBean private EmailService email;
+    // Unconfigured unless a test says otherwise, which is the default deployment.
+    @MockitoBean private com.sujula.service.notification.SmsSender sms;
 
     @Autowired private com.sujula.repository.platform.FeatureFlagRepository featureFlags;
     @Autowired private com.sujula.service.platform.FeatureFlags flags;
@@ -524,6 +528,28 @@ class DriverCustodyServiceTest {
         String code = codes.findAll().stream()
                 .filter(c -> c.getCodeType() == HandoverCodeType.RECIPIENT_RELEASE)
                 .findFirst().orElseThrow().getCode();
+        assertFalse(asked.toString().contains(code), asked.toString());
+    }
+
+    @Test
+    void withAnSmsProviderTheCodeIsTextedToTheRecipientAndStillEmailedToTheBuyer() {
+        collectIt();
+        when(sms.isConfigured()).thenReturn(true);
+        when(sms.send(anyString(), anyString())).thenReturn(true);
+
+        DriverResponses.RecipientCodeRequested asked =
+                custody.requestRecipientCode(driverUser.getId(), shipment.getId());
+
+        String code = codes.findAll().stream()
+                .filter(c -> c.getCodeType() == HandoverCodeType.RECIPIENT_RELEASE)
+                .findFirst().orElseThrow().getCode();
+        // To her own number: she has a phone and nothing else (C5).
+        verify(sms).send(eq("+2203100077"), contains(code));
+        verify(email).sendRecipientReleaseCode(eq("fatou.ceesay@example.es"), anyString(),
+                eq("Isatou Ceesay"), eq("SJL-D-0001"), eq(code), any());
+
+        assertTrue(asked.sent());
+        assertEquals("•••077", asked.sentTo());
         assertFalse(asked.toString().contains(code), asked.toString());
     }
 

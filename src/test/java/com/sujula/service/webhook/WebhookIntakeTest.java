@@ -48,7 +48,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({WebhookIntake.class, WebhookProcessor.class, WebhookProperties.class,
-         WebhookRecorder.class,
+         WebhookRecorder.class, com.sujula.service.reference.CurrencyCatalogue.class,
+         com.sujula.service.reference.ReferenceDataProperties.class,
          WebhookIntakeTest.Json.class})
 class WebhookIntakeTest {
 

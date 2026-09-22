@@ -5,9 +5,10 @@ package com.sujula.model.constant;
  *
  * <p>Three, and the omission is the interesting one: there is no SMS. It would
  * be the obvious channel for this market and it is deliberately absent, because
- * a channel that nothing actually sends on is a preference somebody switches on
- * and then waits for a message that never comes. When there is a sender, there
- * will be a value here.
+ * a channel that only sends on some deployments is a preference somebody
+ * switches on and then waits for a message that never comes. Texts go through
+ * {@link com.sujula.service.notification.SmsSender} instead, for the codes that
+ * somebody needs to finish something — never a preference, so never switched off.
  */
 public enum NotificationChannel {
 

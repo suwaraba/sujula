@@ -2,6 +2,7 @@ package com.sujula.service.notification.impl;
 
 import java.util.List;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
 
 import com.sujula.model.notification.PushDevice;
@@ -23,9 +24,13 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>The log line names the device and not the token. A token in a log file is
  * an address anybody with the log can send that handset a message from.
+ *
+ * <p>The complement of {@link FcmPushSender}'s condition, so exactly one of the
+ * two is ever registered.
  */
 @Slf4j
 @Component
+@ConditionalOnExpression("'${sujula.push.fcm.credentials:}'.length() == 0")
 public class LoggedPushSender implements PushSender {
 
     @Override

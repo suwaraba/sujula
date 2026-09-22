@@ -19,6 +19,7 @@ import com.sujula.repository.PaymentRepository;
 import com.sujula.repository.store.KycDocumentRepository;
 import com.sujula.repository.webhook.WebhookEventRepository;
 import com.sujula.service.NotificationService;
+import com.sujula.service.reference.CurrencyCatalogue;
 
 import lombok.extern.slf4j.Slf4j;
 import tools.jackson.databind.JsonNode;
@@ -54,15 +55,18 @@ public class WebhookProcessor {
     private final KycDocumentRepository kycDocuments;
     private final NotificationService notifications;
     private final ObjectMapper mapper;
+    private final CurrencyCatalogue currencies;
 
     public WebhookProcessor(WebhookEventRepository events, PaymentRepository payments,
                             KycDocumentRepository kycDocuments,
-                            NotificationService notifications, ObjectMapper mapper) {
+                            NotificationService notifications, ObjectMapper mapper,
+                            CurrencyCatalogue currencies) {
         this.events = events;
         this.payments = payments;
         this.kycDocuments = kycDocuments;
         this.notifications = notifications;
         this.mapper = mapper;
+        this.currencies = currencies;
     }
 
     @Transactional
@@ -93,6 +97,15 @@ public class WebhookProcessor {
 
     private void handlePayment(WebhookEvent event, JsonNode body) {
         String type = lower(event.getEventType());
+        if ("stripe".equalsIgnoreCase(event.getProvider())) {
+            if (StripeEvents.awaitingFunds(type, body)) {
+                finish(event, WebhookStatus.IGNORED, null,
+                        "Checkout completed with the payment still pending. The money arrives as "
+                                + "checkout.session.async_payment_succeeded, which is what settles it.");
+                return;
+            }
+            body = StripeEvents.flatten(body, mapper, currencies);
+        }
         String reference = text(body, "reference", "transactionId", "transaction_id",
                 "paymentReference", "payment_reference");
         String providerId = text(body, "id", "paymentId", "payment_id", "intentId", "intent_id");

@@ -21,6 +21,7 @@ Everything in this repository follows from that sentence.
 | **New to the codebase** | [`../CLAUDE.md`](../CLAUDE.md) → [`BACKEND.md`](BACKEND.md) → the code |
 | **Building a client** | [`frontend/README.md`](frontend/README.md) → your app's document |
 | **Testing it by hand** | [`TESTING.md`](TESTING.md) |
+| **Connecting real services (DB, Gmail, SMS, push, R2, Stripe)** | [`INTEGRATIONS.md`](INTEGRATIONS.md) |
 | **Deploying it** | [`SECURITY.md` §9](SECURITY.md#9-the-deployment-checklist) → [`OPERATIONS.md`](OPERATIONS.md) |
 | **Deciding whether to ship** | [`LIMITATIONS.md`](LIMITATIONS.md) → [`CODE-REVIEW.md`](CODE-REVIEW.md) |
 | **Not a specialist, but responsible for security** | [`SECURITY.md`](SECURITY.md) — written from first principles |
@@ -60,6 +61,10 @@ take. Marked 🔴 blocker / 🟠 major / 🟡 known gap / 🔵 improvement, and 
 Profiles, the full configuration reference, database and backups, reverse proxy,
 rate limiting, background jobs, health and metrics, deployment steps, startup
 refusals, troubleshooting and runbooks.
+
+### [`INTEGRATIONS.md`](INTEGRATIONS.md) — Connecting the external services
+Step by step, on free tiers: hosted MySQL, Gmail, Twilio SMS, Firebase push,
+Cloudflare R2 and Stripe test mode, under the `staging` profile and `.env`.
 
 ### [`frontend/`](frontend/README.md) — Front-end technical documents
 `frontend/` holds **five separate client applications** against one API, about
