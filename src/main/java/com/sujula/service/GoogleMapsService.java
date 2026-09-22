@@ -7,7 +7,9 @@ import com.google.maps.model.AddressComponent;
 import com.google.maps.model.AddressComponentType;
 import com.google.maps.model.GeocodingResult;
 import com.google.maps.model.LatLng;
+import com.google.maps.model.LocationType;
 import com.sujula.dto.GeoAddress;
+import com.sujula.model.constant.GeocodeConfidence;
 import com.sujula.exceptions.GeocodingException;
 import org.springframework.stereotype.Service;
 
@@ -87,8 +89,38 @@ public class GoogleMapsService {
                 result.geometry.location.lng,
                 country.longName,        // "Spain"
                 country.shortName,       // "ES"
-                firstOf(index, CITY_FALLBACK)
+                firstOf(index, CITY_FALLBACK),
+                confidenceOf(result)
         );
+    }
+
+    /**
+     * Turns the provider's own account of its precision into ours.
+     *
+     * <p>Google says how it arrived at the pin, and the distinction is the whole
+     * point: ROOFTOP is the building, APPROXIMATE is the town it is in, and a
+     * delivery priced by distance cannot treat those as the same answer. In
+     * Gambia and much of the region APPROXIMATE is the common case, which is why
+     * the address book asks the buyer to confirm the pin rather than pretending.
+     *
+     * <p>A partial match — the geocoder found something, but not what was asked
+     * for — is demoted rather than trusted at face value. It is the result of a
+     * misspelling or a street the provider does not know, and those resolve to
+     * somewhere plausible and wrong.
+     */
+    private static GeocodeConfidence confidenceOf(GeocodingResult result) {
+        LocationType type = result.geometry == null ? null : result.geometry.locationType;
+        GeocodeConfidence confidence = switch (type == null ? LocationType.UNKNOWN : type) {
+            case ROOFTOP -> GeocodeConfidence.EXACT;
+            case RANGE_INTERPOLATED -> GeocodeConfidence.INTERPOLATED;
+            case GEOMETRIC_CENTER -> GeocodeConfidence.CENTROID;
+            default -> GeocodeConfidence.APPROXIMATE;
+        };
+
+        if (result.partialMatch && confidence.atLeast(GeocodeConfidence.INTERPOLATED)) {
+            return GeocodeConfidence.CENTROID;
+        }
+        return confidence;
     }
 
     /** One pass over components instead of repeated nested scans. */

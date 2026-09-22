@@ -48,6 +48,16 @@ public class User {
     @Column(nullable = false)
     private boolean emailVerified = false;
 
+    /**
+     * Whether the number on this account has been proved, not merely typed.
+     *
+     * <p>Worth more than email verification in this market: a phone is how a
+     * courier reaches a buyer and how mobile money identifies a seller, so an
+     * unproved number is a delivery that fails and a payout that goes astray.
+     */
+    @Column(nullable = false)
+    private boolean phoneVerified = false;
+
     @Column(nullable = false)
     @Builder.Default
     private boolean blocked = false;
@@ -79,6 +89,20 @@ public class User {
     private String passwordResetToken;
     private LocalDateTime passwordResetTokenExpiry;
 
+    // ── Brute-force lockout ───────────────────────────────────────────────────
+    // Consecutive failed sign-ins, reset by a successful one or by the lock
+    // expiring. Held on the row rather than in memory so a restart, a redeploy
+    // or a second instance cannot hand an attacker a fresh budget.
+
+    @Column(nullable = false)
+    @Builder.Default
+    private int failedLoginAttempts = 0;
+
+    /** Sign-in is refused until this moment; null when the account is not locked out. */
+    private LocalDateTime lockedUntil;
+
+    private LocalDateTime lastFailedLoginAt;
+
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
     private List<Address> addresses = new ArrayList<>();
@@ -109,10 +133,11 @@ public class User {
 
     
 public User(Long id, String email, String password, String firstName, String lastName, String phone, UserRole role,
-			boolean enabled, boolean emailVerified, boolean blocked, boolean fraud, String profileImageUrl, String preferredCurrency,
+			boolean enabled, boolean emailVerified, boolean phoneVerified, boolean blocked, boolean fraud, String profileImageUrl, String preferredCurrency,
 			String preferredLanguage, String detectedCountryCode, String emailVerificationToken,
 			LocalDateTime emailVerificationTokenExpiry, String passwordResetToken,
-			LocalDateTime passwordResetTokenExpiry, List<Address> addresses, List<Order> orders,
+			LocalDateTime passwordResetTokenExpiry, int failedLoginAttempts, LocalDateTime lockedUntil,
+			LocalDateTime lastFailedLoginAt, List<Address> addresses, List<Order> orders,
 			String totpSecret, boolean totpEnabled, boolean totpVerified,
 			LocalDateTime createdAt, LocalDateTime updatedAt) {
 		this.id = id;
@@ -124,6 +149,7 @@ public User(Long id, String email, String password, String firstName, String las
 		this.role = role;
 		this.enabled = enabled;
 		this.emailVerified = emailVerified;
+		this.phoneVerified = phoneVerified;
 		this.blocked = blocked;
 		this.fraud = fraud;
 		this.profileImageUrl = profileImageUrl;
@@ -134,6 +160,9 @@ public User(Long id, String email, String password, String firstName, String las
 		this.emailVerificationTokenExpiry = emailVerificationTokenExpiry;
 		this.passwordResetToken = passwordResetToken;
 		this.passwordResetTokenExpiry = passwordResetTokenExpiry;
+		this.failedLoginAttempts = failedLoginAttempts;
+		this.lockedUntil = lockedUntil;
+		this.lastFailedLoginAt = lastFailedLoginAt;
 		this.addresses = addresses;
 		this.orders = orders;
 		this.totpSecret = totpSecret;
@@ -257,6 +286,14 @@ public User(Long id, String email, String password, String firstName, String las
 
 	public void setEmailVerified(boolean emailVerified) {
 		this.emailVerified = emailVerified;
+	}
+
+	public boolean isPhoneVerified() {
+		return phoneVerified;
+	}
+
+	public void setPhoneVerified(boolean phoneVerified) {
+		this.phoneVerified = phoneVerified;
 	}
 
 
@@ -384,6 +421,35 @@ public User(Long id, String email, String password, String firstName, String las
 	}
 
 
+
+	public int getFailedLoginAttempts() {
+		return failedLoginAttempts;
+	}
+
+	public void setFailedLoginAttempts(int failedLoginAttempts) {
+		this.failedLoginAttempts = failedLoginAttempts;
+	}
+
+	public LocalDateTime getLockedUntil() {
+		return lockedUntil;
+	}
+
+	public void setLockedUntil(LocalDateTime lockedUntil) {
+		this.lockedUntil = lockedUntil;
+	}
+
+	public LocalDateTime getLastFailedLoginAt() {
+		return lastFailedLoginAt;
+	}
+
+	public void setLastFailedLoginAt(LocalDateTime lastFailedLoginAt) {
+		this.lastFailedLoginAt = lastFailedLoginAt;
+	}
+
+	/** True while a lockout is still in force. */
+	public boolean isLockedOut() {
+		return lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now());
+	}
 
 	@JsonIgnore
 	public List<Address> getAddresses() {

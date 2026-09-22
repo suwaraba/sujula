@@ -44,14 +44,16 @@ public class ProductServiceImpl implements ProductService {
     private final VendorRepository vendorRepository;
     private final ProductVariantRepository variantRepository;
     private final ExchangeRateService exchangeRateService;
+    /** Holds the catalogue write rules; this service reads and delegates. */
+    private final ProductCreateUpdateServiceImpl productWriteService;
 
 
 
 
 
     // ── Browse / search ──────────────────────────────────────────────────────
-    // Every method below ranks results within DEFAULT_RADIUS_KM of (userLat,
-    // userLng) ahead of everything else, then by promotion status and score
+    // Every method below ranks results within DEFAULT_RADIUS_KM of (deliveryLat,
+    // deliveryLng) ahead of everything else, then by promotion status and score
     // (see ProductRepository.RANK_ORDER) — coordinates are optional; passing
     // null lat/lng just falls back to promotion + score ordering.
 
@@ -59,34 +61,34 @@ public class ProductServiceImpl implements ProductService {
 
 //    @Override
 //    @Transactional(readOnly = true)
-//    public Page<ProductCardResponse> findFeaturedProducts(Boolean featured, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+//    public Page<ProductCardResponse> findFeaturedProducts(Boolean featured, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
 //        return productRepository
-//                .findFeaturedProducts(featured, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
-//                .map(product -> ProductCardResponse.from(product, distanceKm(product, userLat, userLng)));
+//                .findFeaturedProducts(featured, deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable)
+//                .map(product -> ProductCardResponse.from(product, distanceKm(product, deliveryLat, deliveryLng)));
 //    }
 //
 //    @Override
 //    @Transactional(readOnly = true)
-//    public Page<ProductCardResponse> findNewArrivalsProducts(String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+//    public Page<ProductCardResponse> findNewArrivalsProducts(String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
 //        return productRepository
-//                .findNewArrivalsProducts(deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
-//                .map(product -> ProductCardResponse.from(product, distanceKm(product, userLat, userLng)));
+//                .findNewArrivalsProducts(deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable)
+//                .map(product -> ProductCardResponse.from(product, distanceKm(product, deliveryLat, deliveryLng)));
 //    }
 //
 //    @Override
 //    @Transactional(readOnly = true)
-//    public Page<ProductCardResponse> findBestSellersProducts(String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+//    public Page<ProductCardResponse> findBestSellersProducts(String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
 //        return productRepository
-//                .findBestSellersProducts(deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
-//                .map(product -> ProductCardResponse.from(product, distanceKm(product, userLat, userLng)));
+//                .findBestSellersProducts(deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable)
+//                .map(product -> ProductCardResponse.from(product, distanceKm(product, deliveryLat, deliveryLng)));
 //    }
 //
 //    @Override
 //    @Transactional(readOnly = true)
-//    public Page<ProductCardResponse> findByCategoryProducts(Long categoryId, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+//    public Page<ProductCardResponse> findByCategoryProducts(Long categoryId, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
 //        return productRepository
-//                .findByCategoryProducts(categoryId, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
-//                .map(product -> ProductCardResponse.from(product, distanceKm(product, userLat, userLng)));
+//                .findByCategoryProducts(categoryId, deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable)
+//                .map(product -> ProductCardResponse.from(product, distanceKm(product, deliveryLat, deliveryLng)));
 //    }
 //
 //    /**
@@ -94,7 +96,7 @@ public class ProductServiceImpl implements ProductService {
 //     */
 //    @Override
 //    @Transactional(readOnly = true)
-//    public Page<ProductCardResponse> findSimilarProducts(Long productId, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+//    public Page<ProductCardResponse> findSimilarProducts(Long productId, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
 //        Product product = productRepository.findById(productId)
 //                .orElseThrow(() -> new ResourceNotFoundException("Product", productId));
 //        Category category = product.getCategory();
@@ -102,26 +104,26 @@ public class ProductServiceImpl implements ProductService {
 //            return Page.empty(pageable);
 //        }
 //        return productRepository
-//                .findSimilarProducts(category.getId(), productId, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
-//                .map(p -> ProductCardResponse.from(p, distanceKm(p, userLat, userLng)));
+//                .findSimilarProducts(category.getId(), productId, deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable)
+//                .map(p -> ProductCardResponse.from(p, distanceKm(p, deliveryLat, deliveryLng)));
 //    }
 //
 //    @Override
 //    @Transactional(readOnly = true)
-//    public Page<ProductCardResponse> searchNearUser(String query, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+//    public Page<ProductCardResponse> searchNearUser(String query, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
 //        return productRepository
-//                .searchNearUser(query, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable)
-//                .map(product -> ProductCardResponse.from(product, distanceKm(product, userLat, userLng)));
+//                .searchNearUser(query, deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable)
+//                .map(product -> ProductCardResponse.from(product, distanceKm(product, deliveryLat, deliveryLng)));
 //    }
 
     /** Great-circle distance (km) between the user and the product, or null if either location is unknown. */
-    private static Double distanceKm(Product product, Double userLat, Double userLng) {
-        if (userLat == null || userLng == null || product.getLatitude() == null || product.getLongitude() == null) {
+    private static Double distanceKm(Product product, Double deliveryLat, Double deliveryLng) {
+        if (deliveryLat == null || deliveryLng == null || product.getLatitude() == null || product.getLongitude() == null) {
             return null;
         }
-        double lat1 = Math.toRadians(userLat);
+        double lat1 = Math.toRadians(deliveryLat);
         double lat2 = Math.toRadians(product.getLatitude());
-        double deltaLng = Math.toRadians(product.getLongitude() - userLng);
+        double deltaLng = Math.toRadians(product.getLongitude() - deliveryLng);
         double cosCentralAngle = Math.sin(lat1) * Math.sin(lat2)
                 + Math.cos(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
         return 6371 * Math.acos(Math.min(1, Math.max(-1, cosCentralAngle)));
@@ -159,98 +161,144 @@ public class ProductServiceImpl implements ProductService {
         Hibernate.initialize(p.getImages());
         Hibernate.initialize(p.getVariants());
         Hibernate.initialize(p.getAttributes());
+        // A variant is described by its option values, and each value by the
+        // option it belongs to ("Size"), so both levels have to be resolved here
+        // rather than lazily inside the response mapper.
+        for (ProductVariant variant : p.getVariants()) {
+            Hibernate.initialize(variant.getSelectedValues());
+            for (ProductOptionValue value : variant.getSelectedValues()) {
+                Hibernate.initialize(value.getOption());
+            }
+        }
         if (p.getVendor() != null) Hibernate.initialize(p.getVendor());
         if (p.getCategory() != null) Hibernate.initialize(p.getCategory());
         if (p.getBrand() != null) Hibernate.initialize(p.getBrand());
     }
 
     @Override
-    public ProductResponse create(Long vendorUserId, ProductRequest request) {
-        return null;
-    }
-
-    @Override
-    public ProductResponse update(Long productId, Long vendorUserId, ProductRequest request) {
-        return null;
-    }
-    @Override
     @Transactional(readOnly = true)
     public ProductResponse findById(Long id) {
         return ProductResponse.from(findProductEntityById(id));
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public ProductResponse findPublishedById(Long id) {
+        Product product = findProductEntityById(id);
+        if (!product.isActive()) {
+            // Unpublishing is how a listing is withdrawn, and order lines still
+            // point at the row, so it is never deleted. To a shopper it has to
+            // look exactly like a product that was never there.
+            throw new ResourceNotFoundException("Product", id);
+        }
+        return ProductResponse.from(product);
+    }
 
     @Override
-    @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    @Transactional(readOnly = true)
+    public Page<ProductResponse> findMyProducts(Long vendorUserId, Pageable pageable) {
+        Vendor vendor = vendorRepository.findByUserId(vendorUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vendor for user", vendorUserId));
+        return productRepository.findByVendorIdOrderByCreatedAtDesc(vendor.getId(), pageable)
+                .map(product -> {
+                    initAssociations(product);
+                    return ProductResponse.from(product);
+                });
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ProductResponse findMineById(Long vendorUserId, Long productId) {
+        Vendor vendor = vendorRepository.findByUserId(vendorUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vendor for user", vendorUserId));
+        Product product = findProductEntityById(productId);
+        if (product.getVendor() == null || !vendor.getId().equals(product.getVendor().getId())) {
+            throw new ResourceNotFoundException("Product", productId);
+        }
+        return ProductResponse.from(product);
+    }
+
+    // ── Writes ───────────────────────────────────────────────────────────────
+    // Delegated rather than reimplemented. The catalogue write rules — ownership,
+    // duplicate names, option/variant rebuilding in the right order — live in one
+    // place; these existed as stubs returning null beside them, and a caller had
+    // no way to tell which of the two it had reached. Authorisation stays on the
+    // delegate, which is where the vendor id is checked against the principal.
+    //
+    // Note the argument order differs between the two: two Longs, silently
+    // swappable, so the mapping is spelled out here once.
+
+    @Override
+    public ProductResponse create(Long vendorUserId, ProductRequest request) {
+        return productWriteService.create(vendorUserId, request);
+    }
+
+    @Override
+    public ProductResponse update(Long productId, Long vendorUserId, ProductRequest request) {
+        return productWriteService.update(vendorUserId, productId, request);
+    }
+
+    @Override
     public void delete(Long productId, Long vendorUserId) {
-
+        productWriteService.delete(vendorUserId, productId);
     }
 
     @Override
-    public ProductImage addImage(Long productId, Long vendorUserId, MultipartFile file, String altText, boolean makeDefault) {
-        return null;
-    }
-
-
-
-    @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
     public ProductImageResponse addImage(Long productId, Long vendorUserId, String imageUrl,
                                          String altText, boolean makeDefault) {
-        return null;
+        return productWriteService.addImage(vendorUserId, productId, imageUrl, altText, makeDefault);
     }
 
-    /**
-     * Delete a product image.
-     * DB record is removed first; the R2 object is then deleted (outside the transaction boundary).
-     */
     @Override
-    @Transactional
-    @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
+    public List<ProductImageResponse> reorderImages(Long productId, Long vendorUserId,
+                                                    List<Long> imageIdsInOrder) {
+        return productWriteService.reorderImages(vendorUserId, productId, imageIdsInOrder);
+    }
+
+    @Override
     public void deleteImage(Long imageId, Long vendorUserId) {
-
+        productWriteService.removeImage(vendorUserId, imageId);
     }
 
     @Override
-    public ProductImage setDefaultImage(Long imageId, Long vendorUserId) {
-        return null;
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public Page<ProductCardResponse> findFeaturedProducts(Boolean featured, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
-        Page<Product> products = productRepository
-                .findFeaturedProducts(featured, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable);
-        Map<String, BigDecimal> rates = ratesFor(products, currency);
-        return products.map(product -> toCardResponse(product, distanceKm(product, userLat, userLng), currency, rates));
+    public ProductImageResponse setDefaultImage(Long imageId, Long vendorUserId) {
+        return productWriteService.setDefaultImage(vendorUserId, imageId);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Page<ProductCardResponse> findNewArrivalsProducts(String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+    public Page<ProductCardResponse> findFeaturedProducts(Boolean featured, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
         Page<Product> products = productRepository
-                .findNewArrivalsProducts(deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable);
+                .findFeaturedProducts(featured, deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable);
         Map<String, BigDecimal> rates = ratesFor(products, currency);
-        return products.map(product -> toCardResponse(product, distanceKm(product, userLat, userLng), currency, rates));
+        return products.map(product -> toCardResponse(product, distanceKm(product, deliveryLat, deliveryLng), currency, rates));
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Page<ProductCardResponse> findBestSellersProducts(String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+    public Page<ProductCardResponse> findNewArrivalsProducts(String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
         Page<Product> products = productRepository
-                .findBestSellersProducts(deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable);
+                .findNewArrivalsProducts(deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable);
         Map<String, BigDecimal> rates = ratesFor(products, currency);
-        return products.map(product -> toCardResponse(product, distanceKm(product, userLat, userLng), currency, rates));
+        return products.map(product -> toCardResponse(product, distanceKm(product, deliveryLat, deliveryLng), currency, rates));
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Page<ProductCardResponse> findByCategoryProducts(Long categoryId, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+    public Page<ProductCardResponse> findBestSellersProducts(String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
         Page<Product> products = productRepository
-                .findByCategoryProducts(categoryId, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable);
+                .findBestSellersProducts(deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable);
         Map<String, BigDecimal> rates = ratesFor(products, currency);
-        return products.map(product -> toCardResponse(product, distanceKm(product, userLat, userLng), currency, rates));
+        return products.map(product -> toCardResponse(product, distanceKm(product, deliveryLat, deliveryLng), currency, rates));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<ProductCardResponse> findByCategoryProducts(Long categoryId, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
+        Page<Product> products = productRepository
+                .findByCategoryProducts(categoryId, deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable);
+        Map<String, BigDecimal> rates = ratesFor(products, currency);
+        return products.map(product -> toCardResponse(product, distanceKm(product, deliveryLat, deliveryLng), currency, rates));
     }
 
     /**
@@ -258,7 +306,7 @@ public class ProductServiceImpl implements ProductService {
      */
     @Override
     @Transactional(readOnly = true)
-    public Page<ProductCardResponse> findSimilarProducts(Long productId, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+    public Page<ProductCardResponse> findSimilarProducts(Long productId, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new ResourceNotFoundException("Product", productId));
         Category category = product.getCategory();
@@ -266,18 +314,18 @@ public class ProductServiceImpl implements ProductService {
             return Page.empty(pageable);
         }
         Page<Product> products = productRepository
-                .findSimilarProducts(category.getId(), productId, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable);
+                .findSimilarProducts(category.getId(), productId, deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable);
         Map<String, BigDecimal> rates = ratesFor(products, currency);
-        return products.map(p -> toCardResponse(p, distanceKm(p, userLat, userLng), currency, rates));
+        return products.map(p -> toCardResponse(p, distanceKm(p, deliveryLat, deliveryLng), currency, rates));
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Page<ProductCardResponse> searchNearUser(String query, String deliveryCountry, String currency, Double userLat, Double userLng, Pageable pageable) {
+    public Page<ProductCardResponse> searchNearUser(String query, String deliveryCountry, String currency, Double deliveryLat, Double deliveryLng, Pageable pageable) {
         Page<Product> products = productRepository
-                .searchNearUser(query, deliveryCountry, userLat, userLng, DEFAULT_RADIUS_KM, pageable);
+                .searchNearUser(query, deliveryCountry, deliveryLat, deliveryLng, DEFAULT_RADIUS_KM, pageable);
         Map<String, BigDecimal> rates = ratesFor(products, currency);
-        return products.map(product -> toCardResponse(product, distanceKm(product, userLat, userLng), currency, rates));
+        return products.map(product -> toCardResponse(product, distanceKm(product, deliveryLat, deliveryLng), currency, rates));
     }
 
     /**

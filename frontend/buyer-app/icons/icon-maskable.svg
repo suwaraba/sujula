@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Sujula">
+  <rect width="512" height="512" fill="#0f3d2e"/>
+  <path d="M256 150c-40 0-72 32-72 72 0 54 72 134 72 134s72-80 72-134c0-40-32-72-72-72z"
+        fill="none" stroke="#fff" stroke-width="24" stroke-linejoin="round"/>
+  <circle cx="256" cy="222" r="26" fill="#fff"/>
+</svg>

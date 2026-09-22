@@ -83,7 +83,19 @@ public class PickupPoint {
 
     private String state;
 
-    @Column(nullable = false)
+    /**
+     * Nullable, because most addresses in this market do not have one.
+     *
+     * <p>Was NOT NULL, which forced every Gambian counter to store an empty
+     * string - the seed already worked around it that way, which is the tell. A
+     * constraint every real row has to lie to satisfy is a constraint that
+     * enforces nothing and hides the one case where a postal code is genuinely
+     * missing versus genuinely blank.
+     *
+     * <p>This is also why {@code latitude} and {@code longitude} are required on
+     * an application while a postal code is not: the position is what a driver
+     * navigates to, and it is the field that actually exists here.
+     */
     private String postalCode;
 
     @Column(nullable = false, length = 2)
@@ -103,6 +115,74 @@ public class PickupPoint {
 
     /** Free-text operating hours: "Mon–Fri 08:00–20:00, Sat 09:00–16:00" */
     private String openingHours;
+
+    // ── Capacity ─────────────────────────────────────────────────────────────
+    //
+    // A pickup point here is usually a shop counter or a back room, not a depot.
+    // Capacity is a real physical limit measured in parcels somebody can find
+    // again, and a point that keeps accepting past it is a point where things go
+    // missing.
+
+    /** How many parcels this counter can hold at once. */
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer capacity = 50;
+
+    /**
+     * How many are on the shelf right now.
+     *
+     * <p>Derived from the parcels stored here and kept on the row so the public
+     * search does not need a join per result. {@code PickupCounter} is the only
+     * writer, and it recounts rather than increments - a counter that is nudged
+     * drifts, and what it drifts into is accepting parcels there is no room for.
+     */
+    @Setter(lombok.AccessLevel.NONE)
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer storedParcels = 0;
+
+    // ── Closing for a while ──────────────────────────────────────────────────
+
+    /**
+     * Shut until this moment, without being shut down.
+     *
+     * <p>Distinct from {@link #active} and from {@link #status}, and all three
+     * matter. Status is what the platform decided, active is whether the point
+     * exists at all, and this is the operator saying they are away for a funeral
+     * or it is Koriteh. A point closed this way keeps the parcels it already has
+     * and stops being offered new ones.
+     */
+    private LocalDateTime closedUntil;
+
+    @Column(length = 300)
+    private String closureReason;
+
+    // ── Storage and money ────────────────────────────────────────────────────
+
+    /**
+     * How long a parcel may sit before it goes back to the seller.
+     *
+     * <p>Per point rather than platform-wide: a counter in a market with no
+     * spare shelf needs a shorter window than one in a shop with a store room,
+     * and a deadline nobody can meet is a deadline that gets ignored.
+     */
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer storageDays = 7;
+
+    /**
+     * What the operator earns for handling one parcel, in their own currency.
+     *
+     * <p>Frozen onto each parcel when it is accepted rather than read at payout,
+     * so an operator who took a parcel at one rate is paid that rate.
+     */
+    @Column(precision = 12, scale = 2)
+    @Builder.Default
+    private BigDecimal commissionPerParcel = BigDecimal.ZERO;
+
+    @Column(length = 3)
+    @Builder.Default
+    private String commissionCurrency = "GMD";
 
     @Column(nullable = false)
     @Builder.Default
@@ -138,6 +218,34 @@ public class PickupPoint {
 
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+
+    /**
+     * Whether this counter can take another parcel today.
+     *
+     * <p>Four separate questions, and a point fails on any one of them: it has
+     * to be approved, switched on, not closed for the week, and have shelf
+     * space. Collapsing them into one flag is how a suspended point keeps
+     * receiving goods.
+     */
+    public boolean canAcceptParcels() {
+        return status == PartnerStatus.APPROVED
+                && active
+                && !isTemporarilyClosed()
+                && hasSpace();
+    }
+
+    public boolean isTemporarilyClosed() {
+        return closedUntil != null && closedUntil.isAfter(LocalDateTime.now());
+    }
+
+    public boolean hasSpace() {
+        return storedParcels == null || capacity == null || storedParcels < capacity;
+    }
+
+    /** Set by {@code PickupCounter} after recounting. Never incremented in place. */
+    public void applyStoredCount(int counted) {
+        this.storedParcels = counted;
+    }
 
     // ── Package-private helpers ───────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 package com.sujula.repository.delivery;
 
-import com.sujula.model.HandoverCode;
-import com.sujula.model.enums.HandoverCodeType;
+import com.sujula.model.constant.HandoverCodeType;
+import com.sujula.model.delivery.HandoverCode;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -41,4 +41,84 @@ public interface HandoverCodeRepository extends JpaRepository<HandoverCode, Long
             Long deliveryId, HandoverCodeType codeType, String code, LocalDateTime now);
 
     List<HandoverCode> findByDeliveryId(Long deliveryId);
+
+    // ── Vendor release codes ─────────────────────────────────────────────────
+
+    /**
+     * The live release code for a vendor order, if there is one.
+     *
+     * <p>At most one is live at a time: reissuing invalidates the previous, so a
+     * code that has leaked is dead rather than one of several that all work.
+     */
+    @Query("SELECT h FROM HandoverCode h WHERE h.vendorOrder.id = :vendorOrderId "
+         + "AND h.codeType = com.sujula.model.constant.HandoverCodeType.VENDOR_RELEASE "
+         + "AND h.used = FALSE AND h.invalidatedAt IS NULL "
+         + "ORDER BY h.createdAt DESC LIMIT 1")
+    Optional<HandoverCode> findLiveReleaseCode(@Param("vendorOrderId") Long vendorOrderId);
+
+    /**
+     * The code a driver is presenting, matched against the live one only.
+     *
+     * <p>Scoped to unused, un-invalidated and unexpired in the query rather than
+     * checked afterwards, because a check after the fact is the one that ships
+     * missing.
+     */
+    @Query("SELECT h FROM HandoverCode h WHERE h.vendorOrder.id = :vendorOrderId "
+         + "AND h.codeType = com.sujula.model.constant.HandoverCodeType.VENDOR_RELEASE "
+         + "AND h.code = :code AND h.used = FALSE AND h.invalidatedAt IS NULL "
+         + "AND h.expiresAt > :now")
+    Optional<HandoverCode> findPresentedReleaseCode(@Param("vendorOrderId") Long vendorOrderId,
+                                                    @Param("code") String code,
+                                                    @Param("now") java.time.LocalDateTime now);
+
+    /**
+     * How many release codes have been issued for this slice since a moment.
+     *
+     * <p>What the rate limit reads. Counting the rows rather than a counter on
+     * the vendor order means the limit cannot be reset by anything that forgets
+     * to increment.
+     */
+    @Query("SELECT COUNT(h) FROM HandoverCode h WHERE h.vendorOrder.id = :vendorOrderId "
+         + "AND h.codeType = com.sujula.model.constant.HandoverCodeType.VENDOR_RELEASE "
+         + "AND h.createdAt > :since")
+    long countReleaseCodesSince(@Param("vendorOrderId") Long vendorOrderId,
+                                @Param("since") java.time.LocalDateTime since);
+
+    @Query("SELECT h FROM HandoverCode h WHERE h.vendorOrder.id = :vendorOrderId "
+         + "AND h.codeType = com.sujula.model.constant.HandoverCodeType.VENDOR_RELEASE "
+         + "AND h.used = FALSE AND h.invalidatedAt IS NULL")
+    List<HandoverCode> findLiveReleaseCodes(@Param("vendorOrderId") Long vendorOrderId);
+
+    // ── Shipment codes ───────────────────────────────────────────────────────
+
+    /**
+     * The codes that would open this handover right now.
+     *
+     * <p>Used, invalidated and expired are all filtered in the query rather than
+     * afterwards, because a check after the fact is the one that ships missing —
+     * and here the thing it would let through is a parcel.
+     *
+     * <p>Returns a list rather than one row on purpose: there should be a single
+     * live code, but "should" is not a guarantee across two concurrent issues,
+     * and a caller that silently took the first would let the other keep working.
+     */
+    @Query("SELECT h FROM HandoverCode h WHERE h.shipment.id = :shipmentId "
+         + "AND h.codeType = :codeType AND h.used = FALSE AND h.invalidatedAt IS NULL "
+         + "AND h.expiresAt > :now ORDER BY h.createdAt DESC")
+    List<HandoverCode> findLiveForShipment(@Param("shipmentId") Long shipmentId,
+                                           @Param("codeType") HandoverCodeType codeType,
+                                           @Param("now") LocalDateTime now);
+
+    /**
+     * How many codes of a kind have been issued for a parcel lately.
+     *
+     * <p>What the rate limit on asking for a recipient's code reads. Counts the
+     * rows rather than a counter, so nothing that forgets to increment can reset
+     * it — and so a driver cannot get the buyer emailed repeatedly.
+     */
+    @Query("SELECT COUNT(h) FROM HandoverCode h WHERE h.shipment.id = :shipmentId "
+         + "AND h.codeType = :codeType AND h.createdAt > :since")
+    long countForShipmentSince(@Param("shipmentId") Long shipmentId,
+                               @Param("codeType") HandoverCodeType codeType,
+                               @Param("since") LocalDateTime since);
 }

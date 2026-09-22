@@ -4,21 +4,28 @@ package com.sujula.service.impl;
 
 import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.exceptions.BadRequestException;
+import com.sujula.model.constant.AuditAction;
 import com.sujula.model.constant.UserRole;
 
 import com.sujula.dto.request.UserRequest;
 import com.sujula.dto.response.user.UserResponse;
 import com.sujula.model.user.User;
 import com.sujula.repository.user.UserRepository;
+import com.sujula.service.AuditService;
 import com.sujula.service.EmailService;
 import com.sujula.service.GeoService;
 import com.sujula.service.UserService;
+import com.sujula.service.security.LoginAttemptProperties;
+import com.sujula.service.security.LoginAttemptTracker;
 import com.sujula.util.Utils;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
@@ -30,9 +37,7 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import java.util.Base64;
 import java.util.Currency;
 import java.util.List;
 import java.util.Locale;
@@ -44,18 +49,97 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
     private final GeoService geoService;
+    private final AuditService auditService;
+    private final LoginAttemptTracker loginAttempts;
+    private final LoginAttemptProperties loginAttemptProperties;
 
-    public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder, EmailService emailService, GeoService geoService) {
+    /**
+     * Hash of a value nobody knows, verified against when the email is unknown.
+     *
+     * <p>Without it, a miss returns as fast as the lookup while a hit pays for a
+     * BCrypt comparison, and that difference alone tells an attacker which
+     * addresses are registered.
+     */
+    private final String absentUserHash;
+
+    public UserServiceImpl(UserRepository userRepository, PasswordEncoder passwordEncoder, EmailService emailService,
+                           GeoService geoService, AuditService auditService,
+                           LoginAttemptTracker loginAttempts,
+                           LoginAttemptProperties loginAttemptProperties) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.emailService = emailService;
         this.geoService = geoService;
+        this.auditService = auditService;
+        this.loginAttempts = loginAttempts;
+        this.loginAttemptProperties = loginAttemptProperties;
+        this.absentUserHash = passwordEncoder.encode(Utils.generateSecureToken());
     }
 
-    // Characters used for random password generation — no ambiguous chars (0/O, 1/l/I)
-    private static final String CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#$!";
-    private static final int PWD_LENGTH = 12;
-    private static final SecureRandom RANDOM = new SecureRandom();
+    @Override
+    @Transactional(readOnly = true)
+    public UserResponse login(String email, String password) {
+        if (email == null || email.isBlank() || password == null || password.isEmpty()) {
+            throw new BadCredentialsException(INVALID_CREDENTIALS);
+        }
+
+        User user = userRepository.findByEmailIgnoreCase(email.trim()).orElse(null);
+        if (user == null) {
+            passwordEncoder.matches(password, absentUserHash);
+            throw new BadCredentialsException(INVALID_CREDENTIALS);
+        }
+        if (!passwordEncoder.matches(password, user.getPassword())) {
+            // Counted in its own transaction — see LoginAttemptTracker.
+            loginAttempts.recordFailure(user.getId());
+            throw new BadCredentialsException(INVALID_CREDENTIALS);
+        }
+
+        // Everything below is reported only once the password checks out:
+        // telling someone an account is blocked, or locked, before they prove it
+        // is theirs would confirm the address is registered.
+        requireNotLockedOut(user);
+        requireUsableAccount(user);
+
+        loginAttempts.recordSuccess(user.getId());
+        authenticate(user, getCurrentRequest());
+        return UserResponse.toResponse(user);
+    }
+
+    /**
+     * Refuses an account the platform has shut out.
+     *
+     * <p>{@code blocked} and {@code fraud} are moderation decisions and
+     * {@code enabled} an administrative one; all three mean the same thing at
+     * the door, and this is the one place that enforces them.
+     */
+    /**
+     * Refuses an account that has spent its failed-attempt budget.
+     *
+     * <p>The right password is refused too — that is the entire point — but the
+     * owner is told how long they have to wait rather than being left to guess
+     * why a password they know is being rejected.
+     */
+    private void requireNotLockedOut(User user) {
+        if (!user.isLockedOut()) {
+            return;
+        }
+        long minutes = Math.max(1, java.time.Duration.between(
+                LocalDateTime.now(), user.getLockedUntil()).toMinutes() + 1);
+        throw new LockedException("Too many failed sign-in attempts. Try again in "
+                + minutes + (minutes == 1 ? " minute." : " minutes."));
+    }
+
+    private void requireUsableAccount(User user) {
+        if (!user.isEnabled()) {
+            throw new DisabledException("This account has been disabled. Please contact support.");
+        }
+        if (user.isBlocked() || user.isFraud()) {
+            throw new LockedException("This account has been blocked. Please contact support.");
+        }
+    }
+
+    private static final String INVALID_CREDENTIALS = "Invalid email or password";
+
 
     @Override
     public UserResponse getCurrentUser(Long userId) {
@@ -138,7 +222,8 @@ public class UserServiceImpl implements UserService {
         requireAdmin();
         User user = findUserEntityById(id);
         user.setEnabled(false);
-        userRepository.save(user);
+        User saved = userRepository.save(user);
+        audit(AuditAction.USER_DELETED, saved, "Account deleted (disabled, history kept)");
     }
 
     @Override
@@ -178,9 +263,21 @@ public class UserServiceImpl implements UserService {
     public UserResponse blockUser(Long id, boolean blocked, boolean fraud) {
         requireAdmin();
         User user = findUserEntityById(id);
+        boolean wasBlocked = user.isBlocked();
+        boolean wasFraud = user.isFraud();
         user.setBlocked(blocked);
         user.setFraud(fraud);
-        return UserResponse.toResponse(userRepository.save(user));
+        User saved = userRepository.save(user);
+
+        if (blocked != wasBlocked) {
+            audit(blocked ? AuditAction.USER_BLOCKED : AuditAction.USER_UNBLOCKED, saved,
+                    blocked ? "Account blocked" : "Account unblocked");
+        }
+        if (fraud != wasFraud) {
+            audit(fraud ? AuditAction.USER_FRAUD_FLAGGED : AuditAction.USER_FRAUD_CLEARED, saved,
+                    fraud ? "Flagged as fraudulent" : "Fraud flag cleared");
+        }
+        return UserResponse.toResponse(saved);
     }
 
     @Override
@@ -188,8 +285,24 @@ public class UserServiceImpl implements UserService {
     public UserResponse unblockUser(Long id) {
         requireAdmin();
         User user = findUserEntityById(id);
+        if (!user.isBlocked()) {
+            return UserResponse.toResponse(user);
+        }
         user.setBlocked(false);
-        return UserResponse.toResponse(userRepository.save(user));
+        User saved = userRepository.save(user);
+        audit(AuditAction.USER_UNBLOCKED, saved, "Account unblocked");
+        return UserResponse.toResponse(saved);
+    }
+
+    @Override
+    @Transactional
+    public UserResponse unlockUser(Long id) {
+        requireAdmin();
+        User user = findUserEntityById(id);
+        loginAttempts.clear(user);
+        User saved = userRepository.save(user);
+        audit(AuditAction.USER_UNLOCKED, saved, "Sign-in lockout lifted");
+        return UserResponse.toResponse(saved);
     }
 
     @Override
@@ -197,8 +310,14 @@ public class UserServiceImpl implements UserService {
     public UserResponse markFraud(Long id, boolean fraud) {
         requireAdmin();
         User user = findUserEntityById(id);
+        if (user.isFraud() == fraud) {
+            return UserResponse.toResponse(user);
+        }
         user.setFraud(fraud);
-        return UserResponse.toResponse(userRepository.save(user));
+        User saved = userRepository.save(user);
+        audit(fraud ? AuditAction.USER_FRAUD_FLAGGED : AuditAction.USER_FRAUD_CLEARED, saved,
+                fraud ? "Flagged as fraudulent" : "Fraud flag cleared");
+        return UserResponse.toResponse(saved);
     }
 
     @Override
@@ -208,6 +327,7 @@ public class UserServiceImpl implements UserService {
         User user = findUserEntityById(id);
         user.setEnabled(true);
         User saved = userRepository.save(user);
+        audit(AuditAction.USER_ENABLED, saved, "Account enabled");
         emailService.sendAccountStatusChangeEmail(saved.getEmail(), saved.getFullName(), true, "Account enabled");
         return UserResponse.toResponse(saved);
     }
@@ -219,6 +339,7 @@ public class UserServiceImpl implements UserService {
         User user = findUserEntityById(id);
         user.setEnabled(false);
         User saved = userRepository.save(user);
+        audit(AuditAction.USER_DISABLED, saved, "Account disabled");
         emailService.sendAccountStatusChangeEmail(saved.getEmail(), saved.getFullName(), false, "Account disabled");
         return UserResponse.toResponse(saved);
     }
@@ -277,7 +398,7 @@ public class UserServiceImpl implements UserService {
                 return;
             }
 
-            user.setPasswordResetToken(generateSecureToken());
+            user.setPasswordResetToken(Utils.generateSecureToken());
             user.setPasswordResetTokenExpiry(LocalDateTime.now().plusHours(24));
             User saved = userRepository.save(user);
             emailService.sendPasswordResetEmail(saved.getEmail(), saved.getFullName(), saved.getPasswordResetToken());
@@ -323,6 +444,9 @@ public class UserServiceImpl implements UserService {
     public void deleteAccountPermanently(Long id) {
         requireAdmin();
         User user = findUserEntityById(id);
+        // Recorded first: once the row is gone this entry is the only evidence
+        // the account ever existed, or that anyone decided to remove it.
+        audit(AuditAction.USER_PURGED, user, "Account permanently deleted");
         userRepository.delete(user);
     }
 
@@ -395,6 +519,10 @@ public class UserServiceImpl implements UserService {
         });
     }
 
+    private void audit(AuditAction action, User target, String summary) {
+        auditService.record(action, "USER", target.getId(), target.getEmail(), summary);
+    }
+
     private Long getAuthenticatedUserId() {
         SecurityContext securityContext = SecurityContextHolder.getContext();
         if (securityContext.getAuthentication() == null) {
@@ -430,12 +558,6 @@ public class UserServiceImpl implements UserService {
         }
     }
 
-    private String generateSecureToken() {
-        byte[] bytes = new byte[32];
-        RANDOM.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
     private void validatePasswordStrength(String password) {
         if (password == null || password.length() < 8 || password.length() > 72) {
             throw new BadRequestException("Password must be between 8 and 72 characters");
@@ -461,7 +583,13 @@ public class UserServiceImpl implements UserService {
         SecurityContextHolder.setContext(securityContext);
 
         if (request != null) {
-            request.getSession(true).setAttribute(
+            HttpSession session = request.getSession(true);
+            // Rotate the session id on the way in. Spring Security applies
+            // fixation protection inside its own login filters, and this context
+            // is written straight to the session instead — so an id an attacker
+            // planted before sign-in would otherwise stay valid after it.
+            request.changeSessionId();
+            session.setAttribute(
                     HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY,
                     securityContext
             );

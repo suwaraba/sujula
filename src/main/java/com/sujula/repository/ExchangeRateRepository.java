@@ -29,4 +29,27 @@ public interface ExchangeRateRepository extends JpaRepository<ExchangeRate, Long
     List<ExchangeRate> findLatestRates(
             @Param("currency") String currency,
             @Param("fromCurrencies") Collection<String> fromCurrencies);
+
+    /**
+     * Rate history, for explaining a figure somebody was charged.
+     *
+     * <p>Every row ever recorded rather than the latest, because the question
+     * this table exists to answer is about the past: an order converted in March
+     * carries a rate, and somebody eventually asks where that rate came from.
+     */
+    @Query("SELECT r FROM ExchangeRate r "
+         + "WHERE (:currency IS NULL OR UPPER(r.fromCurrency) = UPPER(:currency) "
+         + "     OR UPPER(r.currency) = UPPER(:currency)) "
+         + "AND (:from IS NULL OR r.rateDate >= :from) "
+         + "AND (:to IS NULL OR r.rateDate <= :to) "
+         + "ORDER BY r.rateDate DESC, r.id DESC")
+    org.springframework.data.domain.Page<ExchangeRate> history(
+            @Param("currency") String currency,
+            @Param("from") java.time.LocalDate from,
+            @Param("to") java.time.LocalDate to,
+            org.springframework.data.domain.Pageable pageable);
+
+    /** Every pair the platform has ever recorded a rate for. */
+    @Query("SELECT DISTINCT r.fromCurrency, r.currency FROM ExchangeRate r")
+    List<Object[]> knownPairs();
 }

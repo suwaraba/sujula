@@ -68,6 +68,23 @@ public class EmailServiceImpl implements EmailService {
 
     @Async
     @Override
+    public void sendFailedSignInWarningEmail(String toEmail, String fullName, int attempts, int remainingAttempts) {
+        send(toEmail,
+                "Failed sign-in attempts on your Sujula account",
+                "Hi " + fullName + ",\n\n"
+                + "There have been " + attempts + " failed attempts to sign in to your Sujula account.\n\n"
+                + "If this was you, you can reset your password here:\n\n"
+                + frontendUrl + "/auth/forgot-password\n\n"
+                + "If it was not you, your password has not been changed and there is nothing you need to do — "
+                + "though a stronger password is worth considering.\n\n"
+                + "After " + remainingAttempts + " more failed "
+                + (remainingAttempts == 1 ? "attempt" : "attempts")
+                + ", the account will be locked for a short while.\n\n"
+                + "The Sujula Team");
+    }
+
+    @Async
+    @Override
     public void sendOrderConfirmationEmail(String toEmail, String fullName, String orderNumber) {
         send(toEmail,
                 "Order confirmed — " + orderNumber,
@@ -295,5 +312,90 @@ public class EmailServiceImpl implements EmailService {
         int atIdx = email.indexOf('@');
         if (atIdx <= 0) return "***";
         return email.charAt(0) + "***" + email.substring(atIdx);
+    }
+
+    @Async
+    @Override
+    public void sendRecipientReleaseCode(String toEmail, String buyerName, String recipientName,
+                                         String orderNumber, String code,
+                                         java.time.LocalDateTime expiresAt) {
+        send(toEmail,
+                "Collection code for order " + orderNumber,
+                "Hi " + (buyerName == null ? "there" : buyerName) + ",\n\n"
+                + "Your parcel for " + (recipientName == null ? "the recipient" : recipientName)
+                + " is out for delivery.\n\n"
+                + "COLLECTION CODE: " + code + "\n\n"
+                + "Pass this code to them. The driver will ask for it and cannot hand the parcel "
+                + "over without it — it is what proves the right person received it.\n\n"
+                + "They do not need an account, an app or an email of their own. They only need "
+                + "to read these six digits to the driver.\n\n"
+                + "The code stops working on " + expiresAt + ". If the delivery is missed, ask for "
+                + "a new one rather than reusing this.\n\n"
+                + "Do not post this code anywhere public. Anyone who has it can collect the "
+                + "parcel.\n\n"
+                + "The Sujula Team");
+    }
+
+    @Override
+    public void sendParcelAccessCode(String toEmail, String buyerName, String recipientName,
+                                     String trackingCode, String code,
+                                     java.time.LocalDateTime expiresAt) {
+        send(toEmail,
+                "Code to change the delivery of parcel " + trackingCode,
+                "Hi " + (buyerName == null ? "there" : buyerName) + ",\n\n"
+                + (recipientName == null ? "The person" : recipientName)
+                + " asked to change something about the parcel you sent"
+                + " (tracking " + trackingCode + ").\n\n"
+                + "CODE: " + code + "\n\n"
+                + "Read these six digits to them. They will type them on the tracking page to "
+                + "send the parcel to a collection point instead, to ask for a different day, or "
+                + "to say it may be left with somebody.\n\n"
+                + "THIS IS NOT THE COLLECTION CODE. The collection code is the one the driver "
+                + "asks for at the door. This one only works on the tracking page, and it stops "
+                + "working on " + expiresAt + ".\n\n"
+                + "If nobody asked for this, ignore it — nothing changes unless the code is "
+                + "entered, and it expires shortly.\n\n"
+                + "The Sujula Team");
+    }
+
+    @Override
+    public void sendNotificationEmail(String toEmail, String firstName, String title, String body,
+                                      String reference) {
+        send(toEmail,
+                title,
+                "Hi " + (firstName == null || firstName.isBlank() ? "there" : firstName) + ",\n\n"
+                + body + "\n\n"
+                + (reference == null || reference.isBlank() ? ""
+                   : "Reference: " + reference + "\n\n")
+                // Named here rather than left for somebody to wonder about: an
+                // email nobody can switch off is one people stop reading, and
+                // the ones that matter are then the ones that get missed.
+                + "You are receiving this because it is switched on in your notification "
+                + "settings. You can change which of these we email you about at any time — "
+                + "except for security warnings, delivery codes, refunds, disputes and failed "
+                + "payouts, which we always send.\n\n"
+                + "The Sujula Team");
+    }
+
+    @Async
+    @Override
+    public void sendAccountSetupEmail(String toEmail, String firstName, String role,
+                                      String createdBy) {
+        send(toEmail,
+                "An account has been opened for you on Sujula",
+                "Hi " + (firstName == null || firstName.isBlank() ? "there" : firstName) + ",\n\n"
+                + createdBy + " has opened a Sujula account for you as a "
+                + role.toLowerCase(java.util.Locale.ROOT).replace('_', ' ') + ".\n\n"
+                // No password in this message, and none exists: the account was
+                // created with a random secret nobody holds. Sending them to set
+                // their own is the only way the password is theirs alone.
+                + "To get in, set your own password using the \"forgotten password\" link:\n"
+                + frontendUrl + "/forgot-password\n\n"
+                + "Use this email address — " + toEmail + " — when you do.\n\n"
+                + "Nobody here knows or can see your password, including whoever opened the "
+                + "account.\n\n"
+                + "If you were not expecting this, reply and tell us. An account opened for "
+                + "somebody who did not ask for one is worth looking at.\n\n"
+                + "The Sujula Team");
     }
 }

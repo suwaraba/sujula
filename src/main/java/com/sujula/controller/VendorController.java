@@ -6,6 +6,7 @@ import com.sujula.dto.request.VendorUpdateProfileRequest;
 import com.sujula.dto.response.PagedResponse;
 import com.sujula.dto.response.PresignedUploadResponse;
 import com.sujula.dto.response.VendorResponse;
+import com.sujula.dto.response.VendorStorefrontResponse;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.user.User;
@@ -101,6 +102,25 @@ public class VendorController {
         return ResponseEntity.ok(vendorService.findByStoreSlug(slug));
     }
 
+    // --- Storefront (no login) -----------------------------------------------------------
+    // A shopper browsing a store is not the store's owner, and the endpoints above
+    // resolve to the owner or an admin — so the storefront gets its own path and
+    // its own narrower projection.
+
+    @GetMapping("/storefront/{slug}")
+    public ResponseEntity<VendorStorefrontResponse> storefront(@PathVariable String slug) {
+        return ResponseEntity.ok(vendorService.findStorefrontBySlug(slug));
+    }
+
+    @GetMapping("/storefront")
+    public ResponseEntity<PagedResponse<VendorStorefrontResponse>> browseStores(
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(PagedResponse.of(
+                vendorService.searchStorefront(q, PageRequest.of(page, size))));
+    }
+
     // --- Admin only --------------------------------------------------------------------
 
     @GetMapping
@@ -118,6 +138,13 @@ public class VendorController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ResponseEntity.ok(PagedResponse.of(vendorService.findByStatus(status, PageRequest.of(page, size))));
+    }
+
+    @PatchMapping("/{id}/settlement-currency")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<VendorResponse> updateSettlementCurrency(@PathVariable Long id,
+                                                                   @RequestParam String currency) {
+        return ResponseEntity.ok(vendorService.updateSettlementCurrency(id, currency));
     }
 
     @PatchMapping("/{id}/status")

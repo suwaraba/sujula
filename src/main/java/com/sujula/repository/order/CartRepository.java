@@ -15,6 +15,19 @@ import java.util.Optional;
 @Repository
 public interface CartRepository extends JpaRepository<Cart, Long> {
 
+    /**
+     * A cart by its public token, with items.
+     *
+     * <p>How {@code /carts/{token}} resolves. The token is the credential for a
+     * guest, so it is the only thing the path carries — the numeric id would let
+     * anyone read the next shopper's basket by adding one, and a cart holds a
+     * name, a destination and what somebody is about to spend.
+     */
+    @Query("SELECT DISTINCT c FROM Cart c LEFT JOIN FETCH c.items WHERE c.token = :token")
+    Optional<Cart> findByTokenWithItems(@Param("token") String token);
+
+    Optional<Cart> findByToken(String token);
+
     Optional<Cart> findByUserId(Long userId);
 
     Optional<Cart> findBySessionId(String sessionId);

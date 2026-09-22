@@ -12,22 +12,27 @@ import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.Address;
 import com.sujula.model.constant.CouponScope;
+import com.sujula.model.constant.CouponType;
+import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.OrderStatus;
+import com.sujula.model.constant.StockMovementReason;
 import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.constant.VendorOrderStatus;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.OrderItem;
 import com.sujula.model.order.OrderStatusHistory;
 import com.sujula.model.order.VendorOrder;
+import com.sujula.model.money.FxSnapshot;
 import com.sujula.model.products.Coupon;
 import com.sujula.model.products.CouponUsage;
 import com.sujula.model.products.Product;
 import com.sujula.model.products.ProductImage;
-import com.sujula.model.products.ProductOptionValue;
 import com.sujula.model.products.ProductVariant;
+import com.sujula.model.delivery.PickupPoint;
 import com.sujula.model.user.User;
 import com.sujula.model.user.Vendor;
 import com.sujula.repository.AddressRepository;
+import com.sujula.repository.PickupPointRepository;
 import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.OrderStatusHistoryRepository;
 import com.sujula.repository.order.VendorOrderRepository;
@@ -38,12 +43,17 @@ import com.sujula.repository.product.ProductVariantRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.CartService;
+import com.sujula.service.DeliveryPricingService;
 import com.sujula.service.EmailService;
 import com.sujula.service.ExchangeRateService;
+import com.sujula.model.constant.NotificationEvent;
 import com.sujula.service.NotificationService;
 import com.sujula.service.OrderService;
 import com.sujula.service.cart.CartOwner;
 import com.sujula.service.cart.RateTable;
+import com.sujula.service.reference.CurrencyCatalogue;
+import com.sujula.service.delivery.DeliveryDestination;
+import com.sujula.service.delivery.DeliveryQuote;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,8 +63,10 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Objects;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -97,8 +109,6 @@ public class OrderServiceImpl implements OrderService {
     private static final Set<VendorOrderStatus> VENDOR_TERMINAL = Set.of(
             VendorOrderStatus.DELIVERED, VendorOrderStatus.CANCELLED, VendorOrderStatus.REFUNDED);
 
-    private static final Set<PartnerStatus> SELLABLE = EnumSet.of(PartnerStatus.APPROVED, PartnerStatus.ACTIVE);
-
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
     private final OrderRepository orderRepository;
@@ -106,15 +116,19 @@ public class OrderServiceImpl implements OrderService {
     private final OrderStatusHistoryRepository statusHistoryRepository;
     private final ProductRepository productRepository;
     private final ProductVariantRepository variantRepository;
+    private final com.sujula.service.inventory.StockLedger stockLedger;
     private final UserRepository userRepository;
     private final VendorRepository vendorRepository;
     private final AddressRepository addressRepository;
+    private final PickupPointRepository pickupPointRepository;
     private final CouponRepository couponRepository;
     private final CouponUsageRepository couponUsageRepository;
     private final ExchangeRateService exchangeRateService;
     private final CartService cartService;
+    private final DeliveryPricingService deliveryPricingService;
     private final EmailService emailService;
     private final NotificationService notificationService;
+    private final CurrencyCatalogue currencyCatalogue;
 
     /** Fallback when a vendor or coupon has no currency recorded. */
     @Value("${sujula.cart.default-currency:GMD}")
@@ -132,13 +146,17 @@ public class OrderServiceImpl implements OrderService {
 
         List<ItemSpec> specs = toSpecs(request.getItems());
         CheckoutResult result = priceExplicitItems(specs, defaultCurrency, request.getCouponCode(), customerId);
+        DeliveryDestination destination = resolveDestination(DeliveryDestination.of(address));
+        applyDeliveryPricing(result, destination, DeliveryMode.HOME_DELIVERY);
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
+                .trackingCode(newTrackingCode())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
+                .deliveryMode(DeliveryMode.HOME_DELIVERY)
                 .subtotal(result.subtotal)
-                .shippingCost(BigDecimal.ZERO)
+                .shippingCost(result.shipping)
                 .taxAmount(BigDecimal.ZERO)
                 .discount(result.discount)
                 .total(result.total)
@@ -153,6 +171,15 @@ public class OrderServiceImpl implements OrderService {
                 .shippingState(address.getState())
                 .shippingPostalCode(address.getPostalCode())
                 .shippingCountry(address.getCountryCode())
+                // Which saved address was chosen, recorded alongside the snapshot
+                // rather than instead of it. The snapshot still addresses the
+                // parcel and still must not move when someone edits their address
+                // book; this only lets a later delete tell whether an order named
+                // the row, so it can be kept as a tombstone instead of orphaning
+                // this reference.
+                .shippingAddress(address)
+                .shippingLatitude(destination.latitude())
+                .shippingLongitude(destination.longitude())
                 .notes(request.getNotes())
                 .build();
 
@@ -180,12 +207,31 @@ public class OrderServiceImpl implements OrderService {
                 ? request.getDeliveryAddress().getAddress()
                 : (request.getPickupPointId() != null ? "Pickup Point #" + request.getPickupPointId() : "");
 
+        // Collecting from a pickup point is a shorter, cheaper leg than delivery
+        // to the door, and it is the hub — not the buyer's address — the parcel
+        // actually travels to, so it is the hub that prices the delivery.
+        DeliveryMode mode = request.getPickupPointId() != null
+                ? DeliveryMode.PICKUP_POINT : DeliveryMode.HOME_DELIVERY;
+        UserCheckoutRequest.DeliveryAddress deliveryAddress = request.getDeliveryAddress();
+        DeliveryDestination destination = (mode == DeliveryMode.PICKUP_POINT)
+                ? DeliveryDestination.of(requirePickupPoint(request.getPickupPointId()))
+                : new DeliveryDestination(
+                        deliveryAddress != null ? deliveryAddress.getLatitude() : null,
+                        deliveryAddress != null ? deliveryAddress.getLongitude() : null,
+                        shippingStreet,
+                        recipient.getCity(), recipient.getRegion(), null, recipient.getCountry());
+        destination = resolveDestination(destination);
+        applyDeliveryPricing(result, destination, mode);
+
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
+                .trackingCode(newTrackingCode())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
+                .deliveryMode(mode)
+                .pickupPointId(request.getPickupPointId())
                 .subtotal(result.subtotal)
-                .shippingCost(BigDecimal.ZERO)
+                .shippingCost(result.shipping)
                 .taxAmount(BigDecimal.ZERO)
                 .discount(result.discount)
                 .total(result.total)
@@ -198,6 +244,8 @@ public class OrderServiceImpl implements OrderService {
                 .shippingCity(recipient.getCity())
                 .shippingState(recipient.getRegion())
                 .shippingCountry(recipient.getCountry())
+                .shippingLatitude(destination.latitude())
+                .shippingLongitude(destination.longitude())
                 .notes(request.getNotes())
                 .build();
 
@@ -222,13 +270,17 @@ public class OrderServiceImpl implements OrderService {
         requireCheckoutable(quote);
 
         CheckoutResult result = buildFromQuote(quote);
+        DeliveryDestination destination = resolveDestination(DeliveryDestination.of(address));
+        applyDeliveryPricing(result, destination, DeliveryMode.HOME_DELIVERY);
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
+                .trackingCode(newTrackingCode())
                 .customer(customer)
                 .status(OrderStatus.PENDING)
+                .deliveryMode(DeliveryMode.HOME_DELIVERY)
                 .subtotal(result.subtotal)
-                .shippingCost(BigDecimal.ZERO)
+                .shippingCost(result.shipping)
                 .taxAmount(BigDecimal.ZERO)
                 .discount(result.discount)
                 .total(result.total)
@@ -243,6 +295,15 @@ public class OrderServiceImpl implements OrderService {
                 .shippingState(address.getState())
                 .shippingPostalCode(address.getPostalCode())
                 .shippingCountry(address.getCountryCode())
+                // Which saved address was chosen, recorded alongside the snapshot
+                // rather than instead of it. The snapshot still addresses the
+                // parcel and still must not move when someone edits their address
+                // book; this only lets a later delete tell whether an order named
+                // the row, so it can be kept as a tombstone instead of orphaning
+                // this reference.
+                .shippingAddress(address)
+                .shippingLatitude(destination.latitude())
+                .shippingLongitude(destination.longitude())
                 .notes(notes)
                 .build();
 
@@ -278,15 +339,23 @@ public class OrderServiceImpl implements OrderService {
             result = priceExplicitItems(specs, requestedCurrency, request.getCouponCode(), null);
         }
 
+        DeliveryDestination destination = resolveDestination(new DeliveryDestination(
+                request.getShippingLatitude(), request.getShippingLongitude(),
+                request.getShippingStreet(), request.getShippingCity(), request.getShippingState(),
+                request.getShippingPostalCode(), request.getShippingCountry()));
+        applyDeliveryPricing(result, destination, DeliveryMode.HOME_DELIVERY);
+
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
+                .trackingCode(newTrackingCode())
                 .guestName(request.getGuestName())
                 .guestEmail(request.getGuestEmail().toLowerCase().trim())
                 .guestPhone(request.getGuestPhone())
                 .guestSessionId(request.getSessionId())
                 .status(OrderStatus.PENDING)
+                .deliveryMode(DeliveryMode.HOME_DELIVERY)
                 .subtotal(result.subtotal)
-                .shippingCost(BigDecimal.ZERO)
+                .shippingCost(result.shipping)
                 .taxAmount(BigDecimal.ZERO)
                 .discount(result.discount)
                 .total(result.total)
@@ -301,6 +370,8 @@ public class OrderServiceImpl implements OrderService {
                 .shippingState(request.getShippingState())
                 .shippingPostalCode(request.getShippingPostalCode())
                 .shippingCountry(request.getShippingCountry())
+                .shippingLatitude(destination.latitude())
+                .shippingLongitude(destination.longitude())
                 .notes(request.getNotes())
                 .build();
 
@@ -413,7 +484,7 @@ public class OrderServiceImpl implements OrderService {
             try {
                 notificationService.send(saved.getCustomer().getId(), orderStatusTitle(to),
                         "Order " + saved.getOrderNumber() + " " + orderStatusBody(to),
-                        "ORDER", saved.getOrderNumber());
+                        NotificationEvent.ORDER_UPDATE, saved.getOrderNumber());
             } catch (Exception ignored) {
                 // Never let a notification failure roll back the status change
             }
@@ -530,6 +601,8 @@ public class OrderServiceImpl implements OrderService {
         Coupon platformCoupon = findCouponByCode(quote.getPlatformCouponCode());
         List<VendorOrder> vendorOrders = new ArrayList<>();
 
+        LocalDateTime pricedAt = LocalDateTime.now();
+
         for (CartResponse.VendorGroup group : quote.getVendors()) {
             Vendor vendor = vendorRepository.findById(group.getVendorId())
                     .orElseThrow(() -> new ResourceNotFoundException("Vendor", group.getVendorId()));
@@ -553,13 +626,39 @@ public class OrderServiceImpl implements OrderService {
             vendorOrders.add(VendorOrder.builder()
                     .vendor(vendor)
                     .status(VendorOrderStatus.PENDING)
+                    // The rate this group was actually priced at, taken from the
+                    // quote rather than looked up again. A second lookup can
+                    // return a different number — the table refreshes daily and
+                    // a checkout can straddle that — and a slice recording a rate
+                    // its own amounts were not converted at is worse than one
+                    // recording nothing at all.
+                    .fx(snapshotOf(group.getNativeCurrency(), quote.getDisplayCurrency(),
+                                   exchangeRate, pricedAt))
                     .nativeCurrency(group.getNativeCurrency())
                     .subtotalNative(subtotalNative)
                     .discountNative(discountNative)
                     .totalNative(totalNative)
                     .subtotal(group.getSubtotal())
                     .discount(group.getDiscount())
-                    .total(group.getTotal())
+                    // Goods less discount, and NOT group.getTotal(), which is
+                    // the cart group's figure with that group's shipping in it.
+                    //
+                    // A slice's total is the goods. Delivery lives on the order,
+                    // on OrderItem.deliveryCost per line and on
+                    // delivery_native per slice, because the platform arranges
+                    // it and keeps it — which is also why payout_native
+                    // excludes it. Two lines up, totalNative is computed
+                    // exactly this way, so taking the cart total here made the
+                    // native and display totals on one row mean two different
+                    // things.
+                    //
+                    // The other checkout path already did it this way and so
+                    // does every seeded row, so an order placed through the
+                    // cart was the only kind whose slices did not add up to
+                    // the order less its shipping. A buyer's screen showing
+                    // per-seller totals that do not come to the whole is the
+                    // visible half of that.
+                    .total(nonNull(group.getSubtotal()).subtract(nonNull(group.getDiscount())))
                     .coupon(vendorCoupon)
                     .couponCode(group.getVendorCouponCode())
                     .items(items)
@@ -569,11 +668,27 @@ public class OrderServiceImpl implements OrderService {
         CheckoutResult result = new CheckoutResult();
         result.subtotal = quote.getSubtotal();
         result.discount = quote.getDiscount();
-        result.total = quote.getTotal();
+        // Goods only, deliberately NOT quote.getTotal(). The cart's total
+        // already has shipping in it, and applyDeliveryPricing — which every
+        // caller of this method runs next — re-prices the legs against the
+        // chosen address and adds them. Taking the cart's total here charged
+        // shipping twice: a basket quoted at 82.62 became an order of 119.18,
+        // and reconcile() then refused the checkout over the 36.56 difference.
+        //
+        // Which is the one mercy in it. The guard meant nobody was ever
+        // overcharged; what it meant instead was that no basket carrying
+        // shipping could be paid for at all, and the message a buyer got said
+        // the price had changed when nothing had.
+        result.total = nonNull(quote.getSubtotal()).subtract(nonNull(quote.getDiscount()));
         result.currency = quote.getDisplayCurrency();
         result.platformCoupon = platformCoupon;
         result.vendorOrders = vendorOrders;
         return result;
+    }
+
+    /** Zero for an absent amount, so a total is never poisoned by one missing field. */
+    private static BigDecimal nonNull(BigDecimal amount) {
+        return amount == null ? BigDecimal.ZERO : amount;
     }
 
     private OrderItem lockAndBuildItem(CartResponse.CartItemResponse itemResp) {
@@ -682,7 +797,12 @@ public class OrderServiceImpl implements OrderService {
         currencies.remove(target);
         Map<String, BigDecimal> rates = currencies.isEmpty()
                 ? Map.of() : exchangeRateService.getLatestRates(target, currencies);
-        RateTable rateTable = new RateTable(target, rates);
+        // Built with the moment it was read and the target currency's real
+        // scale. The first is frozen onto every vendor slice so a converted
+        // figure stays explicable once the table has moved; the second stops a
+        // CFA total coming out with centimes on it.
+        RateTable rateTable = new RateTable(target, rates,
+                currencyCatalogue.minorUnits(target), LocalDateTime.now());
 
         Map<Long, List<Resolved>> byVendor = resolved.stream()
                 .collect(Collectors.groupingBy(r -> r.vendor().getId(), LinkedHashMap::new, Collectors.toList()));
@@ -807,6 +927,7 @@ public class OrderServiceImpl implements OrderService {
         result.discount = grandDiscount;
         result.total = grandSubtotal.subtract(grandDiscount);
         result.currency = target;
+        result.rateTable = rateTable;
         result.platformCoupon = platformCoupon;
         result.vendorOrders = vendorOrders;
         return result;
@@ -820,13 +941,28 @@ public class OrderServiceImpl implements OrderService {
         return stock != null ? Math.max(stock, 0) : 0;
     }
 
+    /**
+     * Takes stock for an order, through the ledger rather than around it.
+     *
+     * <p>Written as a movement, not just a smaller number, because the seller's
+     * stock audit has to include the thing that actually moves their stock. An
+     * audit showing their own corrections and silently omitting sales would be
+     * wrong in exactly the case they open it for.
+     *
+     * <p>No order reference, and it cannot have one: stock is reserved before
+     * the order exists, which is the right order to do it in - reserving after
+     * creating leaves an order for goods that were gone. The movement carries
+     * its timestamp and the figures either side, which is what a reconciliation
+     * needs; the cancellation path below does have the order number and passes
+     * it.
+     */
     private void deductStock(Product product, ProductVariant variant, int quantity) {
         if (variant != null) {
-            variant.setStock(variant.getStock() - quantity);
-            variantRepository.save(variant);
+            stockLedger.adjustVariant(variant, -quantity, StockMovementReason.SALE,
+                    null, "Reserved for an order", null);
         } else {
-            product.setStock(product.getStock() - quantity);
-            productRepository.save(product);
+            stockLedger.adjustProduct(product, -quantity, StockMovementReason.SALE,
+                    null, "Reserved for an order", null);
         }
     }
 
@@ -838,7 +974,7 @@ public class OrderServiceImpl implements OrderService {
         if (vendor == null) {
             throw new BadRequestException("Product has no vendor and cannot be purchased");
         }
-        if (!SELLABLE.contains(vendor.getStatus())) {
+        if (!vendor.getStatus().canTrade()) {
             throw new BadRequestException(vendor.getStoreName() + " is not currently accepting orders");
         }
         String listing = product.getPriceCurrency();
@@ -851,6 +987,223 @@ public class OrderServiceImpl implements OrderService {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Delivery pricing — one leg per product, never one figure per order
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Prices every product's delivery separately and folds the result into the
+     * checkout.
+     *
+     * <p>A multivendor basket has no single origin: two lines can leave from two
+     * towns, weigh different amounts and ship under different scopes, so each
+     * line is quoted on its own distance and weight and keeps its own share on
+     * {@code OrderItem.deliveryCost}. The order's {@code shippingCost} is only
+     * the sum of those legs, which is what makes per-vendor payout and per-item
+     * cancellation able to account for delivery later on.
+     *
+     * <p>A {@code FREE_SHIPPING} coupon is honoured here rather than as a
+     * discount: it waives the legs it covers — every leg for a platform coupon,
+     * that vendor's legs for a vendor-scoped one — so the buyer sees delivery
+     * priced at zero instead of a discount line that happens to cancel it out.
+     */
+    private void applyDeliveryPricing(CheckoutResult result, DeliveryDestination destination, DeliveryMode mode) {
+        List<OrderItem> items = new ArrayList<>();
+        Set<Long> freeShippingVendors = new HashSet<>();
+        for (VendorOrder vo : result.vendorOrders) {
+            if (vo.getCoupon() != null && vo.getCoupon().getType() == CouponType.FREE_SHIPPING) {
+                freeShippingVendors.add(vo.getVendor().getId());
+            }
+            items.addAll(vo.getItems());
+        }
+        if (items.isEmpty()) {
+            result.shipping = BigDecimal.ZERO;
+            return;
+        }
+
+        boolean freeShippingEverywhere = result.platformCoupon != null
+                && result.platformCoupon.getType() == CouponType.FREE_SHIPPING;
+
+        DeliveryQuote quote = deliveryPricingService.quoteOrderItems(items, destination, mode, result.currency);
+        if (!quote.complete()) {
+            throw new BadRequestException(
+                    "Delivery cannot be priced in " + result.currency + " right now — please try again shortly");
+        }
+
+        BigDecimal shipping = BigDecimal.ZERO;
+        for (int i = 0; i < items.size(); i++) {
+            OrderItem item = items.get(i);
+            DeliveryQuote.DeliveryLeg leg = quote.legs().get(i);
+            Long vendorId = item.getVendor() != null ? item.getVendor().getId() : null;
+
+            BigDecimal cost = (freeShippingEverywhere || freeShippingVendors.contains(vendorId))
+                    ? BigDecimal.ZERO
+                    : leg.cost();
+            item.setDeliveryCost(cost);
+            shipping = shipping.add(cost);
+        }
+
+        result.shipping = shipping;
+        result.total = result.total.add(shipping);
+
+        freezeVendorSettlement(result.vendorOrders, result.rateTable);
+    }
+
+    /**
+     * Writes onto each vendor slice what that vendor is owed, in that vendor's
+     * own currency, before the order is saved.
+     *
+     * <p>Frozen rather than derived later, because everything it is derived from
+     * moves: the platform's commission rate is an editable field on the vendor,
+     * and exchange rates change every day. A payout recomputed next week would
+     * quietly restate what a seller was owed for an order they shipped last week.
+     *
+     * <p>Delivery converts at the same rate the goods did — the rate implied by
+     * this slice's own display and native subtotals, not a fresh lookup — so a
+     * parcel and its contents cannot end up priced off two different rates.
+     * Runs after delivery pricing, since the legs do not exist before then.
+     */
+    static void freezeVendorSettlement(List<VendorOrder> vendorOrders) {
+        freezeVendorSettlement(vendorOrders, null);
+    }
+
+    /**
+     * @param rateTable the rates this order was priced from, so each slice can
+     *                  record the one it used. Null only in the older call path,
+     *                  which leaves the snapshot unrecorded rather than inventing
+     *                  a rate nobody actually converted at.
+     */
+    static void freezeVendorSettlement(List<VendorOrder> vendorOrders, RateTable rateTable) {
+        for (VendorOrder vendorOrder : vendorOrders) {
+            recordFxSnapshot(vendorOrder, rateTable);
+            BigDecimal deliveryDisplay = vendorOrder.getItems().stream()
+                    .map(OrderItem::getDeliveryCost)
+                    .filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            BigDecimal totalNative = vendorOrder.getTotalNative();
+            BigDecimal subtotalNative = vendorOrder.getSubtotalNative();
+            BigDecimal subtotalDisplay = vendorOrder.getSubtotal();
+
+            if (subtotalNative != null && subtotalDisplay != null && subtotalDisplay.signum() > 0) {
+                vendorOrder.setDeliveryNative(deliveryDisplay
+                        .multiply(subtotalNative)
+                        .divide(subtotalDisplay, RateTable.MONEY_SCALE, RoundingMode.HALF_UP));
+            }
+
+            // Null when this vendor's lines spanned more than one listing currency,
+            // in which case there is no single native total to take a cut of and
+            // payout falls back to the per-line native amounts on each item.
+            if (totalNative == null) {
+                continue;
+            }
+
+            Vendor vendor = vendorOrder.getVendor();
+            BigDecimal rate = vendor != null && vendor.getDefaultCommissionRate() != null
+                    ? vendor.getDefaultCommissionRate()
+                    : BigDecimal.ZERO;
+            BigDecimal commission = totalNative
+                    .multiply(rate)
+                    .divide(HUNDRED, RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+
+            vendorOrder.setCommissionRate(rate);
+            vendorOrder.setCommissionNative(commission);
+            // Delivery is deliberately not added: the platform arranges it and
+            // keeps it. The vendor is paid for the goods.
+            vendorOrder.setPayoutNative(totalNative.subtract(commission));
+        }
+    }
+
+    /**
+     * Writes onto the slice the rate its native figures were converted at.
+     *
+     * <p>This is what makes the frozen amounts defensible. Without it they are
+     * the right numbers and nobody can say why: the rate table moves daily, so a
+     * payout questioned next month cannot be re-derived from anything still on
+     * the system.
+     *
+     * <p>Nothing is recorded when this vendor's lines spanned more than one
+     * listing currency — the same case in which the native totals are null.
+     * There was no single conversion, so there is no single rate, and writing
+     * one would be a fiction that looked like evidence.
+     */
+    /**
+     * A snapshot from a rate already known to be the one used.
+     *
+     * <p>Separate from {@link #recordFxSnapshot} because the two checkout paths
+     * come by their rate differently — the cart quote carries a per-vendor rate
+     * on the group, the explicit-item path has a whole table — and the thing
+     * worth sharing is what a snapshot means, not how the rate was obtained.
+     */
+    private static FxSnapshot snapshotOf(String nativeCurrency, String displayCurrency,
+                                         BigDecimal rate, LocalDateTime pricedAt) {
+        if (nativeCurrency == null || displayCurrency == null) {
+            return null;
+        }
+        if (nativeCurrency.equalsIgnoreCase(displayCurrency)) {
+            return FxSnapshot.identity(nativeCurrency, pricedAt);
+        }
+        if (rate == null || rate.signum() <= 0) {
+            // Priced across currencies with no usable rate. Recording nothing is
+            // honest; recording a zero or a one would read as evidence.
+            return null;
+        }
+        return FxSnapshot.published(nativeCurrency, displayCurrency, rate, pricedAt);
+    }
+
+    private static void recordFxSnapshot(VendorOrder vendorOrder, RateTable rateTable) {
+        String nativeCurrency = vendorOrder.getNativeCurrency();
+        if (rateTable == null || nativeCurrency == null) {
+            return;
+        }
+
+        LocalDateTime takenAt = rateTable.takenAt();
+        if (nativeCurrency.equalsIgnoreCase(rateTable.target())) {
+            // Same currency both sides. Recorded rather than skipped, so that
+            // "no conversion applied" is a positive fact rather than an absence
+            // indistinguishable from nobody having written it down.
+            vendorOrder.setFx(FxSnapshot.identity(nativeCurrency, takenAt));
+            return;
+        }
+
+        BigDecimal rate = rateTable.rateFor(nativeCurrency);
+        if (rate == null) {
+            return;   // priced without a rate; the order will have failed already
+        }
+        vendorOrder.setFx(FxSnapshot.published(
+                nativeCurrency, rateTable.target(), rate, takenAt));
+    }
+
+    /**
+     * Puts the delivery address on a map before anything is priced.
+     *
+     * <p>Every order carries the point it is going to, not just the words for it.
+     * Delivery here is priced from the distance between vendor and buyer, so a
+     * destination that never resolved falls back to a flat per-scope distance and
+     * the buyer is billed for a journey nobody measured; and a courier in a
+     * country where most addresses do not resolve to a street needs somewhere to
+     * navigate to. The coordinates are resolved once, here, and then stored on
+     * the order — priced and delivered against the same point, and unaffected if
+     * the buyer later edits the saved address it came from.
+     *
+     * <p>Best-effort by design: a geocoder that is down or unconfigured leaves
+     * the coordinates null and checkout carries on with the fallback distances.
+     * Refusing the order would be the worse failure.
+     */
+    private DeliveryDestination resolveDestination(DeliveryDestination destination) {
+        DeliveryDestination resolved = deliveryPricingService.resolveDestination(destination);
+        return resolved != null ? resolved : destination;
+    }
+
+    private PickupPoint requirePickupPoint(Long pickupPointId) {
+        PickupPoint point = pickupPointRepository.findById(pickupPointId)
+                .orElseThrow(() -> new ResourceNotFoundException("PickupPoint", pickupPointId));
+        if (!point.isActive() || !point.getStatus().canTrade()) {
+            throw new BadRequestException(point.getName() + " is not accepting parcels right now");
+        }
+        return point;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Persistence helpers
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -858,19 +1211,34 @@ public class OrderServiceImpl implements OrderService {
     private static final class CheckoutResult {
         BigDecimal subtotal;
         BigDecimal discount;
+        /** Sum of the per-product delivery legs, in {@link #currency}. */
+        BigDecimal shipping = BigDecimal.ZERO;
         BigDecimal total;
         String currency;
         Coupon platformCoupon;
         List<VendorOrder> vendorOrders;
+
+        /**
+         * The rates this checkout was priced from, carried through so each
+         * vendor slice can record the one it used.
+         *
+         * <p>Carried rather than looked up again at freezing time. A second
+         * lookup could return a different number — the table is refreshed daily
+         * and a checkout can straddle that — and a slice recording a rate its
+         * own amounts were not converted at is worse than one recording nothing.
+         */
+        RateTable rateTable;
     }
 
     private Order persistOrder(Order order, CheckoutResult result) {
         Order savedOrder = orderRepository.save(order);
 
         List<OrderItem> allItems = new ArrayList<>();
+        List<VendorOrder> savedSlices = new ArrayList<>();
         for (VendorOrder vo : result.vendorOrders) {
             vo.setOrder(savedOrder);
             VendorOrder savedVo = vendorOrderRepository.save(vo);
+            savedSlices.add(savedVo);
             for (OrderItem item : savedVo.getItems()) {
                 item.setOrder(savedOrder);
                 item.setVendorOrder(savedVo);
@@ -878,6 +1246,16 @@ public class OrderServiceImpl implements OrderService {
             }
         }
         savedOrder.setItems(allItems);
+        // Both sides, not just the items. The slices were saved and the order
+        // still came back with an empty vendorOrders collection, so anything
+        // reading the order it was handed saw none of them — POST /checkout
+        // answered with "vendorOrders": [] on an order that had two, which is
+        // exactly the shape a client must not be told this platform has. C3
+        // says a payment splits into sub-orders that ship, cancel, refund and
+        // pay out independently; a client rendering one order with one status
+        // will eventually be wrong about half of it, and this response was
+        // inviting it to.
+        savedOrder.setVendorOrders(savedSlices);
         Order finalOrder = orderRepository.save(savedOrder);
 
         statusHistoryRepository.save(OrderStatusHistory.builder()
@@ -910,16 +1288,17 @@ public class OrderServiceImpl implements OrderService {
         couponRepository.save(coupon);
     }
 
+    /** Puts cancelled goods back on the shelf, and says which order they came off. */
     private void restoreStock(Order order) {
         for (OrderItem item : order.getItems()) {
             if (item.getVariant() != null) {
-                ProductVariant v = item.getVariant();
-                v.setStock(v.getStock() + item.getQuantity());
-                variantRepository.save(v);
+                stockLedger.adjustVariant(item.getVariant(), item.getQuantity(),
+                        StockMovementReason.RETURN, order.getOrderNumber(),
+                        "Order cancelled", null);
             } else {
-                Product p = item.getProduct();
-                p.setStock(p.getStock() + item.getQuantity());
-                productRepository.save(p);
+                stockLedger.adjustProduct(item.getProduct(), item.getQuantity(),
+                        StockMovementReason.RETURN, order.getOrderNumber(),
+                        "Order cancelled", null);
             }
         }
     }
@@ -1035,17 +1414,57 @@ public class OrderServiceImpl implements OrderService {
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
     }
 
+    /**
+     * An address this buyer owns and has not deleted.
+     *
+     * <p>Ownership is in the query. It used to load by id and compare the owner
+     * afterwards, which is the shape that eventually ships with the comparison
+     * missing — and it leaked while the comparison was still there: a missing
+     * row answered "Address not found" and somebody else's answered "Address
+     * does not belong to this user", so guessing ids told you which ones
+     * existed. An address carries a name, a phone number and a location, and
+     * confirming one exists is itself worth withholding.
+     *
+     * <p>Both cases are now the same not-found, because the database is asked
+     * for "this id, belonging to this person" and returns nothing either way.
+     *
+     * <p>{@code findLiveByIdAndUserId} also excludes a soft-deleted row, which
+     * is the behaviour the address book already has: an address the buyer
+     * deleted is a 404 from {@code GET /me/addresses/{id}}, so it is not one
+     * they can be shown and then pick at checkout. Orders already placed
+     * against it still resolve — the row is retained for exactly that.
+     */
     private Address requireOwnedAddress(Long addressId, Long userId) {
-        Address address = addressRepository.findById(addressId)
+        return addressRepository.findLiveByIdAndUserId(addressId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Address", addressId));
-        if (!address.getUser().getId().equals(userId)) {
-            throw new BadRequestException("Address does not belong to this user");
-        }
-        return address;
     }
+
+    private static final SecureRandom TRACKING_RANDOM = new SecureRandom();
+    private static final String TRACKING_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
+    private static final int TRACKING_CODE_LENGTH = 16;
 
     private static String newOrderNumber() {
         return "SJL-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    }
+
+    /**
+     * The code that lets somebody with no account follow their parcel.
+     *
+     * <p>Distinct from the order number on purpose. The order number is printed
+     * on invoices, quoted in support mail and guessable by anyone who has seen
+     * two of them; this is a bearer credential handed to a recipient over SMS,
+     * and the only thing standing between it and a stranger is that it cannot be
+     * arrived at by counting. So: {@link SecureRandom}, and eighty bits of it.
+     *
+     * <p>The alphabet omits I, L, O, U and every digit that looks like a letter,
+     * because this gets read aloud down a phone line as often as it gets tapped.
+     */
+    private static String newTrackingCode() {
+        StringBuilder code = new StringBuilder(TRACKING_CODE_LENGTH);
+        for (int i = 0; i < TRACKING_CODE_LENGTH; i++) {
+            code.append(TRACKING_ALPHABET.charAt(TRACKING_RANDOM.nextInt(TRACKING_ALPHABET.length())));
+        }
+        return code.toString();
     }
 
     private static String orderLevelCouponCode(CheckoutResult result) {
@@ -1060,14 +1479,7 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private static String variantLabel(ProductVariant variant) {
-        if (variant == null || variant.getSelectedValues() == null || variant.getSelectedValues().isEmpty()) {
-            return null;
-        }
-        return variant.getSelectedValues().stream()
-                .sorted(Comparator.comparing(ProductOptionValue::getSortOrder, Comparator.nullsLast(Comparator.naturalOrder())))
-                .map(ProductOptionValue::getDisplayValue)
-                .filter(Objects::nonNull)
-                .collect(Collectors.joining(", "));
+        return variant != null ? variant.getVariantLabel() : null;
     }
 
     private static String primaryImageUrl(Product product) {
@@ -1114,7 +1526,7 @@ public class OrderServiceImpl implements OrderService {
         try {
             notificationService.send(customer.getId(), "Order Placed Successfully",
                     "Your order " + order.getOrderNumber() + " has been placed and is being processed.",
-                    "ORDER", order.getOrderNumber());
+                    NotificationEvent.ORDER_PLACED, order.getOrderNumber());
             notifyVendors(order, vendorOrders, "New Order Received",
                     "You have a new order (" + order.getOrderNumber() + ") to fulfil.");
         } catch (Exception ignored) {
@@ -1134,7 +1546,11 @@ public class OrderServiceImpl implements OrderService {
             Vendor vendor = vo.getVendor();
             if (vendor.getUser() != null) {
                 emailService.sendVendorOrderNotification(vendor.getUser().getEmail(), vendor.getStoreName(), order.getOrderNumber());
-                notificationService.send(vendor.getUser().getId(), title, message, "ORDER", order.getOrderNumber());
+                // The seller's copy is a different event from the buyer's:
+                // one of them wants to know their money went, and the other has
+                // something to pack. They are switched on and off separately.
+                notificationService.send(vendor.getUser().getId(), title, message,
+                        NotificationEvent.ORDER_TO_FULFIL, order.getOrderNumber());
             }
         }
     }

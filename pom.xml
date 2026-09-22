@@ -28,16 +28,14 @@
         <url/>
     </scm>
     <properties>
-        <java.version>26</java.version>
+        <java.version>21</java.version>
+        <lombok.version>1.18.42</lombok.version>
+        <springdoc.version>3.1.1</springdoc.version>
     </properties>
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-rest</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -50,6 +48,25 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <!-- Generates the OpenAPI document and serves Swagger UI. 3.x is the line
+             that targets Spring Boot 4 / Framework 7. -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
+        </dependency>
+        <!-- Liveness, readiness and the metrics scrape. The readiness probe is
+             what an orchestrator uses to decide whether to send this instance
+             traffic, and an instance whose database has gone is one that should
+             be taken out of rotation rather than left answering with errors. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
         <dependency>
             <groupId>com.maxmind.geoip2</groupId>
@@ -67,8 +84,6 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-core</artifactId>
-            <version>7.1.0</version>
-            <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
@@ -78,13 +93,6 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-oauth2-client</artifactId>
-            <version>6.5.0</version>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-devtools</artifactId>
-            <scope>runtime</scope>
-            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -105,37 +113,86 @@
             <artifactId>spring-boot-starter-data-jpa-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!--
+            An in-memory database for the one test that boots the whole
+            application. Without it that test needs a live MySQL, so in practice
+            it was skipped or red everywhere except a developer's own machine —
+            and a context-load test that never runs is the one check that would
+            have caught a broken entity mapping or an invalid repository query
+            before the application tried to start.
+
+            `provided` rather than `test`, for one reason: the e2e profile boots
+            the real server on this driver, and `spring-boot:run` puts provided
+            dependencies on the classpath while `test` ones are left off. The
+            packaged WAR is unaffected — the war plugin excludes provided scope
+            exactly as it does for the Tomcat starter above — so this is not H2
+            shipping to production, it is H2 being reachable from `mvn
+            spring-boot:run -Dspring-boot.run.profiles=e2e`.
+        -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-rest-test</artifactId>
-            <scope>test</scope>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+            Lets a MockMvc test carry an authenticated principal, so a routing
+            assertion can get past the filter chain to the dispatcher. Without
+            it every request is anonymous and every answer is 403, which proves
+            nothing about which handler a URL resolves to.
+        -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <version>1.18.42</version>
+            <version>${lombok.version}</version>
             <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>javax.mail</groupId>
-            <artifactId>javax.mail-api</artifactId>
-            <version>1.6.2</version>
         </dependency>
         <dependency>
             <groupId>com.google.maps</groupId>
             <artifactId>google-maps-services</artifactId>
             <version>2.1.2</version>
         </dependency>
-        <!-- JavaMail Implementation -->
+        <!--
+            Invoice PDFs. OpenPDF is the LGPL/MPL fork of iText 4 — iText itself
+            went AGPL at version 5, which would oblige us to publish this whole
+            application's source to anyone we send an invoice to.
+        -->
         <dependency>
-            <groupId>com.sun.mail</groupId>
-            <artifactId>javax.mail</artifactId>
-            <version>1.6.2</version>
+            <groupId>com.github.librepdf</groupId>
+            <artifactId>openpdf</artifactId>
+            <version>2.0.3</version>
+        </dependency>
+        <!--
+            Reading a seller's .xlsx on bulk import. CSV is parsed here (it is a
+            small, well-specified format and a library for it would be a
+            dependency for two hundred lines), but xlsx is a zip of XML and
+            hand-rolling that would be a mistake - and most sellers export from
+            Excel without ever choosing a format.
+        -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.4.1</version>
+        </dependency>
+        <!--
+            The QR on a parcel label. A driver scans it rather than typing an
+            order number off a printed page in the dark outside a shop, which is
+            where these are actually read.
+        -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>javase</artifactId>
+            <version>3.5.3</version>
         </dependency>
     </dependencies>
 
@@ -196,6 +253,14 @@
                         </goals>
                         <configuration>
                             <annotationProcessorPaths>
+                                <!-- Naming any processor path here switches javac off the
+                                     classpath processors, so Lombok has to be listed
+                                     explicitly or none of the @Getter/@Builder code compiles. -->
+                                <path>
+                                    <groupId>org.projectlombok</groupId>
+                                    <artifactId>lombok</artifactId>
+                                    <version>${lombok.version}</version>
+                                </path>
                                 <path>
                                     <groupId>org.springframework.boot</groupId>
                                     <artifactId>spring-boot-configuration-processor</artifactId>

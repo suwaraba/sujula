@@ -3,6 +3,8 @@ package com.sujula.model.products;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.math.BigDecimal;
+
 
 @Entity
 @Table(name = "product_option_values",
@@ -27,8 +29,10 @@ public class ProductOptionValue {
     @Column(nullable = false)
     private String displayValue;   // shown to user: "Large", "Red"
 
+    /** Surcharge this value adds to the product's base price, in the product's listing currency. */
+    @Column(nullable = false, precision = 12, scale = 2)
     @Builder.Default
-    private double extraPrice=0;
+    private BigDecimal extraPrice = BigDecimal.ZERO;
 
     private String colorHex;       // only for COLOR_SWATCH type: "#FF0000"
     private String imageUrl;       // only for IMAGE_SWATCH type

@@ -19,6 +19,60 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     Page<Order> findByCustomerId(Long customerId, Pageable pageable);
 
+    /**
+     * A customer's order history as a data export needs it: five scalar columns
+     * and nothing else.
+     *
+     * <p>An export covers a lifetime of orders in one pass. Hydrating each into
+     * a managed {@code Order} — with its items, its coupon, its address snapshot
+     * and its payment — would load several hundred times the data for the five
+     * fields the export actually writes, and would pin all of it in the
+     * persistence context at once.
+     */
+    @Query("SELECT o.orderNumber AS orderNumber, o.status AS status, o.total AS total, "
+         + "o.currency AS currency, o.createdAt AS placedAt "
+         + "FROM Order o WHERE o.customer.id = :customerId ORDER BY o.createdAt DESC")
+    List<OrderExportView> findExportRows(@Param("customerId") Long customerId);
+
+    /** The projection {@link #findExportRows} returns. */
+    interface OrderExportView {
+        String getOrderNumber();
+        OrderStatus getStatus();
+        BigDecimal getTotal();
+        String getCurrency();
+        LocalDateTime getPlacedAt();
+    }
+
+    /**
+     * One order, but only if it is this buyer's.
+     *
+     * <p>Ownership is the query. Loading by id and comparing the customer
+     * afterwards is the shape that eventually ships with the comparison missing,
+     * and an order carries an address, a phone number and what somebody spent.
+     */
+    @Query("SELECT o FROM Order o WHERE o.id = :id AND o.customer.id = :customerId")
+    Optional<Order> findByIdAndCustomerId(@Param("id") Long id, @Param("customerId") Long customerId);
+
+    /** The buyer's own orders, newest first, optionally narrowed by status. */
+    @Query(value = "SELECT o FROM Order o WHERE o.customer.id = :customerId "
+                 + "AND (:status IS NULL OR o.status = :status) ORDER BY o.createdAt DESC",
+           countQuery = "SELECT COUNT(o) FROM Order o WHERE o.customer.id = :customerId "
+                      + "AND (:status IS NULL OR o.status = :status)")
+    Page<Order> findForBuyer(@Param("customerId") Long customerId,
+                             @Param("status") OrderStatus status, Pageable pageable);
+
+    /**
+     * The order behind a public tracking code.
+     *
+     * <p>No ownership check, deliberately: the code is the credential, and the
+     * person holding it is a recipient who has no account to be checked against.
+     * What protects this is that the code is unguessable and the page it serves
+     * carries nothing worth stealing.
+     */
+    Optional<Order> findByTrackingCode(String trackingCode);
+
+    boolean existsByTrackingCode(String trackingCode);
+
     Optional<Order> findByOrderNumber(String orderNumber);
 
     Page<Order> findByStatus(OrderStatus status, Pageable pageable);
@@ -36,6 +90,38 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     BigDecimal sumRevenueByStatus(@Param("status") OrderStatus status);
 
     long countByStatus(OrderStatus status);
+
+    /**
+     * The administrative order search.
+     *
+     * <p>{@code destinationCountry} is a filter in its own right and not a proxy
+     * for the buyer: on this platform the payer and the delivery are routinely
+     * in different countries (C1), so "orders going to The Gambia" and "orders
+     * from Gambian buyers" are different questions and only one of them is what
+     * a dispatcher means.
+     *
+     * <p>{@code stuckSince} is what a stuck-order sweep reads — not how old an
+     * order is, but how long it has sat without moving.
+     */
+    @Query("""
+            SELECT o FROM Order o WHERE
+              (:status IS NULL OR o.status = :status)
+              AND (:destinationCountry IS NULL OR o.shippingCountry = :destinationCountry)
+              AND (:vendorId IS NULL OR EXISTS (
+                   SELECT 1 FROM VendorOrder vo WHERE vo.order = o AND vo.vendor.id = :vendorId))
+              AND (:stuckSince IS NULL OR o.updatedAt < :stuckSince)
+              AND (:q IS NULL OR
+                   LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', :q, '%')) OR
+                   LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', :q, '%')) OR
+                   LOWER(o.customer.email) LIKE LOWER(CONCAT('%', :q, '%')))
+            ORDER BY o.createdAt DESC
+            """)
+    Page<Order> adminSearch(@Param("q") String q,
+                            @Param("status") OrderStatus status,
+                            @Param("destinationCountry") String destinationCountry,
+                            @Param("vendorId") Long vendorId,
+                            @Param("stuckSince") LocalDateTime stuckSince,
+                            Pageable pageable);
 
     // ── Revenue analytics ────────────────────────────────────────────────────
 
