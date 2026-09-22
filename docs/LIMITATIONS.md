@@ -22,7 +22,18 @@
 
 ## 1. Blockers
 
-### 🔴 1.1 An ordinary customer can modify and delete other accounts
+### ✅ 1.1 An ordinary customer can modify and delete other accounts — **FIXED**
+
+> All thirteen rules on `UserController` are now `@PreAuthorize`, with path
+> rules in `SecurityConfig` as a second lock and `UserAccountSecurityTest`
+> (10 tests) pinning it — asserting that the service is **never reached**, not
+> merely that the status is 403. The account below is kept as the record.
+>
+> **One instance of the same defect remains**, in `VendorServiceImpl` lines 142
+> and 205. It is not currently reachable (`VendorController` guards both routes
+> with a correct `@PreAuthorize`), and it is a two-line fix —
+> [`CODE-REVIEW.md` §2.2](CODE-REVIEW.md).
+
 
 **Where.** `UserController` — 11 mutating endpoints under `/api/users/**` carry
 `@PostAuthorize` instead of `@PreAuthorize`.
@@ -37,11 +48,9 @@ these handlers.
 `DELETE /api/users/1007/permanent`, receives 403, and user 1007 is gone. The
 same applies to editing any profile and to block/unblock/fraud/enable/disable.
 
-**Fix.** Swap the annotation on every write, plus path rules as a second lock.
-Full detail and a regression test in
+**Fix applied.** Swapped the annotation on every rule, added path rules as a
+second lock, and added a regression test. Full detail in
 [`CODE-REVIEW.md` §2.1](CODE-REVIEW.md#21-postauthorize-on-mutating-endpoints-authorises-after-the-write-has-committed).
-
-**Effort:** hours.
 
 ---
 
@@ -512,10 +521,13 @@ Things the marketplace does not do, which a reviewer may reasonably expect.
 
 | # | Item | Why now | Effort |
 |---|---|---|---|
-| 1 | 🔴 Fix the `@PostAuthorize` writes (§1.1) | A customer can delete accounts today | hours |
+| ~~1~~ | ~~🔴 Fix the `@PostAuthorize` writes (§1.1)~~ | | ✅ done |
+| ~~3~~ | ~~🔵 Stop defaulting to the `dev` profile~~ | | ✅ done |
+| ~~4~~ | ~~🔵 Fix `requireOwnedAddress`~~ | | ✅ done |
+| **1** | 🟠 The last `@PostAuthorize` write, `VendorServiceImpl` 142 and 205 ([`CODE-REVIEW.md` §2.2](CODE-REVIEW.md)) | Not reachable today, but the annotation reads as though it protects | minutes |
 | 2 | 🔴 Add Flyway and a reviewed baseline (§1.2) | There is otherwise no way to deploy a schema | days |
-| 3 | 🔵 Stop defaulting to the `dev` profile ([`CODE-REVIEW.md` §6.6](CODE-REVIEW.md)) | A forgotten env var turns on the mock payment gateway | minutes |
-| 4 | 🔵 Fix `requireOwnedAddress` ([`CODE-REVIEW.md` §4.1](CODE-REVIEW.md)) | It confirms another user's address exists | minutes |
+| 2b | 🟠 `UpdatePreferencesRequest` binds nothing a client sends ([`CODE-REVIEW.md` §6.7](CODE-REVIEW.md)) | A settings screen that answers 200 and changes nothing | minutes |
+| 2c | 🟠 Orders disclose their existence ([`CODE-REVIEW.md` §4.3](CODE-REVIEW.md)) | 400 for somebody else's order, 404 for a missing one | hours |
 | 5 | 🟠 Decide and document the CORS posture (§4.1) | Front-end work is blocked on the answer | hours |
 | 6 | 🟠 CI pipeline running tests + the e2e collection (§4.3) | Nothing currently guarantees the suite ran | 1 day |
 | 7 | 🟠 Rate limiting at the proxy (§4.2) | `/geo/validate-address` spends real money per call | hours |
@@ -548,9 +560,10 @@ will happen when a sender exists. There are **zero** `TODO` or `FIXME` markers
 in 87,000 lines, because the unfinished work is described where it will be read
 rather than parked where it will not.
 
-The one item that is genuinely unnoticed rather than deferred is §1.1, and it
-sits on the legacy surface — the part of the code written before the
-constitution the rest of the application is built to.
+The items that were genuinely unnoticed rather than deferred — §1.1, and the
+two found while fixing it (`CODE-REVIEW.md` §4.3 and §6.7) — all sit on the
+legacy `/api/**` surface, the part of the code written before the constitution
+the rest of the application is built to. §1.1 is now fixed.
 
 That pattern — deliberate scope, named gaps, and the defects clustered where the
 current discipline has not yet reached — is a good sign about the codebase, not

@@ -66,7 +66,49 @@ If the seed fails on its first `DELETE`, the database is older than the code:
 start the application once on current code, then re-run the seed. The seed's own
 header lists every error message and its cause.
 
-### 1.3 Tools
+### 1.3 Sample data in Java, as an alternative to the SQL seed
+
+```bash
+mvn -o spring-boot:run -Dspring-boot.run.profiles=sample
+# or layered onto another profile's database:
+mvn -o spring-boot:run -Dspring-boot.run.profiles=e2e,sample
+```
+
+`com.sujula.config.seed.SampleDataSeeder` is the Java counterpart of
+`dev-seed.sql`. The difference is what each is *for*: the SQL file describes a
+MySQL database and has to be run by hand; this runs itself against whatever
+database the application booted with, because the thing being sampled is the
+object model rather than a dialect.
+
+**Why it is the better fixture for most manual testing.** It fills every
+persistent entity, and every entity that has states gets a row **in each of
+them** — an order in each `OrderStatus`, a shipment in each `ShipmentStatus`, a
+driver who was rejected and one out delivering, a dispute open and one resolved
+each way. *"Sampling a single happy row tells you almost nothing; the point of
+this dataset is that the awkward rows are already there."*
+
+`SampleDataSeederTest` reads the entity list from **Hibernate's own metamodel**
+rather than a written-down list, so adding an entity and forgetting to seed it
+fails the test by construction.
+
+Two things to know before using it:
+
+- **It writes nothing when the database already holds users**, so restarting is
+  safe. To seed again, drop the schema first — deliberately a manual act.
+- **The background workers are off** under this profile. The dataset is full of
+  rows they would act on — a webhook waiting to be retried, a half-finished
+  import, a queued export, an expired guest cart — and every one of those is a
+  state worth being able to look at. Switch one back on to watch it work.
+
+> **Never deploy under `sample`.** The seeded accounts share one published
+> password, and the field-encryption key is in the properties file.
+
+**Which fixture to use:** the SQL seed when you are testing against MySQL and
+want the exact scenario this documentation refers to (Oliver, Lamin, Awa, the
+codes in §2). The Java seeder when you want *every* state reachable, including
+the ones the SQL seed does not cover.
+
+### 1.4 Tools
 
 Either import `e2e/sujula.postman_collection.json` and
 `e2e/sujula.postman_environment.json` into Postman, or use `curl`. Both are used
@@ -400,8 +442,8 @@ These are the rows to run **twice**: once as written, once trying to break them.
 
 | # | Do | Expect | P/F |
 |---|---|---|---|
-| K1 | ⚠ **As an ordinary CUSTOMER:** `DELETE /api/users/{someone else}/permanent` | **Should be 403 with the account intact.** **Today the response is 403 and the account is deleted.** This is `CODE-REVIEW.md` §2.1 — **must be fixed before release** | |
-| K2 | As a CUSTOMER: `PUT /api/users/{someone else}` with a changed name | Same defect. Check the row afterwards, not just the status code | |
+| K1 | **As an ordinary CUSTOMER:** `DELETE /api/users/{someone else}/permanent` | **403, and the account is still there.** Check the row, not just the status — the status was always right. ✅ fixed; `UserAccountSecurityTest` pins it | |
+| K2 | As a CUSTOMER: `PUT /api/users/{someone else}` with a changed name | 403, **and the name unchanged**. Check the row afterwards, not just the status code | |
 | K3 | As a CUSTOMER: `GET /api/users?role=ADMIN` | 403 — signed in, not permitted (a read, so nothing is written) | |
 | K3b | Anonymous: `GET /orders` | **401**, JSON body, not an empty 403 | |
 | K4 | `GET /v3/api-docs` and `/openapi.json` on a **prod-profile** server, anonymously | **Not 200.** The document maps every path and request shape | |
@@ -423,7 +465,10 @@ These are the rows to run **twice**: once as written, once trying to break them.
 | K20 | Start the app with `sujula.payment.mock.enabled=true` and `SPRING_PROFILES_ACTIVE=prod` | **Refuses to start** | |
 | K21 | Start under `prod` with **no** `sujula.auth.jwt.secret` | **Refuses to start** | |
 | K22 | Start with a `base-currency` not in the configured list | **Refuses to start** | |
-| K23 | ⚠ Start with **no** `SPRING_PROFILES_ACTIVE` at all | Today it silently becomes **`dev`** — mock payments on, schema auto-updated, docs public, insecure cookie. See `CODE-REVIEW.md` §6.6 | |
+| K23 | Start with **no** `SPRING_PROFILES_ACTIVE` at all | **No profile, so nothing starts** — the datasource has no default either. It used to become `dev` silently, with mock payments on and the docs public. ✅ fixed | |
+| K23b | As a CUSTOMER: `GET /api/user/addresses/{someone else's}` then place an order against it | Not found, **and the same answer as a missing id** — no 400 saying it belongs to somebody else. ✅ fixed | |
+| K23c | ⚠ As a CUSTOMER: `GET /api/user/orders/{someone else's order}` | **Today: 400 with "Order does not belong to this user"**, where a missing one answers 404 — so order ids can be tested for existence. `CODE-REVIEW.md` §4.3, **not yet fixed** | |
+| K23d | ⚠ `PATCH /api/users/{your own id}/preferences` with `{"preferredCurrency":"GMD"}` | **Today: 200, and nothing changes** — the DTO binds only `PreferredCurrency`. `CODE-REVIEW.md` §6.7, **not yet fixed** | |
 | K24 | Search the whole log for a handover code, a release code, a token, an account number | **Nothing found** | |
 | K25 | Call `POST /geo/validate-address` 200 times in a minute | ⚠ No limit today. Each call spends a paid Google request. Confirm your proxy limits it — see `OPERATIONS.md` | |
 | K26 | From a different origin, `fetch()` any endpoint in a browser | Blocked (no CORS is configured). Confirm this matches your deployment plan | |
@@ -501,7 +546,8 @@ mvn -o test -Djava.version=21     # 1,233 tests, 90 classes
 cd e2e && ./run.sh                # 432 operations against a live server
 ```
 
-**Verified at the time of writing: 1,233 tests, 0 failures, 0 errors, 0 skipped.**
+**Verified at the time of writing: 1,248 tests, 0 failures, 0 errors, 0 skipped**
+across 92 classes.
 
 | Layer | Covers |
 |---|---|
@@ -542,10 +588,10 @@ for the six test files that would cover most of that risk.
 | H — Fulfilment | 8 | | | | | |
 | I — Pickup | 9 | | | | | |
 | J — Admin | 16 | | | | | |
-| K — Security | 26 | | | | | |
+| K — Security | 30 | | | | | |
 | L — Resilience | 10 | | | | | |
 | M — Client applications | 29 | | | | | |
-| **Total** | **240** | | | | | |
+| **Total** | **244** | | | | | |
 
 **Environment tested against:**
 
@@ -556,7 +602,7 @@ for the six test files that would cover most of that risk.
 
 **Release gate — all of these must be true:**
 
-- [ ] **K1 and K2 pass** (`CODE-REVIEW.md` §2.1 is fixed)
+- [x] ~~K1 and K2 pass~~ — `CODE-REVIEW.md` §2.1 is fixed and pinned by a test
 - [ ] Every row in Suite K passes
 - [ ] Every **refusal** row across all suites refuses
 - [ ] The `SECURITY.md` §9 deployment checklist is complete

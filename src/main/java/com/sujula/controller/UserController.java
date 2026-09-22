@@ -18,7 +18,6 @@ import jakarta.validation.Valid;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PostAuthorize;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,6 +31,30 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 
+/**
+ * Accounts, on the older surface. {@code /auth} and {@code /me} are the
+ * replacements; this remains because clients still call it.
+ *
+ * <h2>Why every rule here is {@code @PreAuthorize}</h2>
+ *
+ * <p>{@code @PostAuthorize} evaluates <em>after</em> the annotated method has
+ * returned, and the transaction lives on the service method — so it has already
+ * committed by the time the check runs. A refusal at that point answers 403 and
+ * leaves the write in the database, which is not a refusal at all. Every rule
+ * below is therefore evaluated before the call.
+ *
+ * <p>Nothing is lost by the move: not one of these expressions reads
+ * {@code returnObject}. They test the caller's role, or compare the caller
+ * against {@code #id} — which is a method argument and is available before the
+ * method runs.
+ *
+ * <p>{@code @PostAuthorize} remains correct for a <em>read</em> whose permission
+ * depends on the row that came back. There is no such case on this class.
+ *
+ * <p>The annotations are not the only lock. {@code SecurityConfig} carries path
+ * rules over the administrative routes here, because an annotation is a thing
+ * that can be left off the one endpoint that mattered.
+ */
 @RestController
 @RequestMapping("/api/users")
 public class UserController {
@@ -106,26 +129,26 @@ public class UserController {
     }
 
     @PutMapping("/{id}")
-    @PostAuthorize("hasRole('ADMIN') or @userSecurity.isSelf(authentication, #id)")
+    @PreAuthorize("hasRole('ADMIN') or @userSecurity.isSelf(authentication, #id)")
     public ResponseEntity<UserResponse> update(@PathVariable Long id, @Valid @RequestBody UserRequest request) {
         return ResponseEntity.ok(userService.updateUser(id, request));
     }
 
     @PutMapping("/{id}/password")
-    @PostAuthorize("hasRole('ADMIN') or @userSecurity.isSelf(authentication, #id)")
+    @PreAuthorize("hasRole('ADMIN') or @userSecurity.isSelf(authentication, #id)")
     public ResponseEntity<Void> changePassword(@PathVariable Long id, @Valid @RequestBody ChangePasswordRequest request) {
         userService.changePassword(id, request.getCurrentPassword(), request.getNewPassword());
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/{id}/password/verify")
-    @PostAuthorize("hasRole('ADMIN') or @userSecurity.isSelf(authentication, #id)")
+    @PreAuthorize("hasRole('ADMIN') or @userSecurity.isSelf(authentication, #id)")
     public ResponseEntity<Boolean> verifyPassword(@PathVariable Long id, @Valid @RequestBody VerifyPasswordRequest request) {
         return ResponseEntity.ok(userService.verifyPassword(id, request.getPassword()));
     }
 
     @PatchMapping("/{id}/preferences")
-    @PostAuthorize("hasRole('ADMIN') or @userSecurity.isSelf(authentication, #id)")
+    @PreAuthorize("hasRole('ADMIN') or @userSecurity.isSelf(authentication, #id)")
     public ResponseEntity<UserResponse> updatePreferences(@PathVariable Long id, @RequestBody UpdatePreferencesRequest request) {
         return ResponseEntity.ok(userService.updatePreferences(id, request.getPreferredCurrency(), request.getPreferredLanguage()));
     }
@@ -133,7 +156,7 @@ public class UserController {
     // --- Admin only ------------------------------------------------------------------------
 
     @GetMapping
-    @PostAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<PagedResponse<UserResponse>> findAll(
             @RequestParam UserRole role,
             @RequestParam(defaultValue = "0") int page,
@@ -142,19 +165,19 @@ public class UserController {
     }
 
     @GetMapping("/by-email")
-    @PostAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UserResponse> findByEmail(@RequestParam String email) {
         return ResponseEntity.ok(userService.findByEmail(email));
     }
 
     @PatchMapping("/{id}/block")
-    @PostAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UserResponse> block(@PathVariable Long id, @RequestBody BlockUserRequest request) {
         return ResponseEntity.ok(userService.blockUser(id, request.isBlocked(), request.isFraud()));
     }
 
     @PatchMapping("/{id}/unblock")
-    @PostAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UserResponse> unblock(@PathVariable Long id) {
         return ResponseEntity.ok(userService.unblockUser(id));
     }
@@ -166,32 +189,32 @@ public class UserController {
     }
 
     @PatchMapping("/{id}/fraud")
-    @PostAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UserResponse> markFraud(@PathVariable Long id, @RequestParam boolean fraud) {
         return ResponseEntity.ok(userService.markFraud(id, fraud));
     }
 
     @PatchMapping("/{id}/enable")
-    @PostAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UserResponse> enable(@PathVariable Long id) {
         return ResponseEntity.ok(userService.enableUser(id));
     }
 
     @PatchMapping("/{id}/disable")
-    @PostAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<UserResponse> disable(@PathVariable Long id) {
         return ResponseEntity.ok(userService.disableUser(id));
     }
 
     @DeleteMapping("/{id}")
-    @PostAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> deleteById(@PathVariable Long id) {
         userService.deleteById(id);
         return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/{id}/permanent")
-    @PostAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> deletePermanently(@PathVariable Long id) {
         userService.deleteAccountPermanently(id);
         return ResponseEntity.noContent().build();

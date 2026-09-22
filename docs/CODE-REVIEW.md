@@ -69,12 +69,14 @@ near the **legacy `/api/**` surface**; the current flat-path surface is clean.
 
 | # | Finding | Severity |
 |---|---|---|
-| [2.1](#21-postauthorize-on-mutating-endpoints-authorises-after-the-write-has-committed) | `@PostAuthorize` on 11 mutating endpoints — the write commits, *then* 403 | **Critical** |
+| [2.1](#21-postauthorize-on-mutating-endpoints-authorises-after-the-write-has-committed) | ~~`@PostAuthorize` on 11 mutating endpoints — the write commits, *then* 403~~ | ✅ **FIXED** |
 | [2.2](#22-postauthorize-on-two-write-methods-in-vendorserviceimpl) | Same pattern in `VendorServiceImpl` (not currently exploitable) | High (latent) |
 | [3.1](#31-two-parallel-api-generations) | Two parallel API generations, 116 legacy operations | High (structural) |
 | [3.2](#32-ordercontroller-returns-jpa-entities-across-the-http-boundary) | `OrderController` returns JPA entities across the HTTP boundary | High |
-| [4.1](#41-requireownedaddress-confirms-that-somebody-elses-address-exists) | `requireOwnedAddress` confirms another user's address exists, with the wrong status | Medium |
-| [4.2](#42-findbyid-then-compare-where-the-house-rule-says-put-it-in-the-query) | `findById`-then-compare in five services | Low |
+| [4.1](#41-requireownedaddress-confirms-that-somebody-elses-address-exists) | ~~`requireOwnedAddress` confirms another user's address exists~~ | ✅ **FIXED** |
+| [4.2](#42-findbyid-then-compare-where-the-house-rule-says-put-it-in-the-query) | `findById`-then-compare in four remaining services | Low |
+| [4.3](#43-an-orders-existence-is-disclosed-the-way-an-addresss-used-to-be) | An order's existence is disclosed the way an address's used to be | Medium |
+| [6.7](#67-patch-apiusersidpreferences-binds-nothing-a-client-would-send) | `PATCH /api/users/{id}/preferences` binds nothing a client would send | Medium |
 | [5.1](#51-currencycatalogueround-is-not-on-the-money-paths-that-need-it) | `CurrencyCatalogue.round` not on the money paths that need it (C2) | High |
 | [5.2](#52-no-sms-sender-so-c5s-design-target-is-reached-by-proxy) | No SMS sender, so C5's design target is reached by proxy (C5) | Medium |
 | [5.3](#53-the-quote-refuses-rather-than-holds) | Checkout re-prices and refuses rather than honouring the frozen quote (C2) | Medium |
@@ -83,7 +85,7 @@ near the **legacy `/api/**` surface**; the current flat-path surface is clean.
 | [6.3](#63-no-cors-configuration) | No CORS configuration | Medium (operational) |
 | [6.4](#64-no-explicit-security-response-headers) | No explicit CSP or security-header policy | Low |
 | [6.5](#65-no-general-purpose-rate-limiting) | No general-purpose rate limiting | Medium |
-| [6.6](#66-base-configuration-defaults-to-the-dev-profile) | Base configuration defaults to the `dev` profile | Low |
+| [6.6](#66-base-configuration-defaults-to-the-dev-profile) | ~~Base configuration defaults to the `dev` profile~~ | ✅ **FIXED** |
 | [7.x](#7-test-coverage-gaps) | Coverage gaps: legacy cart, categories, product Q&A, six workers | Medium |
 
 ---
@@ -91,6 +93,17 @@ near the **legacy `/api/**` surface**; the current flat-path surface is clean.
 ## 2. Correctness: authorization
 
 ### 2.1 `@PostAuthorize` on mutating endpoints authorises *after* the write has committed
+
+> ## ✅ FIXED
+>
+> All thirteen rules on `UserController` are now `@PreAuthorize`; not one of
+> them read `returnObject`, so each evaluates identically before the call.
+> `SecurityConfig` additionally carries path rules over the administrative
+> routes, as a second lock. `UserAccountSecurityTest` (10 tests) pins it, and
+> its load-bearing assertion is `verify(users, never())` — **the service must
+> not be reached at all**, which is what a status-only test would have missed.
+>
+> The description below is kept as the record of what was wrong.
 
 **`src/main/java/com/sujula/controller/UserController.java`**, lines
 **109, 115, 122, 128, 136, 145, 151, 157, 169, 175, 181, 187, 194**.
@@ -302,6 +315,15 @@ and an email.
 
 ### 4.1 `requireOwnedAddress` confirms that somebody else's address exists
 
+> ## ✅ FIXED
+>
+> Now one call to `findLiveByIdAndUserId`, answering not-found in both cases.
+> It also excludes a soft-deleted row, which matches what the address book
+> already does — an address the buyer deleted is a 404 from
+> `GET /me/addresses/{id}`, so it is not one they can be shown and then pick at
+> checkout. Orders already placed against it still resolve; the row is retained
+> for exactly that.
+
 **`src/main/java/com/sujula/service/impl/OrderServiceImpl.java:1417-1424`**
 
 ```java
@@ -353,6 +375,8 @@ by how close to money or identity they sit.
 | `service/impl/VendorServiceImpl.java` | 216 | a lookup on a user already resolved from the vendor; harmless |
 | `service/store/impl/StoreServiceImpl.java` | 701 | filter inside a larger query |
 
+(`OrderServiceImpl.requireOwnedAddress` was the fifth and is now §4.1, fixed.)
+
 **Recommendation.** Only `ReviewModerationServiceImpl` is worth changing on its
 own; the others are already returning the right status and their comments show
 the reasoning was done. If you touch them, add the repository method rather than
@@ -365,6 +389,42 @@ methods exist (`findLiveByIdAndUserId`, `findByIdAndVendorId`,
 `findByIdAndOwnerIdWithHours`, `findByVendorIdAndUserId`, `findByIdAndUserId`)
 and the `/vendor`, `/driver`, `/me` and `/orders` surfaces use them
 consistently.
+
+---
+
+### 4.3 An order's existence is disclosed the way an address's used to be
+
+Found while fixing §4.1: the same shape, one row further out.
+
+| File | Line |
+|---|---|
+| `service/impl/OrderServiceImpl.java` | 506, 540, 562 |
+| `service/impl/PaymentServiceImpl.java` | 850 |
+| `controller/OrderController.java` | 180 |
+
+```java
+throw new BadRequestException("Order does not belong to this user");
+```
+
+**Why it matters.** A missing order answers 404; somebody else's answers **400
+with that sentence**. So an order id can be tested for existence by anybody
+signed in — and an order id is a short number. What it confirms is that
+somebody bought something.
+
+`CheckoutServiceImpl.requireOwnOrder` on the current surface already does this
+correctly, and says why in a comment: *"Not-found rather than forbidden for
+somebody else's, because confirming order 4102 exists tells whoever guessed it
+that somebody bought something."* The legacy paths never got the same
+treatment.
+
+**Fix.** `OrderRepository` already has `findByIdAndBuyerId`. Resolve through it
+and throw `ResourceNotFoundException`, exactly as §4.1 now does. Five call
+sites; each is a two-line change. Worth doing as one commit with a test, rather
+than piecemeal.
+
+**Not done here** because it is outside the three fixes that were asked for, and
+because `OrderController` is also the class that returns JPA entities (§3.2) —
+whoever takes that on should take this with it.
 
 ---
 
@@ -554,6 +614,14 @@ five paths is the minimum.
 
 ### 6.6 Base configuration defaults to the `dev` profile
 
+> ## ✅ FIXED
+>
+> `spring.profiles.active=${SPRING_PROFILES_ACTIVE:}` — no default, the same
+> discipline `spring.datasource.url` already had. A deployment that forgets the
+> variable now starts nothing rather than starting `dev`. `e2e/run.sh` and the
+> documented MySQL procedure both pass an explicit profile, so nothing that
+> worked stops working.
+
 **`application.properties:5`** — `spring.profiles.active=${SPRING_PROFILES_ACTIVE:dev}`.
 
 A deployment that forgets `SPRING_PROFILES_ACTIVE` starts under `dev`, which
@@ -581,6 +649,50 @@ spring.profiles.active=${SPRING_PROFILES_ACTIVE:}
 
 and have developers pass `-Dspring.profiles.active=dev`, which the dev profile's
 own header already tells them to do.
+
+### 6.7 `PATCH /api/users/{id}/preferences` binds nothing a client would send
+
+Found while writing the regression test for §2.1.
+
+**`dto/request/user/UpdatePreferencesRequest.java`**
+
+```java
+@Getter
+public class UpdatePreferencesRequest {
+    private String PreferredCurrency;    // ← capital P
+    private String PreferredLanguage;    // ← capital P
+}
+```
+
+The fields are named with a capital initial, and binding on this DTO is by
+**field name**. Verified directly against the application's own `ObjectMapper`:
+
+```
+{"preferredCurrency":"GMD"}   →  null      ← what every client sends
+{"PreferredCurrency":"GMD"}   →  "GMD"
+```
+
+**So the endpoint answers 200 and changes nothing.** A buyer setting their
+display currency through this route is silently ignored — no validation error,
+no refusal, just a response that looks like success. That is the worst shape a
+bug can have on a settings screen: the user believes they have changed
+something.
+
+Sibling DTOs (`LoginRequest`, `ChangePasswordRequest`) name their fields in
+lower camel case and bind correctly, so this is one class rather than a pattern.
+
+**Fix.** Rename the two fields to `preferredCurrency` / `preferredLanguage`.
+Lombok's generated getters are already `getPreferredCurrency()` /
+`getPreferredLanguage()`, so `UserController` needs no change. One file, two
+lines — but it is a **wire-format change** for anything that had discovered the
+capitalised keys, so it belongs in a commit that says so.
+
+`UserAccountSecurityTest.aCustomerMayStillChangeTheirOwnPreferences` matches the
+values loosely for this reason, with a comment: asserting the broken shape would
+make it harder to fix.
+
+**Not done here** — outside the three fixes asked for, and it changes a request
+contract rather than closing a hole.
 
 ---
 
@@ -651,10 +763,12 @@ file, which is part of why §2.1 and §3.2 both live there.
 
 | Order | Item | Effort |
 |---|---|---|
-| 1 | §2.1 — `@PreAuthorize` on `UserController`'s 11 mutating endpoints + path rules + regression test | hours |
-| 2 | §2.2 — same on `VendorServiceImpl` lines 142, 205 | minutes |
-| 3 | §4.1 — `requireOwnedAddress` via `findLiveByIdAndUserId` | minutes |
-| 4 | §6.6 — stop defaulting to `dev` | minutes |
+| ~~1~~ | ~~§2.1 — `@PreAuthorize` on `UserController`'s 11 mutating endpoints + path rules + regression test~~ | ✅ done |
+| ~~3~~ | ~~§4.1 — `requireOwnedAddress` via `findLiveByIdAndUserId`~~ | ✅ done |
+| ~~4~~ | ~~§6.6 — stop defaulting to `dev`~~ | ✅ done |
+| **1** | §2.2 — same `@PostAuthorize` fix on `VendorServiceImpl` lines 142, 205. **Two lines, and the only remaining instance of the §2.1 defect** | minutes |
+| 2 | §6.7 — rename the two `UpdatePreferencesRequest` fields | minutes |
+| 3 | §4.3 — resolve orders through `findByIdAndBuyerId`, answer 404 | hours |
 | 5 | §6.3 — decide and document the CORS posture | hours |
 | 6 | §3.2 — DTOs for `OrderController`, guest paths first | days |
 | 7 | §5.1 — `CurrencyCatalogue.round` on payouts, then ledger, then totals, then legs | days |

@@ -445,6 +445,33 @@ public class SecurityConfig {
                                 // Verified by shared secret inside the controller.
                                 "/api/payments/callback"
                         ).permitAll()
+
+                        // The administrative half of the older accounts surface.
+                        //
+                        // Stated as paths as well as annotations, and the
+                        // duplication is the point. Every method on
+                        // UserController already carries a @PreAuthorize; this
+                        // is what holds when somebody adds a method and does
+                        // not. The same argument StaffCaller makes for /admin —
+                        // the annotation that gets forgotten is on the one
+                        // endpoint that mattered — applies here, and this
+                        // surface had not had it.
+                        //
+                        // Reading the list of accounts, or finding one by
+                        // address, is an administrator's view of everybody on
+                        // the platform.
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/users", "/api/users/by-email").hasRole("ADMIN")
+                        // Shutting an account, flagging it, or lifting either.
+                        // The self-service equivalents live on /me.
+                        .requestMatchers(HttpMethod.PATCH,
+                                "/api/users/*/block", "/api/users/*/unblock",
+                                "/api/users/*/fraud", "/api/users/*/enable",
+                                "/api/users/*/disable", "/api/users/*/unlock").hasRole("ADMIN")
+                        // Removing an account, soft or otherwise. A user erasing
+                        // their own does it through DELETE /me, which is a
+                        // request rather than an execution.
+                        .requestMatchers(HttpMethod.DELETE, "/api/users/**").hasRole("ADMIN")
                         // The cart is the storefront's front door: a shopper fills
                         // one before deciding whether to sign in, and the controller
                         // issues its own HttpOnly cookie to tell guest carts apart.

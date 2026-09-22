@@ -1414,13 +1414,29 @@ public class OrderServiceImpl implements OrderService {
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
     }
 
+    /**
+     * An address this buyer owns and has not deleted.
+     *
+     * <p>Ownership is in the query. It used to load by id and compare the owner
+     * afterwards, which is the shape that eventually ships with the comparison
+     * missing — and it leaked while the comparison was still there: a missing
+     * row answered "Address not found" and somebody else's answered "Address
+     * does not belong to this user", so guessing ids told you which ones
+     * existed. An address carries a name, a phone number and a location, and
+     * confirming one exists is itself worth withholding.
+     *
+     * <p>Both cases are now the same not-found, because the database is asked
+     * for "this id, belonging to this person" and returns nothing either way.
+     *
+     * <p>{@code findLiveByIdAndUserId} also excludes a soft-deleted row, which
+     * is the behaviour the address book already has: an address the buyer
+     * deleted is a 404 from {@code GET /me/addresses/{id}}, so it is not one
+     * they can be shown and then pick at checkout. Orders already placed
+     * against it still resolve — the row is retained for exactly that.
+     */
     private Address requireOwnedAddress(Long addressId, Long userId) {
-        Address address = addressRepository.findById(addressId)
+        return addressRepository.findLiveByIdAndUserId(addressId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Address", addressId));
-        if (!address.getUser().getId().equals(userId)) {
-            throw new BadRequestException("Address does not belong to this user");
-        }
-        return address;
     }
 
     private static final SecureRandom TRACKING_RANDOM = new SecureRandom();

@@ -87,7 +87,8 @@ Domain terms, statuses, enums and the vocabulary this codebase uses.
 | [`../CLAUDE.md`](../CLAUDE.md) | **The constitution.** The five rules, stated as correctness conditions. Read it first; everything else assumes it |
 | [`../e2e/COLLECTION.md`](../e2e/COLLECTION.md) | Every endpoint, called by every kind of person who can call it |
 | `../e2e/endpoints.json` | All **432** operations with summaries, captured from a live server |
-| `../src/main/resources/db/seed/dev-seed.sql` | The development seed. Its closing 900 lines are a guided tour of the whole system, row by row |
+| `../src/main/resources/db/seed/dev-seed.sql` | The SQL development seed. Its closing 900 lines are a guided tour of the whole system, row by row |
+| `../src/main/java/com/sujula/config/seed/` | The Java sample dataset — every entity, in every state it can hold, against any database. `-Dspring-boot.run.profiles=sample` |
 | Class Javadoc | The real documentation. `CustodyChain`, `CurrencyCatalogue`, `SecurityConfig` and `WebhookSignature` are each worth reading end to end |
 
 ---
@@ -115,7 +116,7 @@ when its tests pass.
 | Controllers · services · repositories · entities | 47 · 47 · 84 · 87 |
 | `@Query` declarations | 332 |
 | Backend source | ~87,000 lines |
-| Backend tests | **1,233**, 90 classes — **0 failures, 0 errors, 0 skipped** |
+| Backend tests | **1,248**, 92 classes — **0 failures, 0 errors, 0 skipped** |
 | Scheduled background jobs | 7 |
 | `TODO` / `FIXME` markers | **0** |
 | Client applications | **5** — `admin`, `vendor-app`, `driver-app`, `pickup-app`, `buyer-app` |
@@ -153,11 +154,19 @@ Four hours, in this order:
 
 ### Three things to know before you decide anything
 
-**🔴 One critical defect.** `@PostAuthorize` on 11 mutating endpoints in
-`UserController` authorises *after* the write has committed. An ordinary
-signed-in customer can delete other accounts; the response is 403 and the row is
-gone. [`CODE-REVIEW.md` §2.1](CODE-REVIEW.md#21-postauthorize-on-mutating-endpoints-authorises-after-the-write-has-committed).
-Hours to fix.
+**✅ The one critical defect is fixed.** `@PostAuthorize` on 11 mutating
+endpoints in `UserController` authorised *after* the write had committed — an
+ordinary signed-in customer could delete other accounts and get a 403 while the
+row went. All thirteen rules are now `@PreAuthorize`, `SecurityConfig` carries
+path rules as a second lock, and `UserAccountSecurityTest` pins it by asserting
+the service is **never reached**.
+[`CODE-REVIEW.md` §2.1](CODE-REVIEW.md#21-postauthorize-on-mutating-endpoints-authorises-after-the-write-has-committed).
+
+**🟠 Two smaller defects of the same family were found while fixing it**, both
+on the legacy surface and both still open: an order's existence is disclosed by
+a 400 where a 404 belongs ([§4.3](CODE-REVIEW.md)), and
+`PATCH /api/users/{id}/preferences` answers 200 having changed nothing because
+its DTO binds only `PreferredCurrency` with a capital P ([§6.7](CODE-REVIEW.md)).
 
 **🔴 Two things block production regardless of code quality.** There is no
 migration tool, so there is no reviewed way to create a production schema

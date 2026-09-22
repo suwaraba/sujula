@@ -35,6 +35,7 @@ and a reverse proxy terminating TLS.
 | `dev` | local development | MySQL on localhost, created on first connect | `ddl-auto=update` — **disposable** |
 | `test` | the JUnit suite | H2 in MySQL mode | generated |
 | `e2e` | the end-to-end collection | in-memory H2 + seed | generated |
+| `sample` | fills a database with a complete dataset | **inherits** — layers onto another profile | — |
 | `prod` | deployment | from the environment, **no fallbacks** | `ddl-auto=validate` |
 
 > ### ⚠ Always set `SPRING_PROFILES_ACTIVE` explicitly
@@ -50,10 +51,13 @@ and a reverse proxy terminating TLS.
 >
 > See [`CODE-REVIEW.md` §6.6](CODE-REVIEW.md) for the one-line fix.
 
-> ### ⚠ Never deploy the `e2e` profile
+> ### ⚠ Never deploy the `e2e` or `sample` profiles
 >
-> Every secret in it is a fixed, published test value. The JWT signing key is in
-> a file in this repository.
+> Every secret in `e2e` is a fixed, published test value — the JWT signing key
+> is in a file in this repository. `sample` gives every seeded account one
+> published password and sets a published field-encryption key, because
+> `EncryptedStringConverter` fails closed and would otherwise skip the payout
+> rows.
 
 ---
 
@@ -226,7 +230,20 @@ a production schema is:
 
 Adopt Flyway before the second schema change.
 
-### 4.2 The development seed
+### 4.2 Fixtures: the Java seeder and the SQL seed
+
+```bash
+# Java: every entity, in every state it can hold. Runs itself, any database.
+mvn -o spring-boot:run -Dspring-boot.run.profiles=sample
+mvn -o spring-boot:run -Dspring-boot.run.profiles=e2e,sample   # layered
+```
+
+Writes nothing when the database already holds users, so restarting is safe; to
+seed again, drop the schema first. Background workers are off under this
+profile so the seeded queues stay observable. See
+[`BACKEND.md` §8.1](BACKEND.md).
+
+### 4.2.1 The SQL development seed
 
 `src/main/resources/db/seed/dev-seed.sql` — 4,435 lines, all 50 tables, one
 coherent dataset. **Never auto-loaded**, and it **deletes before it inserts**.

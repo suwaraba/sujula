@@ -871,6 +871,43 @@ All are registered with `JobRegistry` and visible at `GET /admin/jobs`.
   generated in test is the schema mapped in production.
 - Connection pool: Hikari, `DB_POOL_MAX` (10) / `DB_POOL_MIN` (2), 10s timeout.
 
+### 8.1 Two fixtures, for two different questions
+
+**`com.sujula.config.seed.SampleDataSeeder`** is the Java counterpart of the SQL
+seed, and for most purposes the better one. It runs itself against whatever
+database the application booted with — MySQL, H2, a container a test started —
+*"because the thing being sampled is the object model rather than a dialect."*
+
+Every persistent entity gets rows, and every entity with states gets a row **in
+each state**: an order in each `OrderStatus`, a shipment in each
+`ShipmentStatus`, a driver who was rejected and one out delivering, a dispute
+open and one resolved each way. The design argument is stated in its Javadoc:
+*"Sampling a single happy row tells you almost nothing; the point of this
+dataset is that the awkward rows are already there."*
+
+It is organised into stages — `PeopleStage`, `StoreStage`, `CatalogueStage`,
+`CommerceStage`, `FulfilmentStage`, `LogisticsStage`, `MoneyStage`,
+`FinanceStage`, `AftersalesStage`, `PlatformStage` — each one slice of the
+dataset, written in dependency order.
+
+**`SampleDataSeederTest` reads the entity list from Hibernate's own metamodel**
+rather than from a written-down list, so adding an entity to the application and
+forgetting to seed it fails the test by construction. *"A dataset that silently
+stops being complete is worse than one that was never complete, because people
+go on trusting it."*
+
+Two operational properties: it **writes nothing when the database already holds
+users**, so restarting is safe and repeated starts do not duplicate anything;
+and the **background workers are switched off** under the `sample` profile,
+because the dataset is full of rows they would happily drain a few seconds after
+startup — a webhook waiting to be retried, a half-finished import, a queued
+export — and each of those is a state worth being able to look at.
+
+The SQL seed remains the right fixture when the question is about **MySQL
+specifically**, and it is what this documentation's examples refer to.
+
+### 8.2 The SQL development seed
+
 The development seed (`src/main/resources/db/seed/dev-seed.sql`, 4,435 lines)
 populates all 50 tables with one coherent dataset. It is **never auto-loaded**;
 its own header explains how to run it. Seeded rows use ids ≥ 1000 so they never
@@ -967,6 +1004,7 @@ Full reference: [`OPERATIONS.md`](OPERATIONS.md). Profiles:
 | `dev` | local MySQL on localhost | `ddl-auto=update`, mock gateway on, Swagger UI on, insecure cart cookie |
 | `test` | H2, for the JUnit suite | |
 | `e2e` | whole app on in-memory H2 + seed, one command | **every secret is a fixed published test value** — must never be a deployment profile |
+| `sample` | fills the database with a complete Java-built dataset at startup | layers onto another profile (`-Dspring-boot.run.profiles=e2e,sample`); background workers off; **also a published password and key — never deploy it** |
 | `prod` | everything from the environment, **no fallbacks** | `ddl-auto=validate`, mock gateway off, docs off, forwarded-headers native |
 
 Refusals wired into startup, each because the silent alternative is worse:

@@ -9,9 +9,7 @@
 > point. Part III is the practical part: the settings you must get right, and
 > how to change things safely. Part IV is the honest list of what is missing.
 >
-> **If you read nothing else,** read [§9, the deployment checklist](#9-the-deployment-checklist),
-> and then [§2.1 of `CODE-REVIEW.md`](CODE-REVIEW.md#21-postauthorize-on-mutating-endpoints-authorises-after-the-write-has-committed),
-> which is a real bug that needs fixing before this serves real accounts.
+> **If you read nothing else,** read [§9, the deployment checklist](#9-the-deployment-checklist).
 
 ---
 
@@ -455,19 +453,22 @@ head -c 32 /dev/urandom | base64
 
 ### 3.1 The one configuration mistake to watch for
 
-`application.properties` currently reads:
+`application.properties` now reads:
 
 ```properties
-spring.profiles.active=${SPRING_PROFILES_ACTIVE:dev}
+spring.profiles.active=${SPRING_PROFILES_ACTIVE:}
 ```
 
-**If you deploy and forget to set `SPRING_PROFILES_ACTIVE`, the server starts as
-`dev`** — which enables the mock payment gateway (orders marked paid without
-money moving), lets Hibernate rewrite the schema, serves the API map publicly,
-and sends the cart cookie over plain HTTP.
+**It used to fall back to `dev`**, which meant that deploying and forgetting to
+set `SPRING_PROFILES_ACTIVE` enabled the mock payment gateway (orders marked
+paid without money moving), let Hibernate rewrite the schema, served the API map
+publicly, and sent the cart cookie over plain HTTP. The protections against each
+of those are conditioned on `prod` being *active*, so the one case they did not
+cover was `prod` never being set.
 
-The protections against each of those are conditioned on `prod` being *active*,
-so the one case they do not cover is `prod` never being set.
+With no default, a forgotten variable now starts **nothing** — the same
+discipline `spring.datasource.url` already had. Set it explicitly anyway, and
+check.
 
 **Always set it explicitly, and check it after deploying:**
 
@@ -476,8 +477,8 @@ curl -s localhost:8080/actuator/info    # as an admin
 grep "The following .* profile" application.log
 ```
 
-This is written up as finding §6.6 in [`CODE-REVIEW.md`](CODE-REVIEW.md), with a
-one-line fix.
+Developers pass `-Dspring.profiles.active=dev`, which the dev profile's own
+header already tells them to do.
 
 ## 4. How to make common changes safely
 
@@ -570,7 +571,9 @@ useful.
 
 | Gap | What it means | Where to fix it |
 |---|---|---|
-| **`@PostAuthorize` on writes** ([§2.1](CODE-REVIEW.md)) | An ordinary signed-in customer can delete or edit other accounts through `/api/users/**`. The response is 403; the change persists. | **Fix this first.** Swap to `@PreAuthorize` and add path rules. |
+| ~~**`@PostAuthorize` on writes**~~ | ✅ **Fixed.** Every rule on `UserController` is now `@PreAuthorize`, with path rules in `SecurityConfig` as a second lock and a regression test asserting the service is never reached. | One instance remains in `VendorServiceImpl`, not currently reachable — [§2.2](CODE-REVIEW.md) |
+| **An order's existence is disclosed** ([§4.3](CODE-REVIEW.md)) | A missing order answers 404; somebody else's answers 400 with *"Order does not belong to this user"*, so any signed-in caller can test whether an order id exists. | Resolve through `findByIdAndBuyerId` and answer 404, as the address path now does. |
+| **A settings endpoint that silently does nothing** ([§6.7](CODE-REVIEW.md)) | `PATCH /api/users/{id}/preferences` binds only `PreferredCurrency` (capital P), so the conventional key is ignored and the endpoint answers 200 having changed nothing. | Rename the two DTO fields. |
 | **No CORS policy** | The API is same-origin only. A browser client on a different domain simply cannot call it. **All five clients are built assuming this**, and it is what lets the cookie, the CSRF token and the bearer token work with no cross-origin request. | Deploy behind one reverse proxy (see `OPERATIONS.md`). If you must add CORS, use an explicit configured allow-list. Never `*` with credentials. |
 | **`buyer-app` stores both tokens in `localStorage`** | The other four clients keep the access token in memory. `buyer-app` is also the one rendering the most seller- and buyer-written text through `innerHTML`, so one missed escape would lift a 30-day refresh token. | Move the access token to a module variable, and add a test for the `esc()` helper. [`frontend/BUYER-APP.md` §8.1](frontend/BUYER-APP.md) |
 | **Clients defeat the idempotency layer** | Three of five mint a new `Idempotency-Key` on each attempt, so a retried checkout places a second order and takes a second payment. | Mint the key where the user acts and reuse it across retries, as `driver-app` does. [`frontend/README.md` §6.3](frontend/README.md#63-the-idempotency-key-is-minted-per-attempt-in-three-of-five-apps) |
@@ -589,8 +592,10 @@ Before this application serves a single real account:
 
 **Blockers**
 
-- [ ] **Fix `CODE-REVIEW.md` §2.1.** A signed-in customer can currently delete other accounts.
+- [x] ~~Fix `CODE-REVIEW.md` §2.1~~ — done; `UserAccountSecurityTest` pins it.
 - [ ] `SPRING_PROFILES_ACTIVE=prod` is set, and verified in the startup log.
+      **The application no longer defaults to `dev`**, so an unset variable now
+      starts nothing rather than starting wrongly — but it must still be set.
 - [ ] `SUJULA_AUTH_JWT_SECRET` set, ≥32 bytes, generated from a secure random, unique to this deployment.
 - [ ] `FIELD_ENCRYPTION_KEY` set, exactly 32 bytes base64-encoded, **backed up separately from the database**.
 - [ ] `DB_PASSWORD` set; the database is not reachable from the internet.
