@@ -108,14 +108,14 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query(value      = "SELECT p FROM Product p WHERE p.vendor.id = :vendorId "
                       + "AND (:status IS NULL OR p.status = :status) "
                       + "AND (:includeArchived = TRUE OR p.status <> com.sujula.model.constant.ProductStatus.ARCHIVED) "
-                      + "AND (:search IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) "
-                      + "     OR LOWER(p.sku) LIKE LOWER(CONCAT('%', :search, '%'))) "
+                      + "AND (:search IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:search AS String), '%')) "
+                      + "     OR LOWER(p.sku) LIKE LOWER(CONCAT('%', CAST(:search AS String), '%'))) "
                       + "ORDER BY p.updatedAt DESC",
            countQuery = "SELECT COUNT(p) FROM Product p WHERE p.vendor.id = :vendorId "
                       + "AND (:status IS NULL OR p.status = :status) "
                       + "AND (:includeArchived = TRUE OR p.status <> com.sujula.model.constant.ProductStatus.ARCHIVED) "
-                      + "AND (:search IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')) "
-                      + "     OR LOWER(p.sku) LIKE LOWER(CONCAT('%', :search, '%')))")
+                      + "AND (:search IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:search AS String), '%')) "
+                      + "     OR LOWER(p.sku) LIKE LOWER(CONCAT('%', CAST(:search AS String), '%')))")
     Page<Product> findForVendor(@Param("vendorId") Long vendorId,
                                 @Param("status") com.sujula.model.constant.ProductStatus status,
                                 @Param("includeArchived") boolean includeArchived,
@@ -147,7 +147,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     boolean existsBySkuIgnoreCaseAndVendorId(String sku, Long vendorId);
 
-    @Query("SELECT COUNT(p) > 0 FROM Product p WHERE LOWER(p.sku) = LOWER(:sku) "
+    @Query("SELECT COUNT(p) > 0 FROM Product p WHERE LOWER(p.sku) = LOWER(CAST(:sku AS String)) "
          + "AND p.vendor.id = :vendorId AND p.id <> :exceptId")
     boolean existsBySkuForVendorExcept(@Param("sku") String sku, @Param("vendorId") Long vendorId,
                                        @Param("exceptId") Long exceptId);
@@ -307,7 +307,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     /** A published product by its slug, which is what a public URL carries. */
     @Query("SELECT p FROM Product p LEFT JOIN FETCH p.vendor LEFT JOIN FETCH p.category "
-         + "LEFT JOIN FETCH p.brand WHERE LOWER(p.slug) = LOWER(:slug) AND p.active = true")
+         + "LEFT JOIN FETCH p.brand WHERE LOWER(p.slug) = LOWER(CAST(:slug AS String)) AND p.active = true")
     Optional<Product> findPublishedBySlug(@Param("slug") String slug);
 
     /**

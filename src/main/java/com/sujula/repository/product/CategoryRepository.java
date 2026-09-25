@@ -22,7 +22,7 @@ public interface CategoryRepository extends JpaRepository<Category, Long> {
 
     @Query("""
         SELECT c FROM Category c WHERE c.active = true AND
-        LOWER(c.name) LIKE LOWER(CONCAT('%', :q, '%'))
+        LOWER(c.name) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))
     """)
     List<Category> searchActive(@Param("q") String query);
 

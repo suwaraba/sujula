@@ -93,26 +93,26 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
      */
     @org.springframework.data.jpa.repository.Query(
             value = "SELECT p FROM Payment p JOIN p.order o "
-          + "WHERE (:q IS NULL OR LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', :q, '%')) "
-          + "   OR LOWER(p.reference) LIKE LOWER(CONCAT('%', :q, '%')) "
-          + "   OR LOWER(o.shippingFullName) LIKE LOWER(CONCAT('%', :q, '%')) "
-          + "   OR LOWER(o.billingFullName) LIKE LOWER(CONCAT('%', :q, '%'))) "
+          + "WHERE (:q IS NULL OR LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+          + "   OR LOWER(p.reference) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+          + "   OR LOWER(o.shippingFullName) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+          + "   OR LOWER(o.billingFullName) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))) "
           + "AND (:status IS NULL OR p.status = :status) "
-          + "AND (:currency IS NULL OR UPPER(p.currency) = UPPER(:currency)) "
+          + "AND (:currency IS NULL OR UPPER(p.currency) = UPPER(CAST(:currency AS String))) "
           + "AND (:transactionId IS NULL OR p.transactionId = :transactionId) "
-          + "AND (:from IS NULL OR p.createdAt >= :from) "
-          + "AND (:to IS NULL OR p.createdAt < :to) "
+          + "AND (CAST(:from AS LocalDateTime) IS NULL OR p.createdAt >= :from) "
+          + "AND (CAST(:to AS LocalDateTime) IS NULL OR p.createdAt < :to) "
           + "ORDER BY p.createdAt DESC, p.id DESC",
             countQuery = "SELECT COUNT(p) FROM Payment p JOIN p.order o "
-          + "WHERE (:q IS NULL OR LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', :q, '%')) "
-          + "   OR LOWER(p.reference) LIKE LOWER(CONCAT('%', :q, '%')) "
-          + "   OR LOWER(o.shippingFullName) LIKE LOWER(CONCAT('%', :q, '%')) "
-          + "   OR LOWER(o.billingFullName) LIKE LOWER(CONCAT('%', :q, '%'))) "
+          + "WHERE (:q IS NULL OR LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+          + "   OR LOWER(p.reference) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+          + "   OR LOWER(o.shippingFullName) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+          + "   OR LOWER(o.billingFullName) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))) "
           + "AND (:status IS NULL OR p.status = :status) "
-          + "AND (:currency IS NULL OR UPPER(p.currency) = UPPER(:currency)) "
+          + "AND (:currency IS NULL OR UPPER(p.currency) = UPPER(CAST(:currency AS String))) "
           + "AND (:transactionId IS NULL OR p.transactionId = :transactionId) "
-          + "AND (:from IS NULL OR p.createdAt >= :from) "
-          + "AND (:to IS NULL OR p.createdAt < :to)")
+          + "AND (CAST(:from AS LocalDateTime) IS NULL OR p.createdAt >= :from) "
+          + "AND (CAST(:to AS LocalDateTime) IS NULL OR p.createdAt < :to)")
     Page<Payment> adminSearch(
             @Param("q") String q,
             @Param("status") PaymentStatus status,

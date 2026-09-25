@@ -38,10 +38,10 @@ public interface ExchangeRateRepository extends JpaRepository<ExchangeRate, Long
      * carries a rate, and somebody eventually asks where that rate came from.
      */
     @Query("SELECT r FROM ExchangeRate r "
-         + "WHERE (:currency IS NULL OR UPPER(r.fromCurrency) = UPPER(:currency) "
-         + "     OR UPPER(r.currency) = UPPER(:currency)) "
-         + "AND (:from IS NULL OR r.rateDate >= :from) "
-         + "AND (:to IS NULL OR r.rateDate <= :to) "
+         + "WHERE (:currency IS NULL OR UPPER(r.fromCurrency) = UPPER(CAST(:currency AS String)) "
+         + "     OR UPPER(r.currency) = UPPER(CAST(:currency AS String))) "
+         + "AND (CAST(:from AS LocalDate) IS NULL OR r.rateDate >= :from) "
+         + "AND (CAST(:to AS LocalDate) IS NULL OR r.rateDate <= :to) "
          + "ORDER BY r.rateDate DESC, r.id DESC")
     org.springframework.data.domain.Page<ExchangeRate> history(
             @Param("currency") String currency,

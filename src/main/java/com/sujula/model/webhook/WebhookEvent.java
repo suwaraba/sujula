@@ -3,7 +3,9 @@ package com.sujula.model.webhook;
 import java.time.LocalDateTime;
 
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import com.sujula.model.constant.WebhookKind;
 import com.sujula.model.constant.WebhookStatus;
@@ -97,7 +99,9 @@ public class WebhookEvent {
      * anything re-serialised cannot be checked again — and a dispute about what a
      * provider said is settled by what they said.
      */
-    @Column(nullable = false, columnDefinition = "LONGTEXT")
+    // LONGTEXT on MySQL, text on PostgreSQL: the type, not a vendor keyword.
+    @JdbcTypeCode(SqlTypes.LONG32VARCHAR)
+    @Column(nullable = false)
     private String payload;
 
     /**

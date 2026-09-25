@@ -15,7 +15,7 @@ the mock. So you can connect providers one at a time and restart after each.
 
 | # | Service | Used for | Free option | Required? |
 |---|---|---|---|---|
-| 1 | MySQL | everything | Aiven free MySQL, or TiDB Cloud Serverless | **yes** |
+| 1 | Neon (PostgreSQL) | everything | Neon free plan | **yes** |
 | 2 | Gmail SMTP | account mail, password resets, release codes to the buyer | any Gmail account, ~500/day | recommended |
 | 3 | Twilio | phone-verification codes, **release code texted to the recipient** (C5) | trial credit, verified numbers only | recommended |
 | 4 | Firebase Cloud Messaging | push to the driver, pickup and buyer apps | free, unlimited | optional |
@@ -25,24 +25,24 @@ the mock. So you can connect providers one at a time and restart after each.
 
 ---
 
-## 1. Database: hosted MySQL
+## 1. Database: Neon (PostgreSQL)
 
-**Aiven** (console.aiven.io → Create service → MySQL → *Free plan*):
-
-1. Once the service is running, copy **Host**, **Port**, **User** and **Password**
-   from *Overview → Connection information*.
-2. Create the schema: *Databases → Create database → `sujula`* (or keep
-   `defaultdb` and use that name in the URL).
-3. In `.env`:
+1. console.neon.tech → *New project*. Pick the region closest to where the API
+   will run (Frankfurt, `eu-central-1`, is the nearest to both Madrid and Banjul).
+2. *Connect* → turn **Connection pooling off** so the host has no `-pooler`.
+   The app keeps its own small pool, and the direct connection avoids
+   PgBouncer's transaction-mode limits. You get a string like
+   `postgresql://neondb_owner:abc123@ep-cool-rain-123456.eu-central-1.aws.neon.tech/neondb?sslmode=require`
+3. Split it into `.env`:
    ```
-   DB_URL=jdbc:mysql://<host>:<port>/sujula?sslMode=REQUIRED&serverTimezone=UTC&characterEncoding=UTF-8
-   DB_USERNAME=avnadmin
-   DB_PASSWORD=<password>
+   DB_URL=jdbc:postgresql://ep-cool-rain-123456.eu-central-1.aws.neon.tech/neondb?sslmode=require
+   DB_USERNAME=neondb_owner
+   DB_PASSWORD=abc123
    ```
+   The `jdbc:` prefix is required, and user and password go in their own lines,
+   not in the URL.
 
-**TiDB Cloud Serverless** works the same way. It is MySQL-compatible and needs
-TLS, so the same `sslMode=REQUIRED` URL applies.
-
+The `staging` profile selects the PostgreSQL driver and dialect by default.
 Hibernate creates the tables on first start (`ddl-auto=update`). There is no
 migration tool yet (OPERATIONS §4.1), so treat this database as disposable test
 data. To fill it with a coherent dataset, add the `sample` profile **once**:
@@ -51,7 +51,22 @@ data. To fill it with a coherent dataset, add the `sample` profile **once**:
 mvn -o spring-boot:run -Dspring-boot.run.profiles=staging,sample
 ```
 
-Free tiers cap connections at around 20, so the staging pool is 5 (`DB_POOL_MAX`).
+This has been run end to end against PostgreSQL 16: the schema builds, all 89
+entities are seeded, and search, filters and the nearby-pickup-point query
+answer correctly.
+
+**Neon's auto-suspend.** The free plan suspends the database after a few idle
+minutes and wakes it on the next connection, and compute hours are metered
+while it is awake. The staging pool therefore drains to zero idle connections
+after a minute (`DB_POOL_MIN=0`), so the database can actually go to sleep. The
+first request after a quiet spell waits briefly while it wakes.
+
+**Branches.** Neon can branch a database like git. Make a branch before a
+risky test, point `DB_URL` at it, and delete it afterwards.
+
+**MySQL instead?** Set `DB_DRIVER=com.mysql.cj.jdbc.Driver` and
+`DB_DIALECT=org.hibernate.dialect.MySQLDialect` with a `jdbc:mysql://` URL.
+`dev` and `prod` still default to MySQL.
 
 ## 2. Mail: Gmail
 

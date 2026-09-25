@@ -3,7 +3,9 @@ package com.sujula.model.logistics;
 import java.time.LocalDateTime;
 
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -76,7 +78,9 @@ public class DeliveryZone {
      * every environment, and because a polygon nobody can hand back unchanged is
      * a polygon that cannot be audited.
      */
-    @Column(nullable = false, columnDefinition = "LONGTEXT")
+    // LONGTEXT on MySQL, text on PostgreSQL: the type, not a vendor keyword.
+    @JdbcTypeCode(SqlTypes.LONG32VARCHAR)
+    @Column(nullable = false)
     private String geometry;
 
     // ── Derived bounding box ─────────────────────────────────────────────────

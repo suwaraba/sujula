@@ -74,7 +74,7 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
          + "AND (:country IS NULL OR s.destinationCountry = :country) "
          + "AND (:driverId IS NULL OR EXISTS (SELECT 1 FROM ShipmentLeg l "
          + "     WHERE l.shipment = s AND l.driver.id = :driverId)) "
-         + "AND (:waitingSince IS NULL OR s.updatedAt < :waitingSince) "
+         + "AND (CAST(:waitingSince AS LocalDateTime) IS NULL OR s.updatedAt < :waitingSince) "
          + "ORDER BY s.updatedAt ASC")
     Page<Shipment> findBoard(@Param("status") ShipmentStatus status,
                              @Param("country") String country,

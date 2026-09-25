@@ -42,8 +42,8 @@ public interface PromotionRepository extends JpaRepository<Promotion, Long> {
     @Query("SELECT p FROM Promotion p WHERE p.vendor.id = :vendorId "
          + "AND p.status = com.sujula.model.constant.PromotionStatus.ACTIVE "
          + "AND p.id <> :exceptId "
-         + "AND (:endsAt IS NULL OR p.startsAt IS NULL OR p.startsAt < :endsAt) "
-         + "AND (p.endsAt IS NULL OR :startsAt IS NULL OR p.endsAt > :startsAt)")
+         + "AND (CAST(:endsAt AS LocalDateTime) IS NULL OR p.startsAt IS NULL OR p.startsAt < :endsAt) "
+         + "AND (p.endsAt IS NULL OR CAST(:startsAt AS LocalDateTime) IS NULL OR p.endsAt > :startsAt)")
     List<Promotion> findOverlapping(@Param("vendorId") Long vendorId,
                                     @Param("exceptId") Long exceptId,
                                     @Param("startsAt") LocalDateTime startsAt,

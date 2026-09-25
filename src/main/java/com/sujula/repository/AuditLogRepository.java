@@ -45,22 +45,22 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, Long> {
          + "AND (:action IS NULL OR a.action = :action) "
          + "AND (:targetType IS NULL OR a.targetType = :targetType) "
          + "AND (:targetId IS NULL OR a.targetId = :targetId) "
-         + "AND (:q IS NULL OR LOWER(a.summary) LIKE LOWER(CONCAT('%', :q, '%')) "
-         + "     OR LOWER(a.actorEmail) LIKE LOWER(CONCAT('%', :q, '%')) "
-         + "     OR LOWER(a.targetLabel) LIKE LOWER(CONCAT('%', :q, '%'))) "
-         + "AND (:from IS NULL OR a.createdAt >= :from) "
-         + "AND (:to IS NULL OR a.createdAt < :to) "
+         + "AND (:q IS NULL OR LOWER(a.summary) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+         + "     OR LOWER(a.actorEmail) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+         + "     OR LOWER(a.targetLabel) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))) "
+         + "AND (CAST(:from AS LocalDateTime) IS NULL OR a.createdAt >= :from) "
+         + "AND (CAST(:to AS LocalDateTime) IS NULL OR a.createdAt < :to) "
          + "ORDER BY a.createdAt DESC, a.id DESC",
            countQuery = "SELECT COUNT(a) FROM AuditLog a "
          + "WHERE (:actorId IS NULL OR a.actor.id = :actorId) "
          + "AND (:action IS NULL OR a.action = :action) "
          + "AND (:targetType IS NULL OR a.targetType = :targetType) "
          + "AND (:targetId IS NULL OR a.targetId = :targetId) "
-         + "AND (:q IS NULL OR LOWER(a.summary) LIKE LOWER(CONCAT('%', :q, '%')) "
-         + "     OR LOWER(a.actorEmail) LIKE LOWER(CONCAT('%', :q, '%')) "
-         + "     OR LOWER(a.targetLabel) LIKE LOWER(CONCAT('%', :q, '%'))) "
-         + "AND (:from IS NULL OR a.createdAt >= :from) "
-         + "AND (:to IS NULL OR a.createdAt < :to)")
+         + "AND (:q IS NULL OR LOWER(a.summary) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+         + "     OR LOWER(a.actorEmail) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+         + "     OR LOWER(a.targetLabel) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))) "
+         + "AND (CAST(:from AS LocalDateTime) IS NULL OR a.createdAt >= :from) "
+         + "AND (CAST(:to AS LocalDateTime) IS NULL OR a.createdAt < :to)")
     Page<AuditLog> search(@Param("actorId") Long actorId,
                           @Param("action") AuditAction action,
                           @Param("targetType") String targetType,

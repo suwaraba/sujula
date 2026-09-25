@@ -36,7 +36,7 @@ and a reverse proxy terminating TLS.
 | `test` | the JUnit suite | H2 in MySQL mode | generated |
 | `e2e` | the end-to-end collection | in-memory H2 + seed | generated |
 | `sample` | fills a database with a complete dataset | **inherits** — layers onto another profile | — |
-| `staging` | testing against the real providers with test credentials — see [`INTEGRATIONS.md`](INTEGRATIONS.md) | hosted MySQL from the environment or `.env` | `ddl-auto=update` — **disposable** |
+| `staging` | testing against the real providers with test credentials — see [`INTEGRATIONS.md`](INTEGRATIONS.md) | Neon (PostgreSQL) by default, from the environment or `.env` | `ddl-auto=update` — **disposable** |
 | `prod` | deployment | from the environment, **no fallbacks** | `ddl-auto=validate` |
 
 > ### ⚠ Always set `SPRING_PROFILES_ACTIVE` explicitly
@@ -95,7 +95,8 @@ Everything below is set from the environment. Spring's relaxed binding means
 | `DB_POOL_MIN` | 2 |
 | connection timeout | 10s |
 | `spring.jpa.open-in-view` | `false` |
-| dialect | **pinned** to `MySQLDialect`, never inferred from JDBC metadata |
+| `DB_DRIVER` | `com.mysql.cj.jdbc.Driver` (`staging`: `org.postgresql.Driver`) |
+| `DB_DIALECT` | `org.hibernate.dialect.MySQLDialect` (`staging`: `PostgreSQLDialect`). **Pinned**, never inferred from JDBC metadata |
 
 ### 3.4 Mail
 
