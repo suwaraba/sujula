@@ -33,6 +33,7 @@ import com.sujula.repository.shipment.ShipmentLegRepository;
 import com.sujula.repository.shipment.ShipmentRepository;
 import com.sujula.service.EmailService;
 import com.sujula.service.driver.DriverCustodyService;
+import com.sujula.service.notification.SmsSender;
 import com.sujula.service.platform.FeatureFlags;
 import com.sujula.service.shipment.CustodyChain;
 import com.sujula.service.shipment.Geofence;
@@ -81,13 +82,14 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     private final DriverRepository drivers;
     private final CustodyChain chain;
     private final EmailService email;
+    private final SmsSender sms;
 
     private final com.sujula.service.platform.FeatureFlags flags;
 
     public DriverCustodyServiceImpl(ShipmentRepository shipments, ShipmentLegRepository legs,
                                     CustodyEventRepository events, HandoverCodeRepository codes,
                                     DriverRepository drivers, CustodyChain chain,
-                                    EmailService email,
+                                    EmailService email, SmsSender sms,
                                     com.sujula.service.platform.FeatureFlags flags) {
         this.shipments = shipments;
         this.legs = legs;
@@ -96,6 +98,7 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
         this.drivers = drivers;
         this.chain = chain;
         this.email = email;
+        this.sms = sms;
         this.flags = flags;
     }
 
@@ -670,10 +673,21 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                 .expiresAt(now.plus(RECIPIENT_CODE_LIFETIME))
                 .build());
 
-        // Sent to the person who paid, not to the person receiving. She may
-        // have no account, no app and no email — that is the case this whole
-        // marketplace exists to serve — and he has all three. He passes it on
-        // the way anybody passes on a Western Union reference.
+        // Texted to the person receiving, when there is an SMS provider: she
+        // may have no account, no app and no email — the case this whole
+        // marketplace exists to serve (C5) — but she has a phone number, and a
+        // text does not depend on the payer being awake in another timezone.
+        String recipientPhone = shipment.getRecipientPhone();
+        boolean texted = false;
+        if (sms.isConfigured() && recipientPhone != null && !recipientPhone.isBlank()) {
+            texted = sms.send(recipientPhone, "Sujula: your parcel for order " + orderNumber(shipment)
+                    + " is on its way. Read this code to the driver when it arrives: "
+                    + code.getCode() + ". Only give it once you have the parcel in your hands.");
+        }
+
+        // Also emailed to the person who paid, who has an account and passes it
+        // on the way anybody passes on a Western Union reference. Kept even when
+        // the text went out: a text that was accepted is not a text that arrived.
         String sentTo = buyerEmail(shipment);
         boolean sent = false;
         if (sentTo != null) {
@@ -692,17 +706,26 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
 
         // The code itself is never in this response. A driver who could read it
         // could mark a parcel delivered without meeting anybody.
-        log.info("[Custody] Release code issued for shipment {} and {} to the buyer",
-                shipment.getReference(), sent ? "sent" : "NOT sent");
+        log.info("[Custody] Release code issued for shipment {}: {} by text to the recipient, "
+                        + "{} by email to the buyer",
+                shipment.getReference(), texted ? "sent" : "NOT sent", sent ? "sent" : "NOT sent");
 
-        return new DriverResponses.RecipientCodeRequested(shipmentId, sent, mask(sentTo),
+        String message;
+        if (texted) {
+            message = "Texted to the recipient" + (sent ? " and emailed to the buyer" : "")
+                    + ". Ask her to read you the six digits when you arrive.";
+        } else if (sent) {
+            message = "Sent to the buyer, who will pass it to the recipient. Ask her to read "
+                    + "you the six digits when you arrive.";
+        } else {
+            message = "A code has been issued but we could not text the recipient or email the "
+                    + "buyer. Contact support rather than waiting at the door.";
+        }
+        return new DriverResponses.RecipientCodeRequested(shipmentId, texted || sent,
+                texted ? maskPhone(recipientPhone) : mask(sentTo),
                 code.getExpiresAt(),
                 (int) Math.max(0, MAX_CODE_REQUESTS_PER_WINDOW - recent - 1),
-                sent
-                        ? "Sent to the buyer, who will pass it to the recipient. Ask her to read "
-                          + "you the six digits when you arrive."
-                        : "A code has been issued but we could not email the buyer. Contact "
-                          + "support rather than waiting at the door.");
+                message);
     }
 
     // ── Driver to driver ─────────────────────────────────────────────────────
@@ -925,6 +948,10 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     }
 
     /** Enough of an address to confirm where it went, not enough to read it out. */
+    private static String maskPhone(String phone) {
+        return phone.length() < 4 ? "•••" : "•••" + phone.substring(phone.length() - 3);
+    }
+
     private static String mask(String email) {
         if (email == null || !email.contains("@")) {
             return null;

@@ -41,9 +41,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
               AND (:country IS NULL OR u.detectedCountryCode = :country)
               AND (:blocked IS NULL OR u.blocked = :blocked)
               AND (:q IS NULL OR
-                   LOWER(u.email) LIKE LOWER(CONCAT('%', :q, '%')) OR
-                   LOWER(CONCAT(u.firstName, ' ', u.lastName)) LIKE LOWER(CONCAT('%', :q, '%')) OR
-                   u.phone LIKE CONCAT('%', :q, '%'))
+                   LOWER(u.email) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+                   LOWER(CONCAT(u.firstName, ' ', u.lastName)) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+                   u.phone LIKE CONCAT('%', CAST(:q AS String), '%'))
               AND (:lockedOut IS NULL OR :lockedOut = (
                    CASE WHEN EXISTS (
                      SELECT 1 FROM Sanction s WHERE s.user = u AND s.liftedAt IS NULL

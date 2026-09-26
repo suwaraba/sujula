@@ -109,11 +109,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
               AND (:destinationCountry IS NULL OR o.shippingCountry = :destinationCountry)
               AND (:vendorId IS NULL OR EXISTS (
                    SELECT 1 FROM VendorOrder vo WHERE vo.order = o AND vo.vendor.id = :vendorId))
-              AND (:stuckSince IS NULL OR o.updatedAt < :stuckSince)
+              AND (CAST(:stuckSince AS LocalDateTime) IS NULL OR o.updatedAt < :stuckSince)
               AND (:q IS NULL OR
-                   LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', :q, '%')) OR
-                   LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', :q, '%')) OR
-                   LOWER(o.customer.email) LIKE LOWER(CONCAT('%', :q, '%')))
+                   LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+                   LOWER(o.guestEmail) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+                   LOWER(o.customer.email) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')))
             ORDER BY o.createdAt DESC
             """)
     Page<Order> adminSearch(@Param("q") String q,
@@ -186,21 +186,21 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     /** Full-text search across orderNumber, customer email/name, and guest fields. */
     @Query(value = """
         SELECT o FROM Order o LEFT JOIN FETCH o.customer c WHERE
-          LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', :q, '%')) OR
-          LOWER(COALESCE(c.email, ''))    LIKE LOWER(CONCAT('%', :q, '%')) OR
-          LOWER(COALESCE(c.firstName, '')) LIKE LOWER(CONCAT('%', :q, '%')) OR
-          LOWER(COALESCE(c.lastName, ''))  LIKE LOWER(CONCAT('%', :q, '%')) OR
-          LOWER(COALESCE(o.guestEmail, '')) LIKE LOWER(CONCAT('%', :q, '%')) OR
-          LOWER(COALESCE(o.guestName, ''))  LIKE LOWER(CONCAT('%', :q, '%'))
+          LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+          LOWER(COALESCE(c.email, ''))    LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+          LOWER(COALESCE(c.firstName, '')) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+          LOWER(COALESCE(c.lastName, ''))  LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+          LOWER(COALESCE(o.guestEmail, '')) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+          LOWER(COALESCE(o.guestName, ''))  LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))
         """,
            countQuery = """
         SELECT COUNT(o) FROM Order o LEFT JOIN o.customer c WHERE
-          LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', :q, '%')) OR
-          LOWER(COALESCE(c.email, ''))    LIKE LOWER(CONCAT('%', :q, '%')) OR
-          LOWER(COALESCE(c.firstName, '')) LIKE LOWER(CONCAT('%', :q, '%')) OR
-          LOWER(COALESCE(c.lastName, ''))  LIKE LOWER(CONCAT('%', :q, '%')) OR
-          LOWER(COALESCE(o.guestEmail, '')) LIKE LOWER(CONCAT('%', :q, '%')) OR
-          LOWER(COALESCE(o.guestName, ''))  LIKE LOWER(CONCAT('%', :q, '%'))
+          LOWER(o.orderNumber) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+          LOWER(COALESCE(c.email, ''))    LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+          LOWER(COALESCE(c.firstName, '')) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+          LOWER(COALESCE(c.lastName, ''))  LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+          LOWER(COALESCE(o.guestEmail, '')) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+          LOWER(COALESCE(o.guestName, ''))  LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))
         """)
     Page<Order> searchFetchCustomer(@Param("q") String q, Pageable pageable);
 }

@@ -24,7 +24,7 @@ public interface ProductTranslationRepository extends JpaRepository<ProductTrans
      * asking per product is twenty queries for one screen.
      */
     @Query("SELECT t FROM ProductTranslation t WHERE t.product.id IN :productIds "
-         + "AND LOWER(t.locale) = LOWER(:locale)")
+         + "AND LOWER(t.locale) = LOWER(CAST(:locale AS String))")
     List<ProductTranslation> findForProducts(@Param("productIds") java.util.Collection<Long> productIds,
                                              @Param("locale") String locale);
 

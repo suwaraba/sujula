@@ -37,7 +37,7 @@ public interface DeliveryRateCardRepository extends JpaRepository<DeliveryRateCa
     @Query("SELECT c FROM DeliveryRateCard c WHERE c.active = TRUE "
          + "AND ((:zoneId IS NULL AND c.zone IS NULL) OR c.zone.id = :zoneId) "
          + "AND ((:countryCode IS NULL AND c.countryCode IS NULL) "
-         + "     OR UPPER(c.countryCode) = UPPER(:countryCode)) "
+         + "     OR UPPER(c.countryCode) = UPPER(CAST(:countryCode AS String))) "
          + "AND ((:mode IS NULL AND c.mode IS NULL) OR c.mode = :mode) "
          + "AND (c.effectiveUntil IS NULL OR c.effectiveUntil >= :day) "
          + "ORDER BY c.effectiveFrom ASC")
@@ -48,7 +48,7 @@ public interface DeliveryRateCardRepository extends JpaRepository<DeliveryRateCa
 
     @Query("SELECT c FROM DeliveryRateCard c "
          + "WHERE (:zoneId IS NULL OR c.zone.id = :zoneId) "
-         + "AND (:countryCode IS NULL OR UPPER(c.countryCode) = UPPER(:countryCode)) "
+         + "AND (:countryCode IS NULL OR UPPER(c.countryCode) = UPPER(CAST(:countryCode AS String))) "
          + "AND (:mode IS NULL OR c.mode = :mode) "
          + "AND (:activeOnly = FALSE OR (c.active = TRUE "
          + "     AND (c.effectiveUntil IS NULL OR c.effectiveUntil >= :today))) "

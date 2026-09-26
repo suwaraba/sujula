@@ -195,21 +195,21 @@ public interface VendorLedgerEntryRepository extends JpaRepository<VendorLedgerE
      */
     @Query(value = "SELECT e FROM VendorLedgerEntry e "
          + "WHERE (:vendorId IS NULL OR e.vendor.id = :vendorId) "
-         + "AND (:currency IS NULL OR UPPER(e.currency) = UPPER(:currency)) "
+         + "AND (:currency IS NULL OR UPPER(e.currency) = UPPER(CAST(:currency AS String))) "
          + "AND (:type IS NULL OR e.type = :type) "
          + "AND (:orderId IS NULL OR e.vendorOrder.order.id = :orderId) "
-         + "AND (:reference IS NULL OR LOWER(e.reference) LIKE LOWER(CONCAT('%', :reference, '%'))) "
-         + "AND (:from IS NULL OR e.occurredAt >= :from) "
-         + "AND (:to IS NULL OR e.occurredAt <= :to) "
+         + "AND (:reference IS NULL OR LOWER(e.reference) LIKE LOWER(CONCAT('%', CAST(:reference AS String), '%'))) "
+         + "AND (CAST(:from AS LocalDateTime) IS NULL OR e.occurredAt >= :from) "
+         + "AND (CAST(:to AS LocalDateTime) IS NULL OR e.occurredAt <= :to) "
          + "ORDER BY e.occurredAt DESC, e.id DESC",
            countQuery = "SELECT COUNT(e) FROM VendorLedgerEntry e "
          + "WHERE (:vendorId IS NULL OR e.vendor.id = :vendorId) "
-         + "AND (:currency IS NULL OR UPPER(e.currency) = UPPER(:currency)) "
+         + "AND (:currency IS NULL OR UPPER(e.currency) = UPPER(CAST(:currency AS String))) "
          + "AND (:type IS NULL OR e.type = :type) "
          + "AND (:orderId IS NULL OR e.vendorOrder.order.id = :orderId) "
-         + "AND (:reference IS NULL OR LOWER(e.reference) LIKE LOWER(CONCAT('%', :reference, '%'))) "
-         + "AND (:from IS NULL OR e.occurredAt >= :from) "
-         + "AND (:to IS NULL OR e.occurredAt <= :to)")
+         + "AND (:reference IS NULL OR LOWER(e.reference) LIKE LOWER(CONCAT('%', CAST(:reference AS String), '%'))) "
+         + "AND (CAST(:from AS LocalDateTime) IS NULL OR e.occurredAt >= :from) "
+         + "AND (CAST(:to AS LocalDateTime) IS NULL OR e.occurredAt <= :to)")
     Page<VendorLedgerEntry> explore(@Param("vendorId") Long vendorId,
                                     @Param("currency") String currency,
                                     @Param("type") LedgerEntryType type,
@@ -231,7 +231,7 @@ public interface VendorLedgerEntryRepository extends JpaRepository<VendorLedgerE
          + "       COALESCE(SUM(CASE WHEN e.availableFrom IS NULL THEN e.amount ELSE 0 END), 0) "
          + "FROM VendorLedgerEntry e "
          + "WHERE (:vendorId IS NULL OR e.vendor.id = :vendorId) "
-         + "AND (:currency IS NULL OR UPPER(e.currency) = UPPER(:currency)) "
+         + "AND (:currency IS NULL OR UPPER(e.currency) = UPPER(CAST(:currency AS String))) "
          + "GROUP BY e.vendor.id, e.currency "
          + "ORDER BY e.currency ASC, e.vendor.id ASC")
     List<Object[]> allBalances(@Param("vendorId") Long vendorId,

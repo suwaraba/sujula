@@ -21,7 +21,7 @@ public interface PayoutBatchRepository extends JpaRepository<PayoutBatch, Long> 
 
     @Query("SELECT b FROM PayoutBatch b "
          + "WHERE (:status IS NULL OR b.status = :status) "
-         + "AND (:currency IS NULL OR UPPER(b.currency) = UPPER(:currency)) "
+         + "AND (:currency IS NULL OR UPPER(b.currency) = UPPER(CAST(:currency AS String))) "
          + "ORDER BY b.preparedAt DESC, b.id DESC")
     Page<PayoutBatch> search(@Param("status") PayoutBatchStatus status,
                              @Param("currency") String currency,
@@ -43,7 +43,7 @@ public interface PayoutBatchRepository extends JpaRepository<PayoutBatch, Long> 
      * committed twice. The assembler checks this before it starts rather than
      * discovering it when the second one is approved.
      */
-    @Query("SELECT COUNT(b) > 0 FROM PayoutBatch b WHERE UPPER(b.currency) = UPPER(:currency) "
+    @Query("SELECT COUNT(b) > 0 FROM PayoutBatch b WHERE UPPER(b.currency) = UPPER(CAST(:currency AS String)) "
          + "AND b.status IN (com.sujula.model.constant.PayoutBatchStatus.DRAFT, "
          + "                 com.sujula.model.constant.PayoutBatchStatus.AWAITING_APPROVAL)")
     boolean hasOpenBatchFor(@Param("currency") String currency);

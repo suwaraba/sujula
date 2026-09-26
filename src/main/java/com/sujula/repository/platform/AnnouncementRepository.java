@@ -15,7 +15,7 @@ public interface AnnouncementRepository extends JpaRepository<Announcement, Long
 
     @Query("SELECT a FROM Announcement a "
          + "WHERE (:role IS NULL OR a.audienceRole = :role) "
-         + "AND (:countryCode IS NULL OR UPPER(a.countryCode) = UPPER(:countryCode)) "
+         + "AND (:countryCode IS NULL OR UPPER(a.countryCode) = UPPER(CAST(:countryCode AS String))) "
          + "ORDER BY a.sentAt DESC NULLS FIRST, a.id DESC")
     Page<Announcement> search(@Param("role") UserRole role,
                               @Param("countryCode") String countryCode,

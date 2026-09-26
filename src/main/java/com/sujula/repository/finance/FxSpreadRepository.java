@@ -26,8 +26,8 @@ public interface FxSpreadRepository extends JpaRepository<FxSpread, Long> {
     List<FxSpread> findInForceAt(@Param("at") LocalDateTime at);
 
     @Query("SELECT s FROM FxSpread s "
-         + "WHERE (:currency IS NULL OR UPPER(s.fromCurrency) = UPPER(:currency) "
-         + "     OR UPPER(s.toCurrency) = UPPER(:currency)) "
+         + "WHERE (:currency IS NULL OR UPPER(s.fromCurrency) = UPPER(CAST(:currency AS String)) "
+         + "     OR UPPER(s.toCurrency) = UPPER(CAST(:currency AS String))) "
          + "ORDER BY s.effectiveFrom DESC, s.id DESC")
     Page<FxSpread> history(@Param("currency") String currency, Pageable pageable);
 }

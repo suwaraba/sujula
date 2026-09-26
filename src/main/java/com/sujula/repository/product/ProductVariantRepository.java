@@ -50,16 +50,16 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
                       + "AND p.status <> com.sujula.model.constant.ProductStatus.ARCHIVED "
                       + "AND (:lowStockOnly = FALSE OR v.stock <= COALESCE(p.lowStockThreshold, 0)) "
                       + "AND (:outOfStockOnly = FALSE OR v.stock = 0) "
-                      + "AND (:search IS NULL OR LOWER(v.sku) LIKE LOWER(CONCAT('%', :search, '%')) "
-                      + "     OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%'))) "
+                      + "AND (:search IS NULL OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:search AS String), '%')) "
+                      + "     OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:search AS String), '%'))) "
                       + "ORDER BY v.stock ASC, p.name ASC",
            countQuery = "SELECT COUNT(v) FROM ProductVariant v JOIN v.product p "
                       + "WHERE p.vendor.id = :vendorId "
                       + "AND p.status <> com.sujula.model.constant.ProductStatus.ARCHIVED "
                       + "AND (:lowStockOnly = FALSE OR v.stock <= COALESCE(p.lowStockThreshold, 0)) "
                       + "AND (:outOfStockOnly = FALSE OR v.stock = 0) "
-                      + "AND (:search IS NULL OR LOWER(v.sku) LIKE LOWER(CONCAT('%', :search, '%')) "
-                      + "     OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%')))")
+                      + "AND (:search IS NULL OR LOWER(v.sku) LIKE LOWER(CONCAT('%', CAST(:search AS String), '%')) "
+                      + "     OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:search AS String), '%')))")
     Page<ProductVariant> findForVendorInventory(@Param("vendorId") Long vendorId,
                                                 @Param("lowStockOnly") boolean lowStockOnly,
                                                 @Param("outOfStockOnly") boolean outOfStockOnly,

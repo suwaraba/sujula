@@ -31,10 +31,10 @@ public interface DeliveryZoneRepository extends JpaRepository<DeliveryZone, Long
     List<DeliveryZone> findLive();
 
     @Query("SELECT z FROM DeliveryZone z "
-         + "WHERE (:countryCode IS NULL OR UPPER(z.countryCode) = UPPER(:countryCode)) "
+         + "WHERE (:countryCode IS NULL OR UPPER(z.countryCode) = UPPER(CAST(:countryCode AS String))) "
          + "AND (:active IS NULL OR z.active = :active) "
-         + "AND (:q IS NULL OR LOWER(z.name) LIKE LOWER(CONCAT('%', :q, '%')) "
-         + "     OR LOWER(z.code) LIKE LOWER(CONCAT('%', :q, '%'))) "
+         + "AND (:q IS NULL OR LOWER(z.name) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+         + "     OR LOWER(z.code) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))) "
          + "ORDER BY z.countryCode ASC, z.priority DESC, z.name ASC")
     Page<DeliveryZone> search(@Param("q") String q,
                              @Param("countryCode") String countryCode,

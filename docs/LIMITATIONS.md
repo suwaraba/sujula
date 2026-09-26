@@ -86,7 +86,17 @@ against before the Flyway baseline exists"*. The baseline does not exist.
 
 ---
 
-### 🔴 1.3 No payment provider is integrated
+### 🟠 1.3 Stripe is integrated for cards, untested against live Stripe; no PayPal
+
+> **Partly fixed.** `StripePaymentGateway` takes card payments through Stripe
+> Checkout when `STRIPE_SECRET_KEY` is set and the mock is off, refunds through
+> Stripe, and is settled by its signed webhook on `/webhooks/psp/stripe`
+> (`Stripe-Signature` is read there). Covered by unit and routing tests, **not
+> yet run end-to-end against Stripe's test mode** — do that before trusting it
+> (see [`INTEGRATIONS.md`](INTEGRATIONS.md)). PayPal still has no gateway.
+>
+> The original entry follows.
+
 
 **Where.** `PaymentGateway` has exactly one implementation: `MockPaymentGateway`,
 which marks orders PAID without any money moving. It refuses to start under a
@@ -148,7 +158,18 @@ settlement, which is why it was deferred rather than done half-way.
 
 ---
 
-### 🟠 2.2 No SMS sender, so the recipient depends on the payer — **C5**
+### 🟡 2.2 SMS is a sender, not yet a notification channel — **C5**
+
+> **Partly fixed.** `SmsSender` exists, with `TwilioSmsSender` bound when
+> `TWILIO_ACCOUNT_SID` is set. `requestRecipientCode` now texts the release code
+> to the recipient's own number and still emails it to the buyer;
+> `requestPhoneVerification` texts its code. With no provider configured,
+> behaviour is exactly as described below. What remains: `SMS` is still not a
+> `NotificationChannel`, so the status notices (out for delivery, at pickup
+> point) do not reach a recipient by text, and nothing yet records Twilio's
+> delivery receipts against the code they carried.
+>
+> The original entry follows.
 
 **The rule.** *"An SMS code they read out to the driver is the design target.
 Anything that requires the recipient to log in, install something, or click a
@@ -480,7 +501,7 @@ would exercise them. This is deliberate in most cases — the seed file notes
 
 | Area | State |
 |---|---|
-| **Push notifications** | `PushDevice` registration exists (`POST /notifications/devices`); no sender is integrated. Same shape as SMS. |
+| **Push notifications** | `PushDevice` registration exists (`POST /notifications/devices`); `FcmPushSender` sends through Firebase when `FCM_CREDENTIALS` is set, and `LoggedPushSender` stands in otherwise. Not yet exercised against a live Firebase project. |
 | **OAuth sign-in** | Google and Apple callbacks exist and are seeded (Oliver signs in with both). Provider credentials are deployment configuration; an account with no chosen password is handled. Not exercised against live providers. |
 | **GraphQL codegen** | The POM runs `graphqlcodegen-maven-plugin` over `src/main/resources/graphql-client`. Nothing in `src/main/java` consumes the generated classes yet. Either wire it or remove the plugin — a build step producing dead code is a build step nobody maintains. |
 | **MaxMind GeoIP2** | Dependency present; falls back to locale then base currency when no database file is supplied. |

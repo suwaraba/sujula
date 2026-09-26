@@ -177,7 +177,7 @@ public interface PickupPointRepository extends JpaRepository<PickupPoint, Long> 
     @Query("SELECT p FROM PickupPoint p WHERE p.active = TRUE "
          + "AND p.status = com.sujula.model.constant.PartnerStatus.APPROVED "
          + "AND (p.closedUntil IS NULL OR p.closedUntil < CURRENT_TIMESTAMP) "
-         + "AND LOWER(p.city) = LOWER(:city) ORDER BY p.name ASC")
+         + "AND LOWER(p.city) = LOWER(CAST(:city AS String)) ORDER BY p.name ASC")
     List<PickupPoint> findPublicInCity(@Param("city") String city);
 
     /**
@@ -189,11 +189,11 @@ public interface PickupPointRepository extends JpaRepository<PickupPoint, Long> 
      * to find three of them is not an answer.
      */
     @Query("SELECT p FROM PickupPoint p "
-         + "WHERE (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', :q, '%')) "
-         + "   OR LOWER(p.city) LIKE LOWER(CONCAT('%', :q, '%')) "
-         + "   OR LOWER(p.contactPhone) LIKE LOWER(CONCAT('%', :q, '%'))) "
+         + "WHERE (:q IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+         + "   OR LOWER(p.city) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) "
+         + "   OR LOWER(p.contactPhone) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))) "
          + "AND (:status IS NULL OR p.status = :status) "
-         + "AND (:countryCode IS NULL OR UPPER(p.countryCode) = UPPER(:countryCode)) "
+         + "AND (:countryCode IS NULL OR UPPER(p.countryCode) = UPPER(CAST(:countryCode AS String))) "
          + "AND (:fullOnly = FALSE OR p.storedParcels >= p.capacity) "
          + "ORDER BY p.countryCode ASC, p.city ASC, p.name ASC")
     Page<PickupPoint> adminSearch(@Param("q") String q,
@@ -203,8 +203,8 @@ public interface PickupPointRepository extends JpaRepository<PickupPoint, Long> 
                                   Pageable pageable);
 
     /** True when this name is already taken in that city, ignoring one point. */
-    @Query("SELECT COUNT(p) > 0 FROM PickupPoint p WHERE LOWER(p.name) = LOWER(:name) "
-         + "AND LOWER(p.city) = LOWER(:city) AND UPPER(p.countryCode) = UPPER(:countryCode) "
+    @Query("SELECT COUNT(p) > 0 FROM PickupPoint p WHERE LOWER(p.name) = LOWER(CAST(:name AS String)) "
+         + "AND LOWER(p.city) = LOWER(CAST(:city AS String)) AND UPPER(p.countryCode) = UPPER(CAST(:countryCode AS String)) "
          + "AND (:excludeId IS NULL OR p.id <> :excludeId)")
     boolean nameTakenInCity(@Param("name") String name, @Param("city") String city,
                             @Param("countryCode") String countryCode,

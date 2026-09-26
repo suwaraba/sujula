@@ -68,8 +68,37 @@ public class WebhookController {
             @PathVariable String provider,
             @RequestBody(required = false) byte[] body,
             @RequestHeader(value = "X-Sujula-Signature", required = false) String signature,
-            @RequestHeader(value = "X-Sujula-Timestamp", required = false) String timestamp) {
+            @RequestHeader(value = "X-Sujula-Timestamp", required = false) String timestamp,
+            @RequestHeader(value = "Stripe-Signature", required = false) String stripeSignature) {
+        if (signature == null && timestamp == null && stripeSignature != null
+                && "stripe".equalsIgnoreCase(provider)) {
+            // Stripe signs exactly this scheme — HMAC-SHA256 over <t>.<body> — and
+            // only packs both halves into one header: t=<seconds>,v1=<hex>.
+            StripeSignature parsed = StripeSignature.parse(stripeSignature);
+            signature = parsed.v1();
+            timestamp = parsed.t();
+        }
         return receive(WebhookKind.PSP, provider, body, signature, timestamp);
+    }
+
+    /**
+     * The two halves of a {@code Stripe-Signature} header.
+     *
+     * <p>Only the first {@code v1} is taken. Stripe sends a second one only while
+     * a signing secret is being rolled, and the configured secret is the new one.
+     */
+    record StripeSignature(String t, String v1) {
+        static StripeSignature parse(String header) {
+            String t = null;
+            String v1 = null;
+            for (String part : header.split(",")) {
+                String[] pair = part.trim().split("=", 2);
+                if (pair.length != 2) continue;
+                if (pair[0].equals("t") && t == null) t = pair[1];
+                if (pair[0].equals("v1") && v1 == null) v1 = pair[1];
+            }
+            return new StripeSignature(t, v1);
+        }
     }
 
     @PostMapping(value = "/messaging/{provider}", consumes = MediaType.ALL_VALUE)
@@ -88,12 +117,10 @@ public class WebhookController {
 
     @PostMapping(value = "/sms/{provider}", consumes = MediaType.ALL_VALUE)
     @Operation(summary = "SMS delivery receipts, for a deployment that sends SMS",
-               description = "The same handler as /webhooks/messaging. This platform does not send "
-                       + "SMS — drivers and pickup operators read their codes in the app, and the "
-                       + "recipient's code reaches the buyer by email to pass on, the way a "
-                       + "remittance reference does — so nothing posts here today. The path exists "
-                       + "and works so that a deployment which adds an SMS sender has its receipts "
-                       + "recorded with no further change.")
+               description = "The same handler as /webhooks/messaging. With an SMS provider "
+                       + "configured, phone-verification codes and the recipient's release code "
+                       + "go out by text; receipts posted here are recorded like any other "
+                       + "message's. Drivers and pickup operators still read their codes in the app.")
     public ResponseEntity<Map<String, Object>> sms(
             @PathVariable String provider,
             @RequestBody(required = false) byte[] body,

@@ -36,6 +36,7 @@ and a reverse proxy terminating TLS.
 | `test` | the JUnit suite | H2 in MySQL mode | generated |
 | `e2e` | the end-to-end collection | in-memory H2 + seed | generated |
 | `sample` | fills a database with a complete dataset | **inherits** — layers onto another profile | — |
+| `staging` | testing against the real providers with test credentials — see [`INTEGRATIONS.md`](INTEGRATIONS.md) | Neon (PostgreSQL) by default, from the environment or `.env` | `ddl-auto=update` — **disposable** |
 | `prod` | deployment | from the environment, **no fallbacks** | `ddl-auto=validate` |
 
 > ### ⚠ Always set `SPRING_PROFILES_ACTIVE` explicitly
@@ -94,7 +95,8 @@ Everything below is set from the environment. Spring's relaxed binding means
 | `DB_POOL_MIN` | 2 |
 | connection timeout | 10s |
 | `spring.jpa.open-in-view` | `false` |
-| dialect | **pinned** to `MySQLDialect`, never inferred from JDBC metadata |
+| `DB_DRIVER` | `com.mysql.cj.jdbc.Driver` (`staging`: `org.postgresql.Driver`) |
+| `DB_DIALECT` | `org.hibernate.dialect.MySQLDialect` (`staging`: `PostgreSQLDialect`). **Pinned**, never inferred from JDBC metadata |
 
 ### 3.4 Mail
 
@@ -106,6 +108,31 @@ tuning: JavaMail waits forever by default and these sends happen on the request
 thread. One unreachable mail host would consume the whole Tomcat pool holding
 open registrations.
 
+On Gmail, `MAIL_USERNAME` is the address and `MAIL_PASSWORD` a 16-character
+**App Password** (needs 2-Step Verification on the account), never the account
+password. Set `MAIL_FROM` to the same address — Gmail rewrites any `From` it has
+not verified. Gmail allows roughly 500 messages a day.
+
+### 3.4a SMS (Twilio)
+
+| | |
+|---|---|
+| `TWILIO_ACCOUNT_SID` | **unset = no texts are sent**; `LoggedSmsSender` is bound and says so |
+| `TWILIO_AUTH_TOKEN` | required once the SID is set — **refuses to start without it** |
+| `TWILIO_FROM_NUMBER` or `TWILIO_MESSAGING_SERVICE_SID` | one of the two, likewise required |
+
+Used for phone-verification codes and for the **recipient's release code, texted
+to her own number** (C5). The buyer is still emailed the code as well: a text
+the provider accepted is not a text that arrived. A trial account sends only to
+numbers verified in the Twilio console.
+
+### 3.4b Push (Firebase Cloud Messaging)
+
+`FCM_CREDENTIALS` — the Firebase service-account key: a file path, the JSON
+itself, or base64 of the JSON (`base64 -w0 key.json`). **Unset = pushes are
+logged, not sent.** A malformed key refuses to start rather than failing on the
+first push.
+
 ### 3.5 Payments
 
 | | |
@@ -115,6 +142,14 @@ open registrations.
 | `sujula.payment.checkout-ttl-minutes` | 60 |
 | `PAYMENT_BANK_NAME`, `PAYMENT_BANK_ACCOUNT_NAME`, `PAYMENT_BANK_ACCOUNT_NUMBER` | Bank transfer is offered to buyers **only once all three are set** |
 | `PAYMENT_BANK_BRANCH`, `PAYMENT_BANK_SWIFT` | Optional |
+| `STRIPE_SECRET_KEY` | Card payments through Stripe Checkout. **Only registered while the mock is off** — with both set, the mock is the only card gateway |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_…`; the same as `SUJULA_WEBHOOKS_SECRETS_STRIPE`. Endpoint: `<public base>/webhooks/psp/stripe` |
+| `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | Where Stripe returns the buyer when checkout named no return URL. Fall back to `app.frontend.url` |
+
+A Stripe payment is settled by the `checkout.session.completed` (or
+`checkout.session.async_payment_succeeded`) webhook, never by the buyer landing
+on the success URL. Subscribe the endpoint to `checkout.session.*` and
+`charge.refunded`.
 
 ### 3.6 Webhooks
 

@@ -20,8 +20,8 @@ public interface VendorRepository extends JpaRepository<Vendor, Long> {
     boolean existsByStoreSlug(String storeSlug);
     @Query("""
             SELECT COUNT(v) > 0 FROM Vendor v
-            WHERE LOWER(v.storeEmail) = LOWER(:email)
-               OR LOWER(v.user.email) = LOWER(:email)
+            WHERE LOWER(v.storeEmail) = LOWER(CAST(:email AS String))
+               OR LOWER(v.user.email) = LOWER(CAST(:email AS String))
             """)
     boolean existsByAssociatedEmail(@Param("email") String email);
     Page<Vendor> findByStatus(PartnerStatus status, Pageable pageable);
@@ -41,9 +41,9 @@ public interface VendorRepository extends JpaRepository<Vendor, Long> {
                    (:payoutsHeld = TRUE AND v.payoutsHeldAt IS NOT NULL) OR
                    (:payoutsHeld = FALSE AND v.payoutsHeldAt IS NULL))
               AND (:q IS NULL OR
-                   LOWER(v.storeName) LIKE LOWER(CONCAT('%', :q, '%')) OR
-                   LOWER(v.storeSlug) LIKE LOWER(CONCAT('%', :q, '%')) OR
-                   LOWER(v.user.email) LIKE LOWER(CONCAT('%', :q, '%')))
+                   LOWER(v.storeName) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+                   LOWER(v.storeSlug) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')) OR
+                   LOWER(v.user.email) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%')))
             ORDER BY v.createdAt DESC
             """)
     Page<Vendor> adminSearch(@org.springframework.data.repository.query.Param("q") String q,
@@ -127,8 +127,8 @@ public interface VendorRepository extends JpaRepository<Vendor, Long> {
 //                        "LOWER(u.email)      LIKE LOWER(CONCAT('%', :q, '%'))")
     @Query("""
             SELECT v FROM Vendor v
-            WHERE LOWER(v.storeName) LIKE LOWER(CONCAT('%', :q, '%'))
-               OR LOWER(v.description) LIKE LOWER(CONCAT('%', :q, '%'))
+            WHERE LOWER(v.storeName) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))
+               OR LOWER(v.description) LIKE LOWER(CONCAT('%', CAST(:q AS String), '%'))
             """)
     Page<Vendor> searchByName(@Param("q") String query, Pageable pageable);
 }

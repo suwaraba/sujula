@@ -90,7 +90,8 @@ class RefreshRotationTest {
                 mock(PhoneVerificationRepository.class), mock(PasswordEncoder.class), tokenService,
                 new TotpService(), sessionFactory, new AuthMapper(), properties,
                 mock(LoginAttemptTracker.class), mock(EmailService.class), mock(OAuthExchange.class),
-                replayGuard, environment);
+                replayGuard, environment,
+                mock(com.sujula.service.notification.SmsSender.class));
     }
 
     private UserSession liveSession(String currentToken, String previousToken) {
