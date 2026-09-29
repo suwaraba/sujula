@@ -123,6 +123,25 @@ public class CartServiceImpl implements CartService {
         return present(cart.get(), displayCurrency);
     }
 
+    @Override
+    @Transactional
+    public CartResponse getCartForCheckout(Long userId, Long cartId) {
+        if (userId == null || cartId == null) {
+            throw new BadRequestException("A buyer and quoted cart are required for checkout.");
+        }
+
+        Cart cart = cartRepository.findByIdForUpdate(cartId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cart", cartId));
+        if (cart.getUser() == null || !userId.equals(cart.getUser().getId())) {
+            throw new ResourceNotFoundException("Cart", cartId);
+        }
+
+        // Keep the cart's current display currency. Its currency is part of the
+        // quote fingerprint, so forcing the old quote currency here would hide
+        // a cart mutation that must require a new quote.
+        return present(cart, cart.getDisplayCurrency());
+    }
+
     // ── Mutations ─────────────────────────────────────────────────────────────
 
     @Override

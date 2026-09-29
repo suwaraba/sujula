@@ -19,6 +19,7 @@ import com.sujula.repository.user.UserRepository;
 import com.sujula.service.CartService;
 import com.sujula.service.cart.CartOwner;
 import com.sujula.service.cart.CartSessionService;
+import com.sujula.service.cart.CartStructureFingerprint;
 import com.sujula.service.delivery.DeliveryContextService;
 import com.sujula.service.reference.CurrencyCatalogue;
 import lombok.extern.slf4j.Slf4j;
@@ -27,14 +28,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -307,7 +305,7 @@ public class CartSessionServiceImpl implements CartSessionService {
                 .id(newToken())
                 .cart(cart)
                 .user(cart.getUser())
-                .cartFingerprint(fingerprintOf(priced))
+                .cartFingerprint(CartStructureFingerprint.of(priced))
                 .displayCurrency(priced.getDisplayCurrency())
                 .deliveryContextId(cart.getDeliveryContextId())
                 .deliveryMode(mode)
@@ -461,31 +459,6 @@ public class CartSessionServiceImpl implements CartSessionService {
         return cart.getUser() != null
                 ? CartOwner.user(cart.getUser().getId())
                 : CartOwner.guest(cart.getSessionId());
-    }
-
-    /**
-     * What the quote was priced for.
-     *
-     * <p>Checkout compares this against the cart as it stands. A shopper who
-     * quotes, opens a second tab, adds a television and then checks out with the
-     * first quote would otherwise buy the television at the old total.
-     */
-    private static String fingerprintOf(CartResponse priced) {
-        StringBuilder shape = new StringBuilder();
-        for (CartResponse.VendorGroup group : priced.getVendors()) {
-            for (CartResponse.CartItemResponse item : group.getItems()) {
-                shape.append(item.getProductId()).append(':')
-                     .append(item.getVariantId()).append(':')
-                     .append(item.getQuantity()).append(';');
-            }
-        }
-        shape.append('|').append(priced.getDisplayCurrency());
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(shape.toString().getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 is unavailable on this JVM", e);
-        }
     }
 
     /** 256 bits. Sequential would put the next shopper's basket one increment away. */

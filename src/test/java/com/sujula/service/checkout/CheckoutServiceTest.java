@@ -2,21 +2,27 @@ package com.sujula.service.checkout;
 
 import com.sujula.dto.request.checkout.CheckoutRequests;
 import com.sujula.dto.response.checkout.CheckoutResponses;
+import com.sujula.dto.response.order.CartResponse;
 import com.sujula.dto.response.payment.PaymentResponse;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
+import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentMethod;
 import com.sujula.model.constant.PaymentStatus;
+import com.sujula.model.delivery.DeliveryContext;
 import com.sujula.model.order.Cart;
 import com.sujula.model.order.CartQuote;
 import com.sujula.model.order.Order;
 import com.sujula.model.user.User;
 import com.sujula.repository.order.CartQuoteRepository;
 import com.sujula.repository.order.OrderRepository;
+import com.sujula.service.CartService;
 import com.sujula.service.OrderService;
 import com.sujula.service.PaymentService;
+import com.sujula.service.cart.CartStructureFingerprint;
 import com.sujula.service.checkout.impl.CheckoutServiceImpl;
+import com.sujula.service.delivery.DeliveryContextService;
 import com.sujula.service.reference.CurrencyCatalogue;
 import com.sujula.service.reference.ReferenceDataProperties;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,19 +62,24 @@ class CheckoutServiceTest {
 
     private CartQuoteRepository quotes;
     private OrderRepository orders;
+    private CartService carts;
     private OrderService orderService;
     private PaymentService payments;
+    private DeliveryContextService deliveryContexts;
     private CheckoutServiceImpl checkout;
 
     @BeforeEach
     void setUp() {
         quotes = mock(CartQuoteRepository.class);
         orders = mock(OrderRepository.class);
+        carts = mock(CartService.class);
         orderService = mock(OrderService.class);
         payments = mock(PaymentService.class);
+        deliveryContexts = mock(DeliveryContextService.class);
         CurrencyCatalogue currencies = CurrencyCatalogue.of(new ReferenceDataProperties());
 
-        checkout = new CheckoutServiceImpl(quotes, orders, orderService, payments, currencies);
+        checkout = new CheckoutServiceImpl(quotes, orders, carts, orderService, payments,
+                deliveryContexts, currencies);
 
         when(quotes.save(any(CartQuote.class))).thenAnswer(call -> call.getArgument(0));
         when(payments.initiate(anyLong(), any(), any())).thenReturn(PaymentResponse.builder()
@@ -85,18 +96,52 @@ class CheckoutServiceTest {
 
     private CartQuote quote(String id, Long ownerId, String currency, String total) {
         Cart cart = Cart.builder().id(1L).token("cart-token").build();
+        CartResponse priced = cart(1L, currency, "delivery-1", 100L, null, 1);
         CartQuote quote = CartQuote.builder()
                 .id(id).cart(cart)
                 .user(ownerId == null ? null : buyer(ownerId))
-                .cartFingerprint("abc")
+                .cartFingerprint(CartStructureFingerprint.of(priced))
                 .displayCurrency(currency)
+                .deliveryContextId("delivery-1")
+                .deliveryMode(DeliveryMode.HOME_DELIVERY)
                 .subtotal(new BigDecimal(total)).total(new BigDecimal(total))
                 .complete(true)
                 .createdAt(LocalDateTime.now())
                 .expiresAt(LocalDateTime.now().plusMinutes(15))
                 .build();
-        when(quotes.findLive(id)).thenReturn(Optional.of(quote));
+        when(quotes.findByIdForUpdate(id)).thenReturn(Optional.of(quote));
+        if (ownerId != null) {
+            when(carts.getCartForCheckout(ownerId, 1L)).thenReturn(priced);
+            when(deliveryContexts.require("delivery-1", ownerId))
+                    .thenReturn(delivery("delivery-1", DeliveryMode.HOME_DELIVERY, null));
+        }
         return quote;
+    }
+
+    private static CartResponse cart(Long cartId, String currency, String deliveryContextId,
+                                     Long productId, Long variantId, int quantity) {
+        return CartResponse.builder()
+                .cartId(cartId)
+                .displayCurrency(currency)
+                .deliveryContextId(deliveryContextId)
+                .totalsComplete(true)
+                .deliverable(true)
+                .vendors(List.of(CartResponse.VendorGroup.builder()
+                        .items(List.of(CartResponse.CartItemResponse.builder()
+                                .productId(productId)
+                                .variantId(variantId)
+                                .quantity(quantity)
+                                .build()))
+                        .build()))
+                .build();
+    }
+
+    private static DeliveryContext delivery(String id, DeliveryMode mode, Long pickupPointId) {
+        DeliveryContext context = new DeliveryContext();
+        context.setId(id);
+        context.setMode(mode);
+        context.setPickupPointId(pickupPointId);
+        return context;
     }
 
     private Order order(String total, String currency) {
@@ -110,7 +155,7 @@ class CheckoutServiceTest {
         order.setTotal(new BigDecimal(total));
         order.setCustomer(buyer(BUYER));
         order.setVendorOrders(List.of());
-        when(orderService.createFromCart(anyLong(), anyLong(), any(), any())).thenReturn(order);
+        when(orderService.createFromValidatedCart(anyLong(), anyLong(), any(), any())).thenReturn(order);
         when(orders.findById(42L)).thenReturn(Optional.of(order));
         return order;
     }
@@ -194,7 +239,8 @@ class CheckoutServiceTest {
 
     @Test
     void anExpiredQuoteIsIndistinguishableFromOneThatNeverExisted() {
-        when(quotes.findLive("gone")).thenReturn(Optional.empty());
+        CartQuote expired = quote("gone", BUYER, "GBP", "129.73");
+        expired.setExpiresAt(LocalDateTime.now().minusSeconds(1));
 
         assertThrows(ResourceNotFoundException.class,
                 () -> checkout.checkout(BUYER, request("gone")));
@@ -210,7 +256,7 @@ class CheckoutServiceTest {
                 assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
 
         assertTrue(refused.getMessage().contains("already been used"));
-        verify(orderService, never()).createFromCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
     }
 
     /**
@@ -223,7 +269,7 @@ class CheckoutServiceTest {
         held.setComplete(false);
 
         assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
-        verify(orderService, never()).createFromCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
     }
 
     @Test
@@ -232,6 +278,70 @@ class CheckoutServiceTest {
 
         assertThrows(ResourceNotFoundException.class,
                 () -> checkout.checkout(INTRUDER, request("q1")));
+    }
+
+    @Test
+    void anAnonymousQuoteCannotBeSpentByAnAuthenticatedCheckout() {
+        quote("guest-quote", null, "GBP", "129.73");
+
+        assertThrows(BadRequestException.class,
+                () -> checkout.checkout(BUYER, request("guest-quote")));
+        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+    }
+
+    @Test
+    void aChangedProductWithTheSameTotalIsRejected() {
+        quote("q1", BUYER, "GBP", "129.73");
+        when(carts.getCartForCheckout(BUYER, 1L))
+                .thenReturn(cart(1L, "GBP", "delivery-1", 200L, null, 1));
+
+        assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
+        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(payments, never()).initiate(anyLong(), any(), any());
+    }
+
+    @Test
+    void aChangedQuantityWithTheSameTotalIsRejected() {
+        quote("q1", BUYER, "GBP", "129.73");
+        when(carts.getCartForCheckout(BUYER, 1L))
+                .thenReturn(cart(1L, "GBP", "delivery-1", 100L, null, 2));
+
+        assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
+        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(payments, never()).initiate(anyLong(), any(), any());
+    }
+
+    @Test
+    void aCartOtherThanTheQuotesSourceIsRejected() {
+        quote("q1", BUYER, "GBP", "129.73");
+        when(carts.getCartForCheckout(BUYER, 1L))
+                .thenReturn(cart(2L, "GBP", "delivery-1", 100L, null, 1));
+
+        assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
+        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+    }
+
+    @Test
+    void aChangedDeliveryContextIsRejected() {
+        quote("q1", BUYER, "GBP", "129.73");
+        when(carts.getCartForCheckout(BUYER, 1L))
+                .thenReturn(cart(1L, "GBP", "delivery-2", 100L, null, 1));
+
+        assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
+        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+    }
+
+    @Test
+    void pickupQuotesFailClosedUntilTheirFulfilmentPathIsImplemented() {
+        CartQuote held = quote("q1", BUYER, "GBP", "129.73");
+        held.setDeliveryMode(DeliveryMode.PICKUP_POINT);
+        held.setPickupPointId(9L);
+        when(deliveryContexts.require("delivery-1", BUYER))
+                .thenReturn(delivery("delivery-1", DeliveryMode.PICKUP_POINT, 9L));
+
+        assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
+        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(payments, never()).initiate(anyLong(), any(), any());
     }
 
     @Test
@@ -245,11 +355,11 @@ class CheckoutServiceTest {
     /** Nothing is reserved for a checkout that was never going to complete. */
     @Test
     void nothingIsReservedBeforeTheQuoteIsValidated() {
-        when(quotes.findLive("gone")).thenReturn(Optional.empty());
+        when(quotes.findByIdForUpdate("gone")).thenReturn(Optional.empty());
 
         assertThrows(ResourceNotFoundException.class, () -> checkout.checkout(BUYER, request("gone")));
 
-        verify(orderService, never()).createFromCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
         verify(payments, never()).initiate(anyLong(), any(), any());
     }
 
@@ -264,7 +374,7 @@ class CheckoutServiceTest {
                 new CheckoutRequests.RetryPayment(PaymentMethod.BANK_TRANSFER));
 
         assertNotNull(intent);
-        verify(orderService, never()).createFromCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
     }
 
     @Test

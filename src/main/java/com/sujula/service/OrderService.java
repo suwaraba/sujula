@@ -45,6 +45,14 @@ public interface OrderService {
      */
     Order createFromCart(Long userId, Long shippingAddressId, String notes, String displayCurrency);
 
+    /**
+     * Creates an order from the cart response already locked and validated by
+     * authoritative checkout. This avoids reloading a mutable user cart after
+     * quote binding has succeeded.
+     */
+    Order createFromValidatedCart(Long userId, Long shippingAddressId, String notes,
+                                  CartResponse validatedCart);
+
     /** Places an order without an account, from the guest's cart or an explicit item list. */
     Order createGuestOrder(GuestCheckoutRequest request);
 

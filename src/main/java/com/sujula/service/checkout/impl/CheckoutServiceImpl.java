@@ -3,18 +3,24 @@ package com.sujula.service.checkout.impl;
 import com.sujula.dto.request.checkout.CheckoutRequests;
 import com.sujula.dto.request.payment.InitiatePaymentRequest;
 import com.sujula.dto.response.checkout.CheckoutResponses;
+import com.sujula.dto.response.order.CartResponse;
 import com.sujula.dto.response.payment.PaymentResponse;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
+import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.PaymentStatus;
+import com.sujula.model.delivery.DeliveryContext;
 import com.sujula.model.order.CartQuote;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.VendorOrder;
 import com.sujula.repository.order.CartQuoteRepository;
 import com.sujula.repository.order.OrderRepository;
+import com.sujula.service.CartService;
 import com.sujula.service.OrderService;
 import com.sujula.service.PaymentService;
+import com.sujula.service.cart.CartStructureFingerprint;
 import com.sujula.service.checkout.CheckoutService;
+import com.sujula.service.delivery.DeliveryContextService;
 import com.sujula.service.reference.CurrencyCatalogue;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Checkout: validate, reserve, create, intend.
@@ -47,17 +54,21 @@ public class CheckoutServiceImpl implements CheckoutService {
 
     private final CartQuoteRepository quotes;
     private final OrderRepository orders;
+    private final CartService carts;
     private final OrderService orderService;
     private final PaymentService payments;
+    private final DeliveryContextService deliveryContexts;
     private final CurrencyCatalogue currencies;
 
-    public CheckoutServiceImpl(CartQuoteRepository quotes, OrderRepository orders,
+    public CheckoutServiceImpl(CartQuoteRepository quotes, OrderRepository orders, CartService carts,
                                OrderService orderService, PaymentService payments,
-                               CurrencyCatalogue currencies) {
+                               DeliveryContextService deliveryContexts, CurrencyCatalogue currencies) {
         this.quotes = quotes;
         this.orders = orders;
+        this.carts = carts;
         this.orderService = orderService;
         this.payments = payments;
+        this.deliveryContexts = deliveryContexts;
         this.currencies = currencies;
     }
 
@@ -65,6 +76,9 @@ public class CheckoutServiceImpl implements CheckoutService {
     @Transactional
     public CheckoutResponses.Placed checkout(Long userId, CheckoutRequests.Checkout request) {
         CartQuote quote = requireUsableQuote(request.quoteId(), userId);
+        CartResponse cart = carts.getCartForCheckout(userId, sourceCartId(quote));
+        requireSameCartStructure(quote, cart);
+        requireBoundDelivery(quote, cart, userId);
 
         if (request.addressId() == null) {
             throw new BadRequestException(
@@ -75,8 +89,8 @@ public class CheckoutServiceImpl implements CheckoutService {
         // Reserve and create. The existing path locks each product row before
         // decrementing, so two shoppers racing for the last unit cannot both
         // succeed.
-        Order order = orderService.createFromCart(userId, request.addressId(),
-                request.notes(), quote.getDisplayCurrency());
+        Order order = orderService.createFromValidatedCart(userId, request.addressId(),
+                request.notes(), cart);
 
         reconcile(order, quote);
 
@@ -168,10 +182,23 @@ public class CheckoutServiceImpl implements CheckoutService {
      * owner for the refund, the status poll and the retry to resolve through.
      */
     private CartQuote requireUsableQuote(String quoteId, Long userId) {
-        CartQuote quote = quotes.findLive(quoteId)
+        CartQuote quote = quotes.findByIdForUpdate(quoteId)
                 .orElseThrow(() -> new ResourceNotFoundException("Quote", quoteId));
 
-        if (!quote.isAnonymous() && !quote.belongsTo(userId)) {
+        if (quote.getExpiresAt() == null || !quote.getExpiresAt().isAfter(LocalDateTime.now())) {
+            throw new ResourceNotFoundException("Quote", quoteId);
+        }
+        if (!quote.isComplete()) {
+            throw new BadRequestException(
+                    "That quote could not be fully priced, so it cannot be paid. Re-quote the "
+                            + "basket.");
+        }
+        if (quote.isAnonymous()) {
+            throw new BadRequestException(
+                    "This quote belongs to an anonymous cart and cannot be checked out after signing in. "
+                            + "Merge the cart, then request a new quote.");
+        }
+        if (!quote.belongsTo(userId)) {
             throw new ResourceNotFoundException("Quote", quoteId);
         }
         if (quote.isConsumed()) {
@@ -179,12 +206,46 @@ public class CheckoutServiceImpl implements CheckoutService {
                     "That quote has already been used for order " + quote.getConsumedOrderId()
                             + ". Ask for a new one.");
         }
-        if (!quote.isComplete()) {
-            throw new BadRequestException(
-                    "That quote could not be fully priced, so it cannot be paid. Re-quote the "
-                            + "basket.");
-        }
         return quote;
+    }
+
+    /** The exact cart that was quoted, never an account's later replacement cart. */
+    private static Long sourceCartId(CartQuote quote) {
+        if (quote.getCart() == null || quote.getCart().getId() == null) {
+            throw new BadRequestException("This quote is not bound to a cart. Request a new quote.");
+        }
+        return quote.getCart().getId();
+    }
+
+    private static void requireSameCartStructure(CartQuote quote, CartResponse cart) {
+        if (cart == null || !Objects.equals(sourceCartId(quote), cart.getCartId())) {
+            throw new BadRequestException(
+                    "The cart behind this quote changed. Request a new quote before checking out.");
+        }
+        if (!quote.getCartFingerprint().equals(CartStructureFingerprint.of(cart))) {
+            throw new BadRequestException(
+                    "The cart changed after this quote was prepared. Request a new quote before checking out.");
+        }
+    }
+
+    /** Refuse a price that was calculated for another delivery destination or mode. */
+    private void requireBoundDelivery(CartQuote quote, CartResponse cart, Long userId) {
+        if (quote.getDeliveryContextId() == null || quote.getDeliveryContextId().isBlank()
+                || !Objects.equals(quote.getDeliveryContextId(), cart.getDeliveryContextId())) {
+            throw new BadRequestException(
+                    "The delivery destination changed after this quote was prepared. Request a new quote.");
+        }
+
+        DeliveryContext context = deliveryContexts.require(quote.getDeliveryContextId(), userId);
+        if (quote.getDeliveryMode() != context.getMode()
+                || !Objects.equals(quote.getPickupPointId(), context.getPickupPointId())) {
+            throw new BadRequestException(
+                    "The delivery arrangement changed after this quote was prepared. Request a new quote.");
+        }
+        if (quote.getDeliveryMode() != DeliveryMode.HOME_DELIVERY) {
+            throw new BadRequestException(
+                    "Checkout currently supports home-delivery quotes only. Request a home-delivery quote.");
+        }
     }
 
     /**

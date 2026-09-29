@@ -24,6 +24,16 @@ public interface CartService {
      */
     CartResponse getCart(CartOwner owner, String displayCurrency);
 
+    /**
+     * Locks and re-prices one specific authenticated cart for authoritative
+     * checkout.
+     *
+     * <p>The cart id comes from the locked quote, never from an arbitrary
+     * current cart lookup. This preserves quote-first, cart-second lock order
+     * and prevents a later cart from being substituted for the quoted one.
+     */
+    CartResponse getCartForCheckout(Long userId, Long cartId);
+
     /** Adds a line, or increases an existing line for the same product/variant. */
     CartResponse addItem(CartOwner owner, CartItemRequest request, String displayCurrency);
 

@@ -267,6 +267,25 @@ public class OrderServiceImpl implements OrderService {
 
         CartOwner owner = CartOwner.user(userId);
         CartResponse quote = cartService.getCart(owner, displayCurrency);
+        return createFromPricedCart(customer, address, owner, quote, notes);
+    }
+
+    @Override
+    @Transactional
+    public Order createFromValidatedCart(Long userId, Long shippingAddressId, String notes,
+                                         CartResponse validatedCart) {
+        if (validatedCart == null || validatedCart.getCartId() == null) {
+            throw new BadRequestException("A validated cart is required to create this order.");
+        }
+
+        User customer = requireUser(userId);
+        Address address = requireOwnedAddress(shippingAddressId, userId);
+        return createFromPricedCart(customer, address, CartOwner.user(userId), validatedCart, notes);
+    }
+
+    /** Builds from exactly the cart response selected by the caller's transaction. */
+    private Order createFromPricedCart(User customer, Address address, CartOwner owner,
+                                       CartResponse quote, String notes) {
         requireCheckoutable(quote);
 
         CheckoutResult result = buildFromQuote(quote);

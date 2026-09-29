@@ -1,7 +1,9 @@
 package com.sujula.repository.order;
 
 import com.sujula.model.order.CartQuote;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -27,6 +29,19 @@ public interface CartQuoteRepository extends JpaRepository<CartQuote, String> {
     @Query("SELECT DISTINCT q FROM CartQuote q LEFT JOIN FETCH q.lines "
          + "WHERE q.id = :id AND q.expiresAt > CURRENT_TIMESTAMP")
     Optional<CartQuote> findLive(@Param("id") String id);
+
+    /**
+     * Claims the quote row before checkout observes any of its spendable state.
+     *
+     * <p>Different idempotency keys intentionally have independent attempts,
+     * so their only common serialization point is the quote itself. Expiry is
+     * deliberately checked by the caller after it owns the lock: checkout must
+     * not decide whether a quote is spendable before it has serialized against
+     * another checkout for that same quote.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT q FROM CartQuote q WHERE q.id = :id")
+    Optional<CartQuote> findByIdForUpdate(@Param("id") String id);
 
     /** Housekeeping. An unspent expired quote is of no further use to anyone. */
     @Modifying
