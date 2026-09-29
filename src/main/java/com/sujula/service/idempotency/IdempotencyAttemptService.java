@@ -52,7 +52,7 @@ public class IdempotencyAttemptService {
             Supplier<T> operation) {
 
         LocalDateTime now = LocalDateTime.now();
-        records.deleteExpiredForKey(scope, key, now);
+        records.deleteExpiredForKey(scope, key);
 
         IdempotencyRecord record;
         try {

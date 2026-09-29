@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
@@ -80,8 +81,11 @@ class IdempotencyAttemptServiceIntegrationTest {
         AtomicInteger runs = new AtomicInteger();
         Body body = new Body("Home", 1);
 
-        Result first = execute("key-1", body,
-                () -> new Result((long) runs.incrementAndGet(), body.label()));
+        Result first = execute("key-1", body, () -> {
+            assertTrue(TransactionSynchronizationManager.isActualTransactionActive(),
+                    "the protected operation must join the idempotency attempt transaction");
+            return new Result((long) runs.incrementAndGet(), body.label());
+        });
         Result replayed = execute("key-1", body,
                 () -> new Result((long) runs.incrementAndGet(), body.label()));
 

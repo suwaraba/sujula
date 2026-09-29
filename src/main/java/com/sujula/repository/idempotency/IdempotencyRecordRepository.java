@@ -30,14 +30,18 @@ public interface IdempotencyRecordRepository extends JpaRepository<IdempotencyRe
 
     /**
      * Removes only this key's expired row before a new transactional claim.
+     *
+     * <p>This deliberately uses the database clock, the same clock used by
+     * {@link #findLive(String, String)}. Otherwise a clock-skewed application
+     * process could consider a row expired during the lookup yet fail to evict
+     * it before the unique-key claim, leaving a stale row to block reuse.
      * The predicate cannot remove an active claim, while the unique constraint
      * still serializes contenders for the replacement row.
      */
     @Modifying
     @Query("DELETE FROM IdempotencyRecord r WHERE r.scope = :scope AND r.idempotencyKey = :key "
-         + "AND r.expiresAt <= :before")
+         + "AND r.expiresAt <= CURRENT_TIMESTAMP")
     int deleteExpiredForKey(
             @Param("scope") String scope,
-            @Param("key") String key,
-            @Param("before") LocalDateTime before);
+            @Param("key") String key);
 }
