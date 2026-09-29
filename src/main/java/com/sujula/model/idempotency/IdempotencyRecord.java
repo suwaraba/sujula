@@ -9,41 +9,32 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
-/**
- * The answer already given to a request that is being made again.
- *
- * <p>Retries are not an edge case on a marketplace reached over mobile networks:
- * a request times out on a slow connection and the client sends it again, and
- * without this the shopper ends up with two saved addresses, or two delivery
- * contexts, from one tap. The client names its attempt with an
- * {@code Idempotency-Key}; the first attempt does the work and the response is
- * kept here; every repeat of that key is answered from this row instead.
- *
- * <p>Two details make it safe rather than merely convenient.
- *
- * <p><strong>The key is scoped to the caller.</strong> Keys are chosen by
- * clients, so two shoppers will eventually pick the same one — and a globally
- * unique key would then serve one person's saved address to the other. The
- * unique constraint spans scope and key together, where scope is the
- * authenticated user or, for a guest, nothing more identifying than the endpoint
- * they called.
- *
- * <p><strong>The request is fingerprinted.</strong> A key reused with a
- * different body is not a retry, it is a mistake — usually a client that reuses
- * one key for a whole session — and replaying the first answer would silently
- * discard the second request. That case is refused rather than served.
- */
+/** The answer already given to a request that is being made again. */
 @Entity
-@Table(name = "idempotency_records",
-       uniqueConstraints = @UniqueConstraint(
-               name = "uk_idempotency_scope_key", columnNames = {"scope", "idempotency_key"}),
-       indexes = @Index(name = "idx_idempotency_expires", columnList = "expiresAt"))
+@Table(
+        name = "idempotency_records",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_idempotency_scope_key",
+                columnNames = {"scope", "idempotency_key"}
+        ),
+        indexes = @Index(
+                name = "idx_idempotency_expires",
+                columnList = "expiresAt"
+        )
+)
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class IdempotencyRecord {
+
+    /**
+     * A reserved response pair used while a transaction owns the request key.
+     * The existing database columns remain non-null throughout the transaction.
+     */
+    public static final int PROCESSING_RESPONSE_STATUS = 102;
+    public static final String PROCESSING_RESPONSE_BODY = "{}";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -52,9 +43,9 @@ public class IdempotencyRecord {
     /**
      * Who is retrying, and at which endpoint.
      *
-     * <p>Both, because either alone is wrong: without the user, two shoppers
-     * collide on a common key; without the endpoint, one key used for two
-     * different operations makes the second return the first's answer.
+     * <p>Both are required because either alone is unsafe: without the user,
+     * two shoppers can collide on a common key; without the operation, one
+     * key reused across different endpoints can return the wrong response.
      */
     @Column(name = "scope", nullable = false, length = 120)
     private String scope;
@@ -63,20 +54,20 @@ public class IdempotencyRecord {
     private String idempotencyKey;
 
     /**
-     * A digest of the request that was served.
+     * SHA-256 digest of the request body.
      *
-     * <p>A digest rather than the body: request bodies here carry names, phone
-     * numbers and coordinates, and keeping a second copy of all of it for a
-     * retry that will probably never come is not a trade worth making.
+     * <p>The request body itself is deliberately not retained because requests
+     * can contain names, phone numbers, addresses and coordinates.
      */
     @Column(nullable = false, length = 64)
     private String requestFingerprint;
 
-    /** The response body to replay, as it was serialised the first time. */
+    /** Serialized response body. */
     @Lob
     @Column(nullable = false)
     private String responseBody;
 
+    /** HTTP status associated with the stored response. */
     @Column(nullable = false)
     private int responseStatus;
 
@@ -84,17 +75,25 @@ public class IdempotencyRecord {
     private LocalDateTime createdAt;
 
     /**
-     * When this stops being replayable.
+     * When this record stops being replayable.
      *
-     * <p>A retry window, not a permanent log. Past it the key is free again,
-     * which is correct: a client reusing a key a week later is not retrying
-     * anything, and keeping every key ever seen would make this table the
-     * largest in the database.
+     * <p>The retention window is deliberately finite. It is a retry window,
+     * not a permanent request log.
      */
     @Column(nullable = false)
     private LocalDateTime expiresAt;
 
     public boolean matches(String fingerprint) {
-        return requestFingerprint != null && requestFingerprint.equals(fingerprint);
+        return requestFingerprint != null
+                && requestFingerprint.equals(fingerprint);
+    }
+
+    public boolean isProcessing() {
+        return responseStatus == PROCESSING_RESPONSE_STATUS
+                && PROCESSING_RESPONSE_BODY.equals(responseBody);
+    }
+
+    public boolean hasResponse() {
+        return !isProcessing();
     }
 }

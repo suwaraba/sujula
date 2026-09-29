@@ -27,4 +27,17 @@ public interface IdempotencyRecordRepository extends JpaRepository<IdempotencyRe
     @Modifying
     @Query("DELETE FROM IdempotencyRecord r WHERE r.expiresAt < :before")
     int deleteExpiredBefore(@Param("before") LocalDateTime before);
+
+    /**
+     * Removes only this key's expired row before a new transactional claim.
+     * The predicate cannot remove an active claim, while the unique constraint
+     * still serializes contenders for the replacement row.
+     */
+    @Modifying
+    @Query("DELETE FROM IdempotencyRecord r WHERE r.scope = :scope AND r.idempotencyKey = :key "
+         + "AND r.expiresAt <= :before")
+    int deleteExpiredForKey(
+            @Param("scope") String scope,
+            @Param("key") String key,
+            @Param("before") LocalDateTime before);
 }

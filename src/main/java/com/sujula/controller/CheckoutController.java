@@ -2,6 +2,7 @@ package com.sujula.controller;
 
 import com.sujula.dto.request.checkout.CheckoutRequests;
 import com.sujula.dto.response.checkout.CheckoutResponses;
+import com.sujula.exceptions.BadRequestException;
 import com.sujula.service.checkout.CheckoutService;
 import com.sujula.service.idempotency.IdempotencyService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -59,6 +60,10 @@ public class CheckoutController {
             @Parameter(description = "A unique value per attempt, so a retry is answered rather than repeated")
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CheckoutRequests.Checkout request) {
+
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new BadRequestException("Idempotency-Key is required for checkout.");
+        }
 
         Long userId = caller.userId(authentication);
 
