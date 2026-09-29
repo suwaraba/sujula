@@ -7,6 +7,7 @@ import com.sujula.dto.request.order.OrderScheduleRequest;
 import com.sujula.dto.request.order.UpdateOrderStatusRequest;
 import com.sujula.dto.request.order.UserCheckoutRequest;
 import com.sujula.dto.response.order.CartResponse;
+import com.sujula.dto.response.order.GuestOrderLookupResponse;
 import com.sujula.dto.response.order.OrderAdminDto;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
@@ -407,9 +408,29 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Transactional(readOnly = true)
-    public Order findGuestOrder(String orderNumber, String guestEmail) {
+    public GuestOrderLookupResponse findGuestOrder(String orderNumber, String guestEmail) {
+        return toGuestOrderLookupResponse(requireGuestOrder(orderNumber, guestEmail));
+    }
+
+    private Order requireGuestOrder(String orderNumber, String guestEmail) {
         return orderRepository.findByOrderNumberAndGuestEmailIgnoreCase(orderNumber, guestEmail)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", "no matching guest order"));
+    }
+
+    private GuestOrderLookupResponse toGuestOrderLookupResponse(Order order) {
+        return new GuestOrderLookupResponse(
+                order.getOrderNumber(),
+                order.getStatus(),
+                order.getPaymentStatus(),
+                order.getCurrency(),
+                order.getTotal(),
+                order.getItems().stream()
+                        .map(item -> new GuestOrderLookupResponse.Line(
+                                item.getProductName(), item.getQuantity()))
+                        .toList(),
+                new GuestOrderLookupResponse.Destination(
+                        order.getShippingCity(), order.getShippingCountry()),
+                order.getCreatedAt());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -536,7 +557,7 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public Order cancelGuestOrder(String orderNumber, String guestEmail) {
-        Order order = findGuestOrder(orderNumber, guestEmail);
+        Order order = requireGuestOrder(orderNumber, guestEmail);
 
         if (!CUSTOMER_CANCELLABLE.contains(order.getStatus())) {
             throw new BadRequestException("Order cannot be cancelled at this stage. Current status: "

@@ -4,6 +4,7 @@ import com.sujula.dto.request.order.OrderScheduleRequest;
 import com.sujula.dto.request.order.UpdateOrderStatusRequest;
 import com.sujula.dto.response.PagedResponse;
 import com.sujula.dto.response.order.CartResponse;
+import com.sujula.dto.response.order.GuestOrderLookupResponse;
 import com.sujula.dto.response.order.OrderAdminDto;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.model.constant.OrderStatus;
@@ -70,7 +71,11 @@ public class OrderController {
     }
 
     @GetMapping("/api/guest/orders/lookup")
-    public ResponseEntity<Order> lookupGuestOrder(@RequestParam String orderNumber, @RequestParam String email) {
+    @Operation(summary = "Look up a historic guest order",
+               description = "Temporary historic compatibility only. The legacy order-number/email selector "
+                       + "is not authentication; this endpoint returns a restricted order-recognition summary.")
+    public ResponseEntity<GuestOrderLookupResponse> lookupGuestOrder(@RequestParam String orderNumber,
+                                                                      @RequestParam String email) {
         return ResponseEntity.ok(orderService.findGuestOrder(orderNumber, email));
     }
 

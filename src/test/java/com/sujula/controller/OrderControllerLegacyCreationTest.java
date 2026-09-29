@@ -1,7 +1,12 @@
 package com.sujula.controller;
 
 import com.sujula.exceptions.GlobalExceptionHandler;
+import com.sujula.exceptions.ResourceNotFoundException;
+import com.sujula.dto.request.payment.InitiatePaymentRequest;
+import com.sujula.dto.response.order.GuestOrderLookupResponse;
 import com.sujula.dto.response.payment.PaymentResponse;
+import com.sujula.model.constant.OrderStatus;
+import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.order.Order;
 import com.sujula.service.OrderService;
 import com.sujula.service.PaymentService;
@@ -11,7 +16,13 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+
 import static org.hamcrest.Matchers.containsString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -76,15 +87,65 @@ class OrderControllerLegacyCreationTest {
     }
 
     @Test
-    void historicGuestLookupRemainsReachable() throws Exception {
-        when(orders.findGuestOrder("SJL-1008", "guest@example.com")).thenReturn(new Order());
+    void historicGuestLookupReturnsOnlyTheRestrictedCompatibilityDto() throws Exception {
+        when(orders.findGuestOrder("SJL-1008", "guest@example.com")).thenReturn(
+                new GuestOrderLookupResponse(
+                        "SJL-1008", OrderStatus.PENDING, PaymentStatus.PENDING,
+                        "GMD", new BigDecimal("250.00"),
+                        List.of(new GuestOrderLookupResponse.Line("Rice", 2)),
+                        new GuestOrderLookupResponse.Destination("Banjul", "GM"),
+                        LocalDateTime.of(2026, 9, 1, 10, 15)));
 
         mvc.perform(get("/api/guest/orders/lookup")
                         .param("orderNumber", "SJL-1008")
                         .param("email", "guest@example.com"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orderNumber").value("SJL-1008"))
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.paymentStatus").value("PENDING"))
+                .andExpect(jsonPath("$.currency").value("GMD"))
+                .andExpect(jsonPath("$.total").value(250.00))
+                .andExpect(jsonPath("$.items[0].productName").value("Rice"))
+                .andExpect(jsonPath("$.items[0].quantity").value(2))
+                .andExpect(jsonPath("$.destination.city").value("Banjul"))
+                .andExpect(jsonPath("$.destination.country").value("GM"))
+                .andExpect(jsonPath("$.createdAt").exists())
+                .andExpect(jsonPath("$.id").doesNotExist())
+                .andExpect(jsonPath("$.guestSessionId").doesNotExist())
+                .andExpect(jsonPath("$.guestEmail").doesNotExist())
+                .andExpect(jsonPath("$.guestPhone").doesNotExist())
+                .andExpect(jsonPath("$.internalNotes").doesNotExist())
+                .andExpect(jsonPath("$.trackingCode").doesNotExist())
+                .andExpect(jsonPath("$.shippingFullName").doesNotExist())
+                .andExpect(jsonPath("$.shippingPhone").doesNotExist())
+                .andExpect(jsonPath("$.shippingStreet").doesNotExist())
+                .andExpect(jsonPath("$.shippingAddress").doesNotExist())
+                .andExpect(jsonPath("$.shippingLatitude").doesNotExist())
+                .andExpect(jsonPath("$.shippingLongitude").doesNotExist())
+                .andExpect(jsonPath("$.billingFullName").doesNotExist())
+                .andExpect(jsonPath("$.billingStreet").doesNotExist())
+                .andExpect(jsonPath("$.payment").doesNotExist())
+                .andExpect(jsonPath("$.checkoutUrl").doesNotExist())
+                .andExpect(jsonPath("$.clientSecret").doesNotExist())
+                .andExpect(jsonPath("$.transactionId").doesNotExist())
+                .andExpect(jsonPath("$.reference").doesNotExist())
+                .andExpect(jsonPath("$.collectionReference").doesNotExist());
 
         verify(orders).findGuestOrder("SJL-1008", "guest@example.com");
+    }
+
+    @Test
+    void historicGuestLookupKeepsTheExistingNotFoundResponseForTheWrongPair() throws Exception {
+        when(orders.findGuestOrder("SJL-1008", "wrong@example.com"))
+                .thenThrow(new ResourceNotFoundException("Order", "no matching guest order"));
+
+        mvc.perform(get("/api/guest/orders/lookup")
+                        .param("orderNumber", "SJL-1008")
+                        .param("email", "wrong@example.com"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value(containsString("no matching guest order")));
+
+        verify(orders).findGuestOrder("SJL-1008", "wrong@example.com");
     }
 
     @Test
@@ -108,5 +169,32 @@ class OrderControllerLegacyCreationTest {
                 .andExpect(status().isOk());
 
         verify(payments).findForGuest("SJL-1008", "guest@example.com");
+    }
+
+    @Test
+    void historicGuestPaymentMethodsRemainReachable() throws Exception {
+        when(payments.availableMethodsForGuest("SJL-1008", "guest@example.com")).thenReturn(List.of());
+
+        mvc.perform(get("/api/guest/orders/SJL-1008/payment/methods")
+                        .param("email", "guest@example.com"))
+                .andExpect(status().isOk());
+
+        verify(payments).availableMethodsForGuest("SJL-1008", "guest@example.com");
+    }
+
+    @Test
+    void historicGuestPaymentInitiationRemainsReachable() throws Exception {
+        when(payments.initiateForGuest(eq("SJL-1008"), eq("guest@example.com"),
+                any(InitiatePaymentRequest.class)))
+                .thenReturn(PaymentResponse.builder().orderNumber("SJL-1008").build());
+
+        mvc.perform(post("/api/guest/orders/SJL-1008/payment")
+                        .param("email", "guest@example.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"method\":\"PAY_ON_DELIVERY\"}"))
+                .andExpect(status().isCreated());
+
+        verify(payments).initiateForGuest(eq("SJL-1008"), eq("guest@example.com"),
+                any(InitiatePaymentRequest.class));
     }
 }

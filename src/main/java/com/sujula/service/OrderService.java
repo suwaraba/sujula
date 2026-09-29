@@ -6,6 +6,7 @@ import com.sujula.dto.request.order.OrderScheduleRequest;
 import com.sujula.dto.request.order.UpdateOrderStatusRequest;
 import com.sujula.dto.request.order.UserCheckoutRequest;
 import com.sujula.dto.response.order.CartResponse;
+import com.sujula.dto.response.order.GuestOrderLookupResponse;
 import com.sujula.dto.response.order.OrderAdminDto;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.order.Order;
@@ -57,10 +58,11 @@ public interface OrderService {
     Order createGuestOrder(GuestCheckoutRequest request);
 
     /**
-     * Retrieves a guest order by its public order number + the email used at
-     * checkout. Requiring both prevents order-number enumeration.
+     * Retrieves the restricted historic guest-order compatibility view by its
+     * public order number and checkout email. This legacy selector is not
+     * authentication and must never return the order entity.
      */
-    Order findGuestOrder(String orderNumber, String guestEmail);
+    GuestOrderLookupResponse findGuestOrder(String orderNumber, String guestEmail);
 
     // ── Queries ──────────────────────────────────────────────────────────────
 
