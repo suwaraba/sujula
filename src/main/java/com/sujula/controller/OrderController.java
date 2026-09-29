@@ -1,10 +1,8 @@
 package com.sujula.controller;
 
-import com.sujula.dto.request.order.CreateOrderRequest;
 import com.sujula.dto.request.order.GuestCheckoutRequest;
 import com.sujula.dto.request.order.OrderScheduleRequest;
 import com.sujula.dto.request.order.UpdateOrderStatusRequest;
-import com.sujula.dto.request.order.UserCheckoutRequest;
 import com.sujula.dto.response.PagedResponse;
 import com.sujula.dto.response.order.CartResponse;
 import com.sujula.dto.response.order.OrderAdminDto;
@@ -21,12 +19,18 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.*;
+import io.swagger.v3.oas.annotations.Operation;
 
 import java.util.List;
 
 @RestController
 public class OrderController {
+
+    private static final String RETIRED_CREATION_MESSAGE =
+            "This legacy order-creation endpoint has been retired. "
+                    + "Use POST /checkout to place authenticated buyer orders.";
 
     private final OrderService orderService;
 
@@ -38,20 +42,18 @@ public class OrderController {
 
     @PostMapping("/api/user/orders")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<Order> checkout(Authentication authentication,
-                                          @Valid @RequestBody UserCheckoutRequest request) {
-        Order order = orderService.createUserOrder(currentUserId(authentication), request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(order);
+    @Operation(summary = "Retired authenticated order creation", deprecated = true,
+               description = "Gone. Use POST /checkout to place authenticated buyer orders.")
+    public ResponseEntity<Void> checkout() {
+        throw retiredCreation();
     }
 
     @PostMapping("/api/user/orders/checkout-cart")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<Order> checkoutCart(Authentication authentication,
-                                              @RequestParam Long shippingAddressId,
-                                              @RequestParam(required = false) String notes,
-                                              @RequestParam(required = false) String currency) {
-        Order order = orderService.createFromCart(currentUserId(authentication), shippingAddressId, notes, currency);
-        return ResponseEntity.status(HttpStatus.CREATED).body(order);
+    @Operation(summary = "Retired authenticated cart checkout", deprecated = true,
+               description = "Gone. Use POST /checkout to place authenticated buyer orders.")
+    public ResponseEntity<Void> checkoutCart() {
+        throw retiredCreation();
     }
 
     // ── Guest checkout ───────────────────────────────────────────────────────
@@ -123,9 +125,10 @@ public class OrderController {
 
     @PostMapping("/api/admin/orders")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Order> createForCustomer(@RequestParam Long customerId,
-                                                   @Valid @RequestBody CreateOrderRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(orderService.create(customerId, request));
+    @Operation(summary = "Retired administrative order creation", deprecated = true,
+               description = "Gone. Use POST /checkout to place authenticated buyer orders.")
+    public ResponseEntity<Void> createForCustomer() {
+        throw retiredCreation();
     }
 
     @GetMapping("/api/admin/orders")
@@ -186,5 +189,9 @@ public class OrderController {
             return user.getId();
         }
         throw new AccessDeniedException("Authentication is required");
+    }
+
+    private static ResponseStatusException retiredCreation() {
+        return new ResponseStatusException(HttpStatus.GONE, RETIRED_CREATION_MESSAGE);
     }
 }

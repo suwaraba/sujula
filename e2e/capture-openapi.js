@@ -44,6 +44,7 @@ fetch(base + '/openapi.json')
         };
         if (operation.operationId) entry.operationId = operation.operationId;
         if (operation.summary) entry.summary = operation.summary;
+        if (operation.deprecated) entry.deprecated = true;
         const query = (operation.parameters || [])
           .filter((parameter) => parameter.in === 'query')
           .map((parameter) => parameter.name + (parameter.required ? '!' : ''));

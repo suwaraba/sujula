@@ -848,10 +848,8 @@
       "method": "POST",
       "path": "/api/admin/orders",
       "operationId": "createForCustomer",
-      "query": [
-        "customerId!"
-      ],
-      "body": "CreateOrderRequest"
+      "summary": "Retired administrative order creation",
+      "deprecated": true
     },
     {
       "method": "GET",
@@ -1337,17 +1335,15 @@
       "method": "POST",
       "path": "/api/user/orders",
       "operationId": "checkout_1",
-      "body": "UserCheckoutRequest"
+      "summary": "Retired authenticated order creation",
+      "deprecated": true
     },
     {
       "method": "POST",
       "path": "/api/user/orders/checkout-cart",
       "operationId": "checkoutCart",
-      "query": [
-        "shippingAddressId!",
-        "notes",
-        "currency"
-      ]
+      "summary": "Retired authenticated cart checkout",
+      "deprecated": true
     },
     {
       "method": "POST",

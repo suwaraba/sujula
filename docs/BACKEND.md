@@ -208,7 +208,7 @@ client author must know it before writing a line.
 | Addresses | `/me/addresses/*` | `/api/user/addresses/*` |
 | Catalogue | `/products`, `/categories`, `/stores`, `/search`, `/brands` | `/api/products/*`, `/api/categories/*` |
 | Basket | `/carts/{cartToken}/*` (token-addressed) | `/api/cart/*` (cookie-addressed) |
-| Checkout | `/checkout`, `/checkout/{orderId}/*` | `/api/user/orders/checkout-cart`, `/api/guest/orders` |
+| Checkout | `/checkout`, `/checkout/{orderId}/*` | `/api/guest/orders` only; authenticated legacy creation is gone |
 | Buyer orders | `/orders/*` | `/api/user/orders/*` |
 | Vendor | `/vendor/**` (stores, products, inventory, orders, money, analytics) | `/api/vendors/*` |
 | Admin | `/admin/**` (95 operations) | `/api/admin/*` (16 operations) |
@@ -223,6 +223,11 @@ authorization defect.
 
 **Client authors: use the current surface.** Treat `/api/**` as deprecated.
 See [`frontend/README.md`](frontend/README.md).
+
+`POST /api/user/orders`, `POST /api/user/orders/checkout-cart`, and
+`POST /api/admin/orders` return **410 Gone**. They no longer create orders;
+use `POST /checkout` for authenticated buyer placement. Guest checkout at
+`POST /api/guest/orders` remains available pending its separate product review.
 
 ### 4.2 Surface by prefix
 
