@@ -208,7 +208,7 @@ client author must know it before writing a line.
 | Addresses | `/me/addresses/*` | `/api/user/addresses/*` |
 | Catalogue | `/products`, `/categories`, `/stores`, `/search`, `/brands` | `/api/products/*`, `/api/categories/*` |
 | Basket | `/carts/{cartToken}/*` (token-addressed) | `/api/cart/*` (cookie-addressed) |
-| Checkout | `/checkout`, `/checkout/{orderId}/*` | `/api/guest/orders` only; authenticated legacy creation is gone |
+| Checkout | `/checkout`, `/checkout/{orderId}/*` | New guest-payer creation is retired (410); historic guest-order access is temporarily preserved |
 | Buyer orders | `/orders/*` | `/api/user/orders/*` |
 | Vendor | `/vendor/**` (stores, products, inventory, orders, money, analytics) | `/api/vendors/*` |
 | Admin | `/admin/**` (95 operations) | `/api/admin/*` (16 operations) |
@@ -224,10 +224,16 @@ authorization defect.
 **Client authors: use the current surface.** Treat `/api/**` as deprecated.
 See [`frontend/README.md`](frontend/README.md).
 
-`POST /api/user/orders`, `POST /api/user/orders/checkout-cart`, and
-`POST /api/admin/orders` return **410 Gone**. They no longer create orders;
-use `POST /checkout` for authenticated buyer placement. Guest checkout at
-`POST /api/guest/orders` remains available pending its separate product review.
+`POST /api/user/orders`, `POST /api/user/orders/checkout-cart`,
+`POST /api/admin/orders`, and `POST /api/guest/orders` return **410 Gone**.
+They no longer create orders; the payer must sign in and use `POST /checkout`.
+This does not remove accountless recipients: an authenticated buyer can still
+place an order for a recipient without a Sujula account.
+
+Historic guest-order lookup, cancellation, and payment routes remain
+temporarily preserved for existing records. They are legacy compatibility
+paths, not a supported new checkout route, and their access model has not been
+redesigned by this retirement.
 
 ### 4.2 Surface by prefix
 

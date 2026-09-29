@@ -121,7 +121,11 @@ const RULES = [
             '/api/users/resend-verification', '/api/delivery/quote',
             '/api/payments/callback'], OPEN],
   [null, ['/api/cart', '/api/cart/**'], OPEN],
-  [null, ['/api/guest/orders', '/api/guest/orders/lookup', '/api/guest/orders/*/cancel',
+  // The retired creator stays permitAll at the filter so the controller can
+  // return its 410 migration response. The remaining routes serve historic
+  // guest orders only; their legacy access model is preserved for now.
+  [null, ['/api/guest/orders'], OPEN],
+  [null, ['/api/guest/orders/lookup', '/api/guest/orders/*/cancel',
           '/api/guest/orders/*/payment', '/api/guest/orders/*/payment/methods'], OPEN],
 
   // Staff only at the gate; which of the two staff roles may do what is decided

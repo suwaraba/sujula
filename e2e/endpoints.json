@@ -1083,8 +1083,9 @@
     {
       "method": "POST",
       "path": "/api/guest/orders",
-      "operationId": "guestCheckout",
-      "body": "GuestCheckoutRequest"
+      "operationId": "retiredGuestCheckout",
+      "summary": "Retired guest order creation",
+      "deprecated": true
     },
     {
       "method": "GET",

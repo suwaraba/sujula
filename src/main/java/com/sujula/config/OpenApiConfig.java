@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>The two things a caller gets wrong on this API, spelled out in the
  * description because neither is discoverable from the endpoint list: writes
- * need a CSRF token, and a guest can do most of checkout without an account.
+ * need a CSRF token, and a guest can build a basket before the payer signs in.
  */
 @Configuration
 public class OpenApiConfig {
@@ -38,10 +38,10 @@ public class OpenApiConfig {
                                 `X-XSRF-TOKEN` header on POST, PUT, PATCH and DELETE. Swagger UI does \
                                 this for you. Without it every write returns 403 with an empty body.
 
-                                **Guest checkout** needs no account: `/api/cart/**` and \
-                                `/api/guest/orders/**` are open, and a guest order is later retrieved \
-                                by order number plus the email used at checkout — both together, so an \
-                                order number alone reveals nothing.
+                                **New guest-payer checkout is retired.** `POST /api/guest/orders` returns \
+                                410 Gone; the payer must sign in and use `POST /checkout`. Historic guest \
+                                order lookup, cancellation and payment endpoints remain temporarily preserved \
+                                for existing records under their legacy access model.
 
                                 **Currency isolation.** Nothing under `/api/vendor/**` returns a buyer's \
                                 currency, location or total. A vendor sees identifiers and their own \

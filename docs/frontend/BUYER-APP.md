@@ -218,16 +218,18 @@ What it must keep doing, and does:
 - take the six-digit code with `inputmode="numeric"`;
 - require no account, no app, no email.
 
-### 7.2 Checkout is guest-capable
+### 7.2 Checkout requires an authenticated payer
 
-Guests fill most baskets on this marketplace. The flow is open end to end, and
-guest order lookup needs **both** the order number and the email used at
-checkout, so an order number alone reveals nothing.
+Guests may fill baskets, but new guest-payer checkout is retired:
+`POST /api/guest/orders` returns **410 Gone**. Before placing an order, the
+payer must sign in and use `POST /checkout`. This does not change the
+accountless-recipient capability: an authenticated buyer may still send an
+order to someone who has no Sujula account.
 
-Note that guest checkout still runs against the legacy `/api/guest/orders`
-surface, which returns JPA entities directly
-([`../CODE-REVIEW.md` §3.2](../CODE-REVIEW.md)). It is worth keeping isolated in
-`api.js` so the migration is one function.
+Historic guest-order lookup, cancellation, and payment routes remain
+temporarily preserved for existing records under their legacy access model.
+They are not a supported new checkout route. Keep any compatibility calls
+isolated in `api.js` until the historic-order migration is separately decided.
 
 ---
 

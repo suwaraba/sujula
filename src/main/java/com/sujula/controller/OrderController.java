@@ -1,6 +1,5 @@
 package com.sujula.controller;
 
-import com.sujula.dto.request.order.GuestCheckoutRequest;
 import com.sujula.dto.request.order.OrderScheduleRequest;
 import com.sujula.dto.request.order.UpdateOrderStatusRequest;
 import com.sujula.dto.response.PagedResponse;
@@ -32,6 +31,10 @@ public class OrderController {
             "This legacy order-creation endpoint has been retired. "
                     + "Use POST /checkout to place authenticated buyer orders.";
 
+    private static final String RETIRED_GUEST_CREATION_MESSAGE =
+            "New guest checkout is no longer available. "
+                    + "The payer must sign in and use POST /checkout to place an order.";
+
     private final OrderService orderService;
 
     public OrderController(OrderService orderService) {
@@ -59,9 +62,11 @@ public class OrderController {
     // ── Guest checkout ───────────────────────────────────────────────────────
 
     @PostMapping("/api/guest/orders")
-    public ResponseEntity<Order> guestCheckout(@Valid @RequestBody GuestCheckoutRequest request) {
-        Order order = orderService.createGuestOrder(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(order);
+    @Operation(summary = "Retired guest order creation", deprecated = true,
+               description = "Gone. New guest checkout is no longer available; "
+                       + "the payer must sign in and use POST /checkout.")
+    public ResponseEntity<Void> retiredGuestCheckout() {
+        throw retiredGuestCreation();
     }
 
     @GetMapping("/api/guest/orders/lookup")
@@ -193,5 +198,9 @@ public class OrderController {
 
     private static ResponseStatusException retiredCreation() {
         return new ResponseStatusException(HttpStatus.GONE, RETIRED_CREATION_MESSAGE);
+    }
+
+    private static ResponseStatusException retiredGuestCreation() {
+        return new ResponseStatusException(HttpStatus.GONE, RETIRED_GUEST_CREATION_MESSAGE);
     }
 }
