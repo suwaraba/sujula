@@ -17,8 +17,15 @@ const KEYS = {
   currency: 'sujula.currency',
   cart: 'sujula.cart',
   auth: 'sujula.auth',
-  recent: 'sujula.recentSearches'
+  recent: 'sujula.recentSearches',
+  checkoutAttempt: 'sujula.checkoutAttempt'
 };
+
+// Cart quotes are held for fifteen minutes. The quote countdown itself is not
+// persisted, so this matching fixed TTL is the conservative recovery window
+// available after a reload. Stale attempts are discarded before they can be
+// replayed.
+const CHECKOUT_ATTEMPT_TTL_MS = 15 * 60 * 1000;
 
 function read(key, fallback) {
   try {
@@ -33,9 +40,39 @@ function write(key, value) {
   try {
     if (value === null || value === undefined) localStorage.removeItem(key);
     else localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
     /* Storage full or blocked. The session still works; it just forgets. */
+    return false;
   }
+}
+
+function validCheckoutAttempt(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (typeof value.quoteId !== 'string' || !value.quoteId || value.quoteId.length > 200) return false;
+  if (typeof value.idempotencyKey !== 'string' || !value.idempotencyKey
+      || value.idempotencyKey.length > 200) return false;
+  if ((!Number.isSafeInteger(value.addressId) && typeof value.addressId !== 'string')
+      || String(value.addressId).length > 40) return false;
+  if (typeof value.paymentMethod !== 'string' || !value.paymentMethod
+      || value.paymentMethod.length > 64) return false;
+  if (value.notes !== null && (typeof value.notes !== 'string' || value.notes.length > 2000)) return false;
+  if (typeof value.createdAt !== 'string' || value.createdAt.length > 40) return false;
+
+  const createdAt = Date.parse(value.createdAt);
+  const age = Date.now() - createdAt;
+  return Number.isFinite(createdAt) && age >= 0 && age <= CHECKOUT_ATTEMPT_TTL_MS;
+}
+
+function checkoutAttemptRecord(value) {
+  return {
+    quoteId: value.quoteId,
+    idempotencyKey: value.idempotencyKey,
+    addressId: value.addressId,
+    paymentMethod: value.paymentMethod,
+    notes: value.notes,
+    createdAt: value.createdAt
+  };
 }
 
 export const state = {
@@ -139,6 +176,30 @@ export function setAuth(auth) {
 
 export function signedIn() {
   return Boolean(state.auth && state.auth.accessToken);
+}
+
+/** The one replayable order-creation attempt, if it is well-formed and fresh. */
+export function getCheckoutAttempt() {
+  const attempt = read(KEYS.checkoutAttempt, null);
+  if (!validCheckoutAttempt(attempt)) {
+    write(KEYS.checkoutAttempt, null);
+    return null;
+  }
+  return checkoutAttemptRecord(attempt);
+}
+
+/** Persist the exact checkout inputs before the request is allowed to leave. */
+export function saveCheckoutAttempt(attempt) {
+  if (!validCheckoutAttempt(attempt)) return null;
+  const record = checkoutAttemptRecord(attempt);
+  return write(KEYS.checkoutAttempt, record) ? record : null;
+}
+
+/** Avoid letting an old response clear a newer quote's attempt. */
+export function clearCheckoutAttempt(expectedQuoteId) {
+  const current = read(KEYS.checkoutAttempt, null);
+  if (expectedQuoteId && current && current.quoteId !== expectedQuoteId) return false;
+  return write(KEYS.checkoutAttempt, null);
 }
 
 export function rememberSearch(term) {

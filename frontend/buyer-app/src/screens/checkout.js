@@ -17,7 +17,13 @@
  */
 
 import { api, ApiError, idempotencyKey } from '../api.js';
-import { state, signedIn } from '../state.js';
+import {
+  state,
+  signedIn,
+  getCheckoutAttempt,
+  saveCheckoutAttempt,
+  clearCheckoutAttempt
+} from '../state.js';
 import { refreshCart, syncCartContext } from '../components/cart.js';
 import { openDeliveryModal } from '../components/deliveryModal.js';
 import { renderChrome } from '../components/chrome.js';
@@ -51,6 +57,15 @@ export async function checkoutView({ outlet }) {
     return;
   }
 
+  // A completed checkout clears its cart in the same backend transaction. A
+  // lost response can therefore leave an empty cart alongside the only safe
+  // way to learn the result: replaying the persisted request and key.
+  const pendingAttempt = getCheckoutAttempt();
+  if (pendingAttempt) {
+    recoverCheckout(outlet);
+    return;
+  }
+
   const view = {
     mode: (state.place && state.place.mode) || 'HOME_DELIVERY',
     pickupPointId: (state.place && state.place.pickupPointId) || null,
@@ -58,7 +73,8 @@ export async function checkoutView({ outlet }) {
     paymentMethod: null,
     quote: null,
     addresses: [],
-    cart: null
+    cart: null,
+    inFlight: false
   };
 
   outlet.innerHTML = `<div class="wrap"><div class="section">
@@ -188,7 +204,7 @@ function paint(outlet, view) {
         </section>
 
         <button class="btn btn-primary btn-block" data-action="place"
-                ${placeable ? '' : 'aria-disabled="true"'}>
+                ${placeable ? '' : 'disabled aria-disabled="true"'}>
           ${icon('shield', 18)} Place the order${placeable
             ? ' — ' + esc(money(view.quote.total, view.quote.displayCurrency)) : ''}
         </button>
@@ -252,6 +268,11 @@ function wire(outlet, view) {
 /* ── The quote ────────────────────────────────────────────────────────────── */
 
 async function requote(outlet, view) {
+  // Once a checkout request might have reached the server, its quote and body
+  // stay authoritative. Replacing the quote is safe only after that attempt
+  // has received a definite result and has been cleared.
+  if (getCheckoutAttempt()) return;
+
   const host = outlet.querySelector('[data-quote]');
   if (!host) return;
   host.innerHTML = '<div class="sk" style="height:120px"></div>';
@@ -502,30 +523,128 @@ function openAddressForm(outlet, view) {
 
 /* ── Placing it ───────────────────────────────────────────────────────────── */
 
-async function place(outlet, view, button) {
-  if (!view.quote || !view.quote.complete || !view.quote.deliverable) return;
-  if (!view.addressId || !view.paymentMethod) return;
+function checkoutBody(attempt) {
+  return {
+    quoteId: attempt.quoteId,
+    addressId: attempt.addressId,
+    paymentMethod: attempt.paymentMethod,
+    notes: attempt.notes
+  };
+}
 
-  setBusy(button, true, 'Placing the order…');
-  try {
-    const placed = await api.checkout({
-      quoteId: view.quote.id,
-      addressId: view.addressId,
-      paymentMethod: view.paymentMethod,
-      notes: null
-    }, idempotencyKey());
+function setCheckoutLocked(outlet, locked) {
+  outlet.querySelectorAll(
+    'input[name="address"], input[name="mode"], input[name="point"], input[name="method"], '
+      + '[data-action="new-address"], [data-action="change-place"]'
+  ).forEach(control => { control.disabled = locked; });
+}
 
-    await refreshCart();
-    showPlaced(outlet, placed);
-  } catch (error) {
-    setBusy(button, false);
-    if (error instanceof ApiError && /expired|price changed/i.test(error.message)) {
-      toast(error.message, 'error');
-      requote(outlet, view);
+function cannotReplayQuote(error) {
+  return error instanceof ApiError
+    && (error.status === 400 || error.status === 404 || error.status === 409)
+    && /quote|price changed|cart (?:behind this quote )?changed|delivery (?:destination|arrangement) changed/i
+      .test(error.message || '');
+}
+
+function recoverCheckout(outlet) {
+  const view = { inFlight: false };
+  outlet.innerHTML = `
+    <div class="wrap"><div class="section">
+      <div class="card panel center">
+        ${icon('shield', 40)}
+        <h1>Resume your order</h1>
+        <p class="muted">The last response was not confirmed. Resume the same order attempt
+          to check its result without placing it twice.</p>
+        <button class="btn btn-primary" data-action="recover" type="button">Resume checkout</button>
+      </div>
+    </div></div>`;
+
+  const button = outlet.querySelector('[data-action="recover"]');
+  const replay = () => {
+    const attempt = getCheckoutAttempt();
+    if (!attempt) {
+      checkoutView({ outlet });
       return;
     }
-    toast(error.message, 'error');
+    submitCheckoutAttempt(outlet, view, button, attempt, { recovering: true });
+  };
+  button.addEventListener('click', replay);
+}
+
+async function place(outlet, view, button) {
+  if (view.inFlight) return;
+
+  let attempt = getCheckoutAttempt();
+  if (attempt) {
+    if (!view.quote || attempt.quoteId !== view.quote.id) {
+      toast('Finish the pending order attempt before starting a new quote.', 'error');
+      return;
+    }
+  } else {
+    if (!view.quote || !view.quote.complete || !view.quote.deliverable) return;
+    if (!view.addressId || !view.paymentMethod) return;
+
+    attempt = saveCheckoutAttempt({
+      quoteId: view.quote.id,
+      idempotencyKey: idempotencyKey(),
+      addressId: view.addressId,
+      paymentMethod: view.paymentMethod,
+      notes: null,
+      createdAt: new Date().toISOString()
+    });
+    if (!attempt) {
+      toast('Checkout could not be saved safely in this browser. Please try again.', 'error');
+      return;
+    }
   }
+
+  setCheckoutLocked(outlet, true);
+  await submitCheckoutAttempt(outlet, view, button, attempt);
+}
+
+async function submitCheckoutAttempt(outlet, view, button, attempt, { recovering = false } = {}) {
+  if (view.inFlight) return;
+  view.inFlight = true;
+  button.disabled = true;
+  setBusy(button, true, recovering ? 'Checking the order…' : 'Placing the order…');
+
+  let placed;
+  try {
+    placed = await api.checkout(checkoutBody(attempt), attempt.idempotencyKey);
+  } catch (error) {
+    view.inFlight = false;
+    setBusy(button, false);
+    button.disabled = false;
+
+    if (cannotReplayQuote(error)) {
+      clearCheckoutAttempt(attempt.quoteId);
+      toast(error.message, 'error');
+      if (recovering) checkoutView({ outlet });
+      else {
+        setCheckoutLocked(outlet, false);
+        requote(outlet, view);
+      }
+      return;
+    }
+
+    // A transport failure (and any server result whose outcome is unclear)
+    // deliberately leaves the frozen attempt in storage for the next retry.
+    toast(error.message, 'error');
+    return;
+  }
+
+  clearCheckoutAttempt(attempt.quoteId);
+  view.inFlight = false;
+
+  // The checkout response is already a definite success. Cart refresh is
+  // housekeeping and must not turn that success into an apparently retryable
+  // order submission if the follow-up request loses its connection.
+  try {
+    await refreshCart();
+  } catch (error) {
+    console.warn('[sujula] order placed but cart refresh failed', error);
+  }
+  showPlaced(outlet, placed);
 }
 
 const PAY_LATER = new Set(['PAY_ON_DELIVERY', 'PAY_AT_PICKUP', 'CASH_IN_STORE']);
