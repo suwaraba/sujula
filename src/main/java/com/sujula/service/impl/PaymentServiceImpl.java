@@ -31,6 +31,7 @@ import com.sujula.service.NotificationService;
 import com.sujula.service.PaymentService;
 import com.sujula.service.payment.PaymentGateway;
 import com.sujula.service.payment.PaymentProperties;
+import com.sujula.service.payment.PaymentOperation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -48,7 +49,6 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 
 /**
  * Payment lifecycle for every method the platform accepts.
@@ -194,17 +194,20 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     @Transactional
-    public PaymentResponse initiate(Long orderId, Long requestingUserId, InitiatePaymentRequest request) {
-        Order order = requireOrder(orderId);
+    public PaymentResponse initiate(Long orderId, Long requestingUserId, InitiatePaymentRequest request,
+                                    PaymentOperation operation) {
+        Order order = requireOrderForPayment(orderId);
         requireOwnership(order, requestingUserId);
-        return PaymentResponse.from(open(order, request));
+        return PaymentResponse.from(open(order, request, operation));
     }
 
     @Override
     @Transactional
     public PaymentResponse initiateForGuest(String orderNumber, String guestEmail,
-                                            InitiatePaymentRequest request) {
-        return PaymentResponse.from(open(requireGuestOrder(orderNumber, guestEmail), request));
+                                            InitiatePaymentRequest request,
+                                            PaymentOperation operation) {
+        return PaymentResponse.from(open(
+                requireGuestOrderForPayment(orderNumber, guestEmail), request, operation));
     }
 
     /**
@@ -214,7 +217,7 @@ public class PaymentServiceImpl implements PaymentService {
      * stands: a buyer who reloads the checkout page must land back on the
      * checkout the gateway already opened, not on a second one.
      */
-    private Payment open(Order order, InitiatePaymentRequest request) {
+    private Payment open(Order order, InitiatePaymentRequest request, PaymentOperation operation) {
         PaymentMethod method = request.getMethod();
         if (method == null) {
             throw new BadRequestException("A payment method must be chosen");
@@ -230,7 +233,7 @@ public class PaymentServiceImpl implements PaymentService {
         if (payment == null) {
             payment = Payment.builder()
                     .order(order)
-                    .reference(newReference())
+                    .reference(operation.paymentReference())
                     .status(PaymentStatus.PENDING)
                     .method(method)
                     .amount(order.getTotal())
@@ -278,7 +281,8 @@ public class PaymentServiceImpl implements PaymentService {
 
         repriceFromOrder(payment, order);
         payment = paymentRepository.save(payment);   // persist before the gateway sees it
-        attachMethodLeg(payment, order, request.getReturnUrl(), previousLeg);
+        attachMethodLeg(payment, order, request.getReturnUrl(), previousLeg,
+                operation.providerKey());
         payment = paymentRepository.save(payment);
 
         order.setPaymentMethod(method);
@@ -379,7 +383,7 @@ public class PaymentServiceImpl implements PaymentService {
 
     /** Gives the payment whatever its method needs: a gateway checkout, or instructions. */
     private void attachMethodLeg(Payment payment, Order order, String returnUrl,
-                                 ProviderLegSnapshot previousLeg) {
+                                 ProviderLegSnapshot previousLeg, String providerOperationKey) {
         PaymentMethod method = payment.getMethod();
         switch (method.getChannel()) {
             case ONLINE -> {
@@ -387,7 +391,7 @@ public class PaymentServiceImpl implements PaymentService {
                         method.getDisplayName() + " payments are not available right now"));
                 PaymentGateway.GatewayCheckout checkout;
                 try {
-                    checkout = gateway.createCheckout(payment, returnUrl);
+                    checkout = gateway.createCheckout(payment, returnUrl, providerOperationKey);
                 } catch (RuntimeException failure) {
                     if (previousLeg != null) {
                         // Database state rolls back with the transaction. Also
@@ -914,11 +918,25 @@ public class PaymentServiceImpl implements PaymentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
     }
 
+    /** Establishes the parent lock before looking for a possibly absent Payment row. */
+    private Order requireOrderForPayment(Long orderId) {
+        return orderRepository.findByIdForPaymentUpdate(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+    }
+
     private Order requireGuestOrder(String orderNumber, String guestEmail) {
         if (orderNumber == null || guestEmail == null || guestEmail.isBlank()) {
             throw new BadRequestException("Both the order number and the email used at checkout are required");
         }
         return orderRepository.findByOrderNumberAndGuestEmailIgnoreCase(orderNumber, guestEmail)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", "no matching guest order"));
+    }
+
+    private Order requireGuestOrderForPayment(String orderNumber, String guestEmail) {
+        if (orderNumber == null || guestEmail == null || guestEmail.isBlank()) {
+            throw new BadRequestException("Both the order number and the email used at checkout are required");
+        }
+        return orderRepository.findGuestForPaymentUpdate(orderNumber, guestEmail)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", "no matching guest order"));
     }
 
@@ -933,15 +951,4 @@ public class PaymentServiceImpl implements PaymentService {
         }
     }
 
-    /** Short, unambiguous reference a buyer can quote on a transfer or at a counter. */
-    private String newReference() {
-        for (int attempt = 0; attempt < 5; attempt++) {
-            String candidate = "PAY-" + UUID.randomUUID().toString().replace("-", "")
-                    .substring(0, 10).toUpperCase();
-            if (!paymentRepository.existsByReference(candidate)) {
-                return candidate;
-            }
-        }
-        throw new IllegalStateException("Could not allocate a unique payment reference");
-    }
 }

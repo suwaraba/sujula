@@ -11,7 +11,11 @@ import com.sujula.exceptions.BadRequestException;
 import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.user.User;
 import com.sujula.service.PaymentService;
+import com.sujula.service.idempotency.IdempotencyService;
+import com.sujula.service.payment.PaymentOperation;
 import com.sujula.service.payment.PaymentProperties;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -35,10 +39,13 @@ public class PaymentController {
 
     private final PaymentService paymentService;
     private final PaymentProperties properties;
+    private final IdempotencyService idempotency;
 
-    public PaymentController(PaymentService paymentService, PaymentProperties properties) {
+    public PaymentController(PaymentService paymentService, PaymentProperties properties,
+                             IdempotencyService idempotency) {
         this.paymentService = paymentService;
         this.properties = properties;
+        this.idempotency = idempotency;
     }
 
     // ── Buyer (authenticated) ────────────────────────────────────────────────
@@ -52,10 +59,25 @@ public class PaymentController {
 
     @PostMapping("/api/user/orders/{orderId}/payment")
     @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Start or retry payment for an order",
+               description = "Idempotency-Key is required and identifies one logical payment "
+                       + "operation. Retry an uncertain result with the same key and request.")
     public ResponseEntity<PaymentResponse> pay(Authentication authentication,
                                                @PathVariable Long orderId,
+                                               @Parameter(required = true,
+                                                       description = "A unique value for this payment operation")
+                                               @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                @Valid @RequestBody InitiatePaymentRequest request) {
-        PaymentResponse payment = paymentService.initiate(orderId, currentUserId(authentication), request);
+        String key = PaymentOperation.requireClientKey(idempotencyKey);
+        Long userId = currentUserId(authentication);
+        String scope = IdempotencyService.scopeFor(userId, "payment.initiate:" + orderId);
+        PaymentOperation operation = PaymentOperation.of(scope, key);
+        PaymentResponse payment = idempotency.execute(
+                operation.scope(), operation.clientKey(),
+                operation.fingerprint("order:" + orderId, request.getMethod(),
+                        request.getReturnUrl(), request.getNote()),
+                HttpStatus.CREATED.value(), PaymentResponse.class,
+                () -> paymentService.initiate(orderId, userId, request, operation));
         return ResponseEntity.status(HttpStatus.CREATED).body(payment);
     }
 
@@ -76,11 +98,26 @@ public class PaymentController {
     }
 
     @PostMapping("/api/guest/orders/{orderNumber}/payment")
+    @Operation(summary = "Start or retry payment for a historic guest order",
+               description = "Idempotency-Key is required and scoped to the order-number/email "
+                       + "pair. Retry an uncertain result with the same key and request.")
     public ResponseEntity<PaymentResponse> guestPay(@PathVariable String orderNumber,
                                                     @RequestParam String email,
+                                                    @Parameter(required = true,
+                                                            description = "A unique value for this payment operation")
+                                                    @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                     @Valid @RequestBody InitiatePaymentRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(paymentService.initiateForGuest(orderNumber, email, request));
+        String key = PaymentOperation.requireClientKey(idempotencyKey);
+        String scope = IdempotencyService.anonymousScope(
+                "payment.initiate:" + PaymentOperation.guestIdentity(orderNumber, email));
+        PaymentOperation operation = PaymentOperation.of(scope, key);
+        PaymentResponse payment = idempotency.execute(
+                operation.scope(), operation.clientKey(),
+                operation.fingerprint("order-number:" + orderNumber,
+                        request.getMethod(), request.getReturnUrl(), request.getNote()),
+                HttpStatus.CREATED.value(), PaymentResponse.class,
+                () -> paymentService.initiateForGuest(orderNumber, email, request, operation));
+        return ResponseEntity.status(HttpStatus.CREATED).body(payment);
     }
 
     @GetMapping("/api/guest/orders/{orderNumber}/payment")

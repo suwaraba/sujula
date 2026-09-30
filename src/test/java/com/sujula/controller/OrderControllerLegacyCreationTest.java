@@ -13,6 +13,7 @@ import com.sujula.model.order.Order;
 import com.sujula.model.user.User;
 import com.sujula.service.OrderService;
 import com.sujula.service.PaymentService;
+import com.sujula.service.idempotency.IdempotencyService;
 import com.sujula.service.payment.PaymentProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -24,10 +25,12 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.Supplier;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -44,9 +47,10 @@ class OrderControllerLegacyCreationTest {
 
     private final OrderService orders = mock(OrderService.class);
     private final PaymentService payments = mock(PaymentService.class);
+    private final IdempotencyService idempotency = mock(IdempotencyService.class);
     private final OrderController controller = new OrderController(orders);
     private final MockMvc mvc = MockMvcBuilders.standaloneSetup(
-                    controller, new PaymentController(payments, new PaymentProperties()))
+                    controller, new PaymentController(payments, new PaymentProperties(), idempotency))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
 
@@ -232,18 +236,23 @@ class OrderControllerLegacyCreationTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void historicGuestPaymentInitiationRemainsReachable() throws Exception {
+        when(idempotency.execute(anyString(), anyString(), any(), eq(201),
+                eq(PaymentResponse.class), any()))
+                .thenAnswer(call -> ((Supplier<PaymentResponse>) call.getArgument(5)).get());
         when(payments.initiateForGuest(eq("SJL-1008"), eq("guest@example.com"),
-                any(InitiatePaymentRequest.class)))
+                any(InitiatePaymentRequest.class), any()))
                 .thenReturn(PaymentResponse.builder().orderNumber("SJL-1008").build());
 
         mvc.perform(post("/api/guest/orders/SJL-1008/payment")
                         .param("email", "guest@example.com")
+                        .header("Idempotency-Key", "guest-payment-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"method\":\"PAY_ON_DELIVERY\"}"))
                 .andExpect(status().isCreated());
 
         verify(payments).initiateForGuest(eq("SJL-1008"), eq("guest@example.com"),
-                any(InitiatePaymentRequest.class));
+                any(InitiatePaymentRequest.class), any());
     }
 }

@@ -178,8 +178,8 @@ export const api = {
   /* ── Paying ───────────────────────────────────────────────────────────── */
   checkout: (body, key) => post('/checkout', body, { idempotent: key }),
   checkoutStatus: orderId => get('/checkout/' + orderId + '/status'),
-  retryPayment: (orderId, paymentMethod) =>
-    post('/checkout/' + orderId + '/retry-payment', { paymentMethod }),
+  retryPayment: (orderId, paymentMethod, key) =>
+    post('/checkout/' + orderId + '/retry-payment', { paymentMethod }, { idempotent: key }),
 
   /* ── Afterwards ───────────────────────────────────────────────────────── */
   orders: query => get('/orders', query),

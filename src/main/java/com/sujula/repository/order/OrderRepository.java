@@ -2,8 +2,10 @@ package com.sujula.repository.order;
 
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.order.Order;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,6 +18,11 @@ import java.util.Optional;
 
 @Repository
 public interface OrderRepository extends JpaRepository<Order, Long> {
+
+    /** Parent-row lock acquired before the optional Payment row is read or created. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o WHERE o.id = :id")
+    Optional<Order> findByIdForPaymentUpdate(@Param("id") Long id);
 
     Page<Order> findByCustomerId(Long customerId, Pageable pageable);
 
@@ -84,6 +91,14 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
      * caller cannot enumerate orders by number alone.
      */
     Optional<Order> findByOrderNumberAndGuestEmailIgnoreCase(String orderNumber, String guestEmail);
+
+    /** Historic guest equivalent of {@link #findByIdForPaymentUpdate(Long)}. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o WHERE o.orderNumber = :orderNumber "
+         + "AND LOWER(o.guestEmail) = LOWER(:guestEmail)")
+    Optional<Order> findGuestForPaymentUpdate(
+            @Param("orderNumber") String orderNumber,
+            @Param("guestEmail") String guestEmail);
 
     /** Aggregate: total revenue from DELIVERED orders (avoids a full table scan). */
     @Query("SELECT COALESCE(SUM(o.total), 0) FROM Order o WHERE o.status = :status")

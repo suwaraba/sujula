@@ -22,6 +22,7 @@ import com.sujula.service.cart.CartStructureFingerprint;
 import com.sujula.service.checkout.CheckoutService;
 import com.sujula.service.delivery.DeliveryContextService;
 import com.sujula.service.reference.CurrencyCatalogue;
+import com.sujula.service.payment.PaymentOperation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -74,7 +75,8 @@ public class CheckoutServiceImpl implements CheckoutService {
 
     @Override
     @Transactional
-    public CheckoutResponses.Placed checkout(Long userId, CheckoutRequests.Checkout request) {
+    public CheckoutResponses.Placed checkout(Long userId, CheckoutRequests.Checkout request,
+                                             PaymentOperation paymentOperation) {
         CartQuote quote = requireUsableQuote(request.quoteId(), userId);
         CartResponse cart = carts.getCartForCheckout(userId, sourceCartId(quote));
         requireSameCartStructure(quote, cart);
@@ -99,7 +101,7 @@ public class CheckoutServiceImpl implements CheckoutService {
         quotes.save(quote);
 
         PaymentResponse payment = payments.initiate(order.getId(), userId,
-                InitiatePaymentRequest.builder().method(request.paymentMethod()).build());
+                InitiatePaymentRequest.builder().method(request.paymentMethod()).build(), paymentOperation);
 
         log.info("[Checkout] Order {} placed by user {} from quote {} — {} {}",
                 order.getOrderNumber(), userId, quote.getId(), order.getTotal(), order.getCurrency());
@@ -132,7 +134,8 @@ public class CheckoutServiceImpl implements CheckoutService {
     @Override
     @Transactional
     public CheckoutResponses.PaymentIntent retryPayment(Long userId, Long orderId,
-                                                        CheckoutRequests.RetryPayment request) {
+                                                        CheckoutRequests.RetryPayment request,
+                                                        PaymentOperation paymentOperation) {
         Order order = requireOwnOrder(orderId, userId);
 
         if (order.getPaymentStatus() == PaymentStatus.PAID) {
@@ -146,7 +149,7 @@ public class CheckoutServiceImpl implements CheckoutService {
         }
 
         PaymentResponse payment = payments.initiate(orderId, userId,
-                InitiatePaymentRequest.builder().method(request.paymentMethod()).build());
+                InitiatePaymentRequest.builder().method(request.paymentMethod()).build(), paymentOperation);
 
         log.info("[Checkout] New payment intent on order {} for user {}",
                 order.getOrderNumber(), userId);

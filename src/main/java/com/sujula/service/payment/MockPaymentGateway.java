@@ -81,9 +81,11 @@ public class MockPaymentGateway implements PaymentGateway {
      * to settle rather than wait for a callback that will never arrive.
      */
     @Override
-    public GatewayCheckout createCheckout(Payment payment, String returnUrl) {
-        String transactionId = "MOCK-" + UUID.randomUUID().toString().replace("-", "")
-                .substring(0, 20).toUpperCase(Locale.ROOT);
+    public GatewayCheckout createCheckout(Payment payment, String returnUrl,
+                                          String providerOperationKey) {
+        String transactionId = "MOCK-" + UUID.nameUUIDFromBytes(
+                        providerOperationKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .toString().replace("-", "").substring(0, 20).toUpperCase(Locale.ROOT);
 
         log.warn("[Payment] MOCK gateway accepting {} {} for {} without charging anything (tx {})",
                 payment.getAmount(), payment.getCurrency(), payment.getReference(), transactionId);

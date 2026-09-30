@@ -25,6 +25,7 @@ import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.impl.PaymentServiceImpl;
 import com.sujula.service.payment.PaymentGateway;
+import com.sujula.service.payment.PaymentOperation;
 import com.sujula.service.payment.PaymentProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,8 +36,10 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -62,6 +65,9 @@ import static org.mockito.Mockito.when;
  * confirmation does to the order, and what the money rules refuse.
  */
 class PaymentServiceImplTest {
+
+    private static final PaymentOperation OPERATION =
+            PaymentOperation.of("user:1:payment.initiate:7", "payment-test-operation");
 
     private PaymentRepository paymentRepository;
     private OrderRepository orderRepository;
@@ -116,6 +122,7 @@ class PaymentServiceImplTest {
         order.setTotal(new BigDecimal("1200.00"));
 
         when(orderRepository.findById(7L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForPaymentUpdate(7L)).thenReturn(Optional.of(order));
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.empty());
         when(paymentRepository.existsByReference(any())).thenReturn(false);
         when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> i.getArgument(0));
@@ -144,7 +151,7 @@ class PaymentServiceImplTest {
         order.setDeliveryMode(DeliveryMode.PICKUP_POINT);
 
         assertThrows(BadRequestException.class, () -> service.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build()));
+                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build(), OPERATION));
     }
 
     /** The same service, but with one gateway bean registered. */
@@ -166,7 +173,7 @@ class PaymentServiceImplTest {
         PaymentServiceImpl withGateway = serviceWith(new ImmediateGateway());
 
         PaymentResponse payment = withGateway.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build());
+                InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build(), OPERATION);
 
         assertEquals(PaymentStatus.PAID, payment.getStatus());
         assertEquals(PaymentStatus.PAID, order.getPaymentStatus());
@@ -179,7 +186,7 @@ class PaymentServiceImplTest {
         PaymentServiceImpl withGateway = serviceWith(new HostedPageGateway());
 
         PaymentResponse payment = withGateway.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build());
+                InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build(), OPERATION);
 
         // The buyer has not paid yet — they have been handed a page to pay on.
         assertEquals(PaymentStatus.PENDING, payment.getStatus());
@@ -191,7 +198,7 @@ class PaymentServiceImplTest {
         @Override public String name() { return "immediate"; }
         @Override public boolean settlesImmediately() { return true; }
         @Override public void retireCheckout(String transactionId) { }
-        @Override public GatewayCheckout createCheckout(Payment payment, String returnUrl) {
+        @Override public GatewayCheckout createCheckout(Payment payment, String returnUrl, String operationKey) {
             return new GatewayCheckout("IMMEDIATE-TX", null, null, "{}");
         }
     }
@@ -200,7 +207,7 @@ class PaymentServiceImplTest {
         @Override public boolean supports(PaymentMethod method) { return method.requiresGateway(); }
         @Override public String name() { return "hosted"; }
         @Override public void retireCheckout(String transactionId) { }
-        @Override public GatewayCheckout createCheckout(Payment payment, String returnUrl) {
+        @Override public GatewayCheckout createCheckout(Payment payment, String returnUrl, String operationKey) {
             return new GatewayCheckout("HOSTED-TX", "https://pay.example/checkout/HOSTED-TX", null, "{}");
         }
     }
@@ -208,7 +215,7 @@ class PaymentServiceImplTest {
     @Test
     void refusesCardWhenNoGatewayIsRegistered() {
         BadRequestException error = assertThrows(BadRequestException.class, () -> service.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build()));
+                InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build(), OPERATION));
         assertTrue(error.getMessage().contains("not available"));
     }
 
@@ -217,7 +224,7 @@ class PaymentServiceImplTest {
     @Test
     void bankTransferGetsInstructionsAndAReferenceToQuote() {
         PaymentResponse payment = service.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.BANK_TRANSFER).build());
+                InitiatePaymentRequest.builder().method(PaymentMethod.BANK_TRANSFER).build(), OPERATION);
 
         assertEquals(PaymentStatus.PENDING, payment.getStatus());
         assertEquals(new BigDecimal("1200.00"), payment.getAmount());
@@ -239,7 +246,7 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(existing));
 
         PaymentResponse payment = service.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build());
+                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build(), OPERATION);
 
         assertEquals(existing.getReference(), payment.getReference());
     }
@@ -256,19 +263,20 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(existing));
 
         PaymentResponse payment = withGateway.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build());
+                InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build(), OPERATION);
 
         assertEquals("cs_OLD", payment.getTransactionId());
         assertEquals("https://provider.example/checkout/cs_OLD", payment.getCheckoutUrl());
         verify(gateway, never()).retireCheckout(anyString());
-        verify(gateway, never()).createCheckout(any(Payment.class), any());
+        verify(gateway, never()).createCheckout(any(Payment.class), any(), any());
     }
 
     @Test
     void cardReplacementRetiresOldCheckoutBeforeCreatingNewOne() {
         PaymentGateway gateway = mock(PaymentGateway.class);
         when(gateway.supports(PaymentMethod.CARD)).thenReturn(true);
-        when(gateway.createCheckout(any(Payment.class), eq("https://shop.example/return")))
+        when(gateway.createCheckout(any(Payment.class), eq("https://shop.example/return"),
+                eq(OPERATION.providerKey())))
                 .thenAnswer(invocation -> {
                     Payment replacing = invocation.getArgument(0);
                     assertEquals(PaymentStatus.PENDING, replacing.getStatus());
@@ -288,11 +296,12 @@ class PaymentServiceImplTest {
         PaymentResponse payment = withGateway.initiate(7L, null, InitiatePaymentRequest.builder()
                 .method(PaymentMethod.CARD)
                 .returnUrl("https://shop.example/return")
-                .build());
+                .build(), OPERATION);
 
         InOrder ordered = inOrder(gateway);
         ordered.verify(gateway).retireCheckout("cs_OLD");
-        ordered.verify(gateway).createCheckout(same(existing), eq("https://shop.example/return"));
+        ordered.verify(gateway).createCheckout(
+                same(existing), eq("https://shop.example/return"), eq(OPERATION.providerKey()));
         assertEquals("cs_NEW", payment.getTransactionId());
         assertEquals("https://provider.example/checkout/cs_NEW", payment.getCheckoutUrl());
         assertEquals("new-response", existing.getGatewayResponse());
@@ -316,7 +325,7 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(existing));
 
         PaymentResponse payment = withGateway.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build());
+                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build(), OPERATION);
 
         assertEquals(PaymentMethod.PAY_ON_DELIVERY, payment.getMethod());
         assertEquals(PaymentStatus.PENDING, payment.getStatus());
@@ -326,7 +335,7 @@ class PaymentServiceImplTest {
         assertNull(existing.getGatewayResponse());
         assertNotNull(payment.getInstructions());
         verify(gateway).retireCheckout("cs_OLD");
-        verify(gateway, never()).createCheckout(any(Payment.class), any());
+        verify(gateway, never()).createCheckout(any(Payment.class), any(), any());
     }
 
     @Test
@@ -341,10 +350,10 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(existing));
 
         assertThrows(IllegalStateException.class, () -> withGateway.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build()));
+                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build(), OPERATION));
 
         assertProviderLegUnchanged(existing, PaymentStatus.PENDING);
-        verify(gateway, never()).createCheckout(any(Payment.class), any());
+        verify(gateway, never()).createCheckout(any(Payment.class), any(), any());
     }
 
     @Test
@@ -360,14 +369,14 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(existing));
 
         assertThrows(BadRequestException.class, () -> withGateway.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build()));
+                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build(), OPERATION));
 
         assertEquals(PaymentMethod.CARD, existing.getMethod());
         assertEquals("https://provider.example/checkout/unknown", existing.getCheckoutUrl());
         assertEquals("old-client-secret", existing.getClientSecret());
         assertEquals("old-response", existing.getGatewayResponse());
         verify(gateway, never()).retireCheckout(anyString());
-        verify(gateway, never()).createCheckout(any(Payment.class), any());
+        verify(gateway, never()).createCheckout(any(Payment.class), any(), any());
     }
 
     @Test
@@ -376,7 +385,7 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(existing));
 
         assertThrows(BadRequestException.class, () -> service.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build()));
+                InitiatePaymentRequest.builder().method(PaymentMethod.PAY_ON_DELIVERY).build(), OPERATION));
 
         assertProviderLegUnchanged(existing, PaymentStatus.PENDING);
     }
@@ -385,7 +394,7 @@ class PaymentServiceImplTest {
     void failedReplacementCreationRestoresOldEvidenceAndCanBeRetried() {
         PaymentGateway gateway = mock(PaymentGateway.class);
         when(gateway.supports(PaymentMethod.CARD)).thenReturn(true);
-        when(gateway.createCheckout(any(Payment.class), any()))
+        when(gateway.createCheckout(any(Payment.class), any(), eq(OPERATION.providerKey())))
                 .thenThrow(new IllegalStateException("create response lost"))
                 .thenReturn(new PaymentGateway.GatewayCheckout(
                         "cs_NEW", "https://provider.example/checkout/cs_NEW", null, "new-response"));
@@ -395,15 +404,54 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(existing));
         InitiatePaymentRequest request = InitiatePaymentRequest.builder().method(PaymentMethod.CARD).build();
 
-        assertThrows(IllegalStateException.class, () -> withGateway.initiate(7L, null, request));
+        assertThrows(IllegalStateException.class,
+                () -> withGateway.initiate(7L, null, request, OPERATION));
         assertProviderLegUnchanged(existing, PaymentStatus.FAILED);
 
-        PaymentResponse retried = withGateway.initiate(7L, null, request);
+        PaymentResponse retried = withGateway.initiate(7L, null, request, OPERATION);
 
         assertEquals(PaymentStatus.PENDING, retried.getStatus());
         assertEquals("cs_NEW", retried.getTransactionId());
         verify(gateway, times(2)).retireCheckout("cs_OLD");
-        verify(gateway, times(2)).createCheckout(same(existing), any());
+        verify(gateway, times(2)).createCheckout(
+                same(existing), any(), eq(OPERATION.providerKey()));
+    }
+
+    @Test
+    void providerSuccessFollowedByLocalRollbackRetriesTheSameProviderOperation() {
+        PaymentGateway gateway = mock(PaymentGateway.class);
+        when(gateway.supports(PaymentMethod.CARD)).thenReturn(true);
+        List<String> references = new ArrayList<>();
+        List<String> providerKeys = new ArrayList<>();
+        List<String> returnUrls = new ArrayList<>();
+        when(gateway.createCheckout(any(Payment.class), any(), any())).thenAnswer(call -> {
+            references.add(call.<Payment>getArgument(0).getReference());
+            returnUrls.add(call.getArgument(1));
+            providerKeys.add(call.getArgument(2));
+            return new PaymentGateway.GatewayCheckout(
+                    "cs_STABLE", "https://provider.example/checkout/cs_STABLE", null, "stable-response");
+        });
+        AtomicInteger saves = new AtomicInteger();
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(call -> {
+            if (saves.incrementAndGet() == 2) {
+                throw new IllegalStateException("local commit path failed after provider success");
+            }
+            return call.getArgument(0);
+        });
+        PaymentServiceImpl withGateway = serviceWith(gateway);
+        InitiatePaymentRequest request = InitiatePaymentRequest.builder()
+                .method(PaymentMethod.CARD)
+                .returnUrl("https://shop.example/return")
+                .build();
+
+        assertThrows(IllegalStateException.class,
+                () -> withGateway.initiate(7L, null, request, OPERATION));
+        PaymentResponse retried = withGateway.initiate(7L, null, request, OPERATION);
+
+        assertEquals("cs_STABLE", retried.getTransactionId());
+        assertEquals(List.of(OPERATION.paymentReference(), OPERATION.paymentReference()), references);
+        assertEquals(List.of(OPERATION.providerKey(), OPERATION.providerKey()), providerKeys);
+        assertEquals(List.of("https://shop.example/return", "https://shop.example/return"), returnUrls);
     }
 
     @ParameterizedTest
@@ -418,11 +466,11 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(existing));
 
         assertThrows(BadRequestException.class, () -> withGateway.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(requestedMethod).build()));
+                InitiatePaymentRequest.builder().method(requestedMethod).build(), OPERATION));
 
         assertProviderLegUnchanged(existing, PaymentStatus.AUTHORIZED);
         verify(gateway, never()).retireCheckout(anyString());
-        verify(gateway, never()).createCheckout(any(Payment.class), any());
+        verify(gateway, never()).createCheckout(any(Payment.class), any(), any());
     }
 
     @ParameterizedTest
@@ -435,7 +483,7 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(existing));
 
         assertThrows(BadRequestException.class, () -> service.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.BANK_TRANSFER).build()));
+                InitiatePaymentRequest.builder().method(PaymentMethod.BANK_TRANSFER).build(), OPERATION));
 
         assertEquals(status, existing.getStatus());
         assertEquals(PaymentMethod.BANK_TRANSFER, existing.getMethod());
@@ -614,7 +662,7 @@ class PaymentServiceImplTest {
         order.setPaymentStatus(PaymentStatus.PAID);
 
         assertThrows(BadRequestException.class, () -> service.initiate(7L, null,
-                InitiatePaymentRequest.builder().method(PaymentMethod.BANK_TRANSFER).build()));
+                InitiatePaymentRequest.builder().method(PaymentMethod.BANK_TRANSFER).build(), OPERATION));
     }
 
     @Test

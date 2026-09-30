@@ -187,6 +187,7 @@ export function titleCase(value) {
 
 export function setBusy(button, busy, busyLabel) {
   if (!button) return;
+  button.disabled = Boolean(busy);
   if (busy) {
     button.dataset.label = button.innerHTML;
     button.innerHTML = esc(busyLabel || 'Working…');

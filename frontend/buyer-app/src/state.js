@@ -18,7 +18,8 @@ const KEYS = {
   cart: 'sujula.cart',
   auth: 'sujula.auth',
   recent: 'sujula.recentSearches',
-  checkoutAttempt: 'sujula.checkoutAttempt'
+  checkoutAttempt: 'sujula.checkoutAttempt',
+  paymentRetryAttempt: 'sujula.paymentRetryAttempt'
 };
 
 // Cart quotes are held for fifteen minutes. The quote countdown itself is not
@@ -26,6 +27,7 @@ const KEYS = {
 // available after a reload. Stale attempts are discarded before they can be
 // replayed.
 const CHECKOUT_ATTEMPT_TTL_MS = 15 * 60 * 1000;
+const PAYMENT_RETRY_ATTEMPT_TTL_MS = 24 * 60 * 60 * 1000;
 
 function read(key, fallback) {
   try {
@@ -71,6 +73,29 @@ function checkoutAttemptRecord(value) {
     addressId: value.addressId,
     paymentMethod: value.paymentMethod,
     notes: value.notes,
+    createdAt: value.createdAt
+  };
+}
+
+function validPaymentRetryAttempt(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!Number.isSafeInteger(value.orderId) || value.orderId <= 0) return false;
+  if (typeof value.paymentMethod !== 'string' || !value.paymentMethod
+      || value.paymentMethod.length > 64) return false;
+  if (typeof value.idempotencyKey !== 'string' || !value.idempotencyKey
+      || value.idempotencyKey.length > 100) return false;
+  if (typeof value.createdAt !== 'string' || value.createdAt.length > 40) return false;
+
+  const createdAt = Date.parse(value.createdAt);
+  const age = Date.now() - createdAt;
+  return Number.isFinite(createdAt) && age >= 0 && age <= PAYMENT_RETRY_ATTEMPT_TTL_MS;
+}
+
+function paymentRetryAttemptRecord(value) {
+  return {
+    orderId: value.orderId,
+    paymentMethod: value.paymentMethod,
+    idempotencyKey: value.idempotencyKey,
     createdAt: value.createdAt
   };
 }
@@ -200,6 +225,31 @@ export function clearCheckoutAttempt(expectedQuoteId) {
   const current = read(KEYS.checkoutAttempt, null);
   if (expectedQuoteId && current && current.quoteId !== expectedQuoteId) return false;
   return write(KEYS.checkoutAttempt, null);
+}
+
+/** The one uncertain buyer payment retry, retained for explicit recovery only. */
+export function getPaymentRetryAttempt() {
+  const attempt = read(KEYS.paymentRetryAttempt, null);
+  if (!validPaymentRetryAttempt(attempt)) {
+    write(KEYS.paymentRetryAttempt, null);
+    return null;
+  }
+  return paymentRetryAttemptRecord(attempt);
+}
+
+/** Persist only stable operation inputs, before the payment request leaves. */
+export function savePaymentRetryAttempt(attempt) {
+  if (!validPaymentRetryAttempt(attempt)) return null;
+  const record = paymentRetryAttemptRecord(attempt);
+  return write(KEYS.paymentRetryAttempt, record) ? record : null;
+}
+
+/** An old response must not clear a newer payment operation. */
+export function clearPaymentRetryAttempt(expectedOrderId, expectedKey) {
+  const current = read(KEYS.paymentRetryAttempt, null);
+  if (current && (current.orderId !== expectedOrderId
+      || (expectedKey && current.idempotencyKey !== expectedKey))) return false;
+  return write(KEYS.paymentRetryAttempt, null);
 }
 
 export function rememberSearch(term) {

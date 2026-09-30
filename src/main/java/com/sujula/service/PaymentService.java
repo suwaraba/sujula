@@ -7,6 +7,7 @@ import com.sujula.dto.request.payment.RefundPaymentRequest;
 import com.sujula.dto.response.payment.PaymentMethodOption;
 import com.sujula.dto.response.payment.PaymentResponse;
 import com.sujula.model.constant.PaymentStatus;
+import com.sujula.service.payment.PaymentOperation;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -67,9 +68,11 @@ public interface PaymentService {
      * @throws com.sujula.exceptions.BadRequestException if the order is already
      *         paid, cancelled or refunded, or the method cannot be used for it
      */
-    PaymentResponse initiate(Long orderId, Long requestingUserId, InitiatePaymentRequest request);
+    PaymentResponse initiate(Long orderId, Long requestingUserId, InitiatePaymentRequest request,
+                             PaymentOperation operation);
 
-    PaymentResponse initiateForGuest(String orderNumber, String guestEmail, InitiatePaymentRequest request);
+    PaymentResponse initiateForGuest(String orderNumber, String guestEmail, InitiatePaymentRequest request,
+                                     PaymentOperation operation);
 
     // ── Confirming money ─────────────────────────────────────────────────────
 

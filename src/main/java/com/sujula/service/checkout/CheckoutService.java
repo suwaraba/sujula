@@ -2,6 +2,7 @@ package com.sujula.service.checkout;
 
 import com.sujula.dto.request.checkout.CheckoutRequests;
 import com.sujula.dto.response.checkout.CheckoutResponses;
+import com.sujula.service.payment.PaymentOperation;
 
 /**
  * Turning a held quote into an order, reserved stock and a payment intent.
@@ -25,7 +26,8 @@ public interface CheckoutService {
      * @param userId the buyer. Required — an order has an owner, and the
      *               refund, the status poll and the retry all resolve through it
      */
-    CheckoutResponses.Placed checkout(Long userId, CheckoutRequests.Checkout request);
+    CheckoutResponses.Placed checkout(Long userId, CheckoutRequests.Checkout request,
+                                      PaymentOperation paymentOperation);
 
     /**
      * A fresh payment intent for an order whose first attempt failed.
@@ -35,7 +37,8 @@ public interface CheckoutService {
      * and still holds its reservation can be retried.
      */
     CheckoutResponses.PaymentIntent retryPayment(Long userId, Long orderId,
-                                                 CheckoutRequests.RetryPayment request);
+                                                 CheckoutRequests.RetryPayment request,
+                                                 PaymentOperation paymentOperation);
 
     /**
      * What a client polls while the gateway makes up its mind.

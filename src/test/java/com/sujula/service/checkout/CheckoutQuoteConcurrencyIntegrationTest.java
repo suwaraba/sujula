@@ -31,6 +31,7 @@ import com.sujula.service.delivery.DeliveryContextService;
 import com.sujula.service.idempotency.IdempotencyAttemptService;
 import com.sujula.service.idempotency.IdempotencyService;
 import com.sujula.service.reference.CurrencyCatalogue;
+import com.sujula.service.payment.PaymentOperation;
 import com.sujula.service.reference.ReferenceDataProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -244,7 +245,7 @@ class CheckoutQuoteConcurrencyIntegrationTest {
                             .items(List.of())
                             .build());
                 });
-        when(payments.initiate(anyLong(), anyLong(), any())).thenAnswer(call -> {
+        when(payments.initiate(anyLong(), anyLong(), any(), any())).thenAnswer(call -> {
             paymentInitiations.incrementAndGet();
             return PaymentResponse.builder()
                     .paymentId(1L)
@@ -301,7 +302,9 @@ class CheckoutQuoteConcurrencyIntegrationTest {
                 request,
                 201,
                 CheckoutResponses.Placed.class,
-                () -> checkout.checkout(buyer.getId(), request));
+                () -> checkout.checkout(buyer.getId(), request,
+                        PaymentOperation.of("user:" + buyer.getId() + ":checkout.place:payment",
+                                "quote-concurrency-operation")));
     }
 
     private static CartResponse checkoutCart(Cart cart) {

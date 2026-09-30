@@ -26,9 +26,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 
 /** Stripe arithmetic and HTTP lifecycle behavior against an in-memory mock server. */
 class StripePaymentGatewayTest {
@@ -45,7 +49,7 @@ class StripePaymentGatewayTest {
         stripe.setApiBase(API_BASE);
         RestClient.Builder http = RestClient.builder().baseUrl(API_BASE);
         server = MockRestServiceServer.bindTo(http).build();
-        gateway = new StripePaymentGateway(stripe, new PaymentProperties(),
+        gateway = new StripePaymentGateway(stripe,
                 CurrencyCatalogue.of(new ReferenceDataProperties()), JsonMapper.builder().build(),
                 "http://localhost:5177", http.build());
     }
@@ -164,11 +168,18 @@ class StripePaymentGatewayTest {
     void creatingCheckoutDoesNotImplicitlyExpirePaymentTransactionId() {
         server.expect(once(), requestTo(API_BASE + "/v1/checkout/sessions"))
                 .andExpect(method(HttpMethod.POST))
+                .andExpect(header("Idempotency-Key", "sujula-pay-v1-operation"))
+                .andExpect(content().string(containsString("client_reference_id=PAY-TEST00001")))
+                .andExpect(content().string(containsString(
+                        "product_data%5D%5Bname%5D=Sujula+payment+PAY-TEST00001")))
+                .andExpect(content().string(not(containsString("expires_at"))))
+                .andExpect(content().string(not(containsString("customer_email"))))
                 .andRespond(withSuccess(
                         "{\"id\":\"cs_NEW\",\"url\":\"https://checkout.stripe.test/cs_NEW\",\"status\":\"open\"}",
                         APPLICATION_JSON));
 
-        PaymentGateway.GatewayCheckout checkout = gateway.createCheckout(payment("cs_OLD"), null);
+        PaymentGateway.GatewayCheckout checkout = gateway.createCheckout(
+                payment("cs_OLD"), null, "sujula-pay-v1-operation");
 
         assertEquals("cs_NEW", checkout.transactionId());
         assertEquals("https://checkout.stripe.test/cs_NEW", checkout.checkoutUrl());

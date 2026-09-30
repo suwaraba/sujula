@@ -5,6 +5,7 @@ import com.sujula.dto.response.checkout.CheckoutResponses;
 import com.sujula.exceptions.BadRequestException;
 import com.sujula.service.checkout.CheckoutService;
 import com.sujula.service.idempotency.IdempotencyService;
+import com.sujula.service.payment.PaymentOperation;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -65,12 +66,16 @@ public class CheckoutController {
             throw new BadRequestException("Idempotency-Key is required for checkout.");
         }
 
+        String key = idempotencyKey.trim();
         Long userId = caller.userId(authentication);
+        String checkoutScope = IdempotencyService.scopeFor(userId, CHECKOUT);
+        PaymentOperation paymentOperation = PaymentOperation.of(
+                checkoutScope + ":payment:quote:" + request.quoteId(), key);
 
         CheckoutResponses.Placed placed = idempotency.execute(
-                IdempotencyService.scopeFor(userId, CHECKOUT), idempotencyKey, request,
+                checkoutScope, key, request,
                 HttpStatus.CREATED.value(), CheckoutResponses.Placed.class,
-                () -> checkout.checkout(userId, request));
+                () -> checkout.checkout(userId, request, paymentOperation));
 
         return ResponseEntity.status(HttpStatus.CREATED).body(placed);
     }
@@ -79,19 +84,25 @@ public class CheckoutController {
     @Operation(summary = "A fresh payment intent after a failed attempt",
                description = "The order already exists and its stock is already reserved, so this "
                        + "does not recreate either. Only an unpaid order that still holds its "
-                       + "reservation can be retried.")
+                       + "reservation can be retried. Idempotency-Key is required and identifies "
+                       + "one logical payment operation; retry uncertain results with the same key.")
     public ResponseEntity<CheckoutResponses.PaymentIntent> retryPayment(
             Authentication authentication,
             @PathVariable Long orderId,
-            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @Parameter(required = true, description = "A unique value for this payment operation")
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody CheckoutRequests.RetryPayment request) {
 
+        String key = PaymentOperation.requireClientKey(idempotencyKey);
         Long userId = caller.userId(authentication);
+        String scope = IdempotencyService.scopeFor(userId, RETRY + ":" + orderId);
+        PaymentOperation operation = PaymentOperation.of(scope, key);
 
         CheckoutResponses.PaymentIntent intent = idempotency.execute(
-                IdempotencyService.scopeFor(userId, RETRY + ":" + orderId), idempotencyKey, request,
+                operation.scope(), operation.clientKey(),
+                operation.fingerprint("order:" + orderId, request.paymentMethod(), null, null),
                 HttpStatus.OK.value(), CheckoutResponses.PaymentIntent.class,
-                () -> checkout.retryPayment(userId, orderId, request));
+                () -> checkout.retryPayment(userId, orderId, request, operation));
 
         return ResponseEntity.ok(intent);
     }

@@ -30,4 +30,20 @@ class CheckoutControllerIdempotencyTest {
 
         verifyNoInteractions(checkout, caller, idempotency);
     }
+
+    @Test
+    void missingPaymentRetryKeyIsRejectedBeforeBusinessExecution() {
+        assertThrows(BadRequestException.class,
+                () -> controller.retryPayment(null, 41L, null, null));
+
+        verifyNoInteractions(checkout, caller, idempotency);
+    }
+
+    @Test
+    void blankPaymentRetryKeyIsRejectedBeforeBusinessExecution() {
+        assertThrows(BadRequestException.class,
+                () -> controller.retryPayment(null, 41L, "   ", null));
+
+        verifyNoInteractions(checkout, caller, idempotency);
+    }
 }

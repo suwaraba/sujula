@@ -3,7 +3,6 @@ package com.sujula.service.payment;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Locale;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -47,28 +46,22 @@ import tools.jackson.databind.ObjectMapper;
         + "and '${sujula.payment.mock.enabled:false}' != 'true'")
 public class StripePaymentGateway implements PaymentGateway {
 
-    /** Stripe's own bounds on {@code expires_at}. */
-    private static final Duration MIN_SESSION = Duration.ofMinutes(30);
-    private static final Duration MAX_SESSION = Duration.ofHours(24);
-
     private final StripeProperties stripe;
-    private final PaymentProperties payments;
     private final CurrencyCatalogue currencies;
     private final ObjectMapper mapper;
     private final String frontendUrl;
     private final RestClient http;
 
-    public StripePaymentGateway(StripeProperties stripe, PaymentProperties payments,
+    public StripePaymentGateway(StripeProperties stripe,
                                 CurrencyCatalogue currencies, ObjectMapper mapper,
                                 @Value("${app.frontend.url:}") String frontendUrl) {
-        this(stripe, payments, currencies, mapper, frontendUrl, stripeClient(stripe));
+        this(stripe, currencies, mapper, frontendUrl, stripeClient(stripe));
     }
 
-    StripePaymentGateway(StripeProperties stripe, PaymentProperties payments,
+    StripePaymentGateway(StripeProperties stripe,
                          CurrencyCatalogue currencies, ObjectMapper mapper,
                          String frontendUrl, RestClient http) {
         this.stripe = stripe;
-        this.payments = payments;
         this.currencies = currencies;
         this.mapper = mapper;
         this.frontendUrl = frontendUrl;
@@ -99,19 +92,14 @@ public class StripePaymentGateway implements PaymentGateway {
     }
 
     @Override
-    public GatewayCheckout createCheckout(Payment payment, String returnUrl) {
+    public GatewayCheckout createCheckout(Payment payment, String returnUrl,
+                                          String providerOperationKey) {
         String success = firstNonBlank(returnUrl, stripe.getSuccessUrl(), frontendUrl);
         if (success == null) {
             throw new BadRequestException("Card payments need somewhere to send the buyer back to. "
                     + "Set sujula.payment.stripe.success-url or app.frontend.url.");
         }
         String cancel = firstNonBlank(stripe.getCancelUrl(), success);
-        String orderNumber = payment.getOrder() != null ? payment.getOrder().getOrderNumber()
-                                                        : payment.getReference();
-        Duration ttl = Duration.ofMinutes(payments.getCheckoutTtlMinutes());
-        if (ttl.compareTo(MIN_SESSION) < 0) ttl = MIN_SESSION;
-        if (ttl.compareTo(MAX_SESSION) > 0) ttl = MAX_SESSION;
-
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("mode", "payment");
         form.add("success_url", success);
@@ -119,18 +107,13 @@ public class StripePaymentGateway implements PaymentGateway {
         form.add("client_reference_id", payment.getReference());
         form.add("metadata[reference]", payment.getReference());
         form.add("payment_intent_data[metadata][reference]", payment.getReference());
-        form.add("expires_at", String.valueOf(Instant.now().plus(ttl).getEpochSecond()));
         form.add("line_items[0][quantity]", "1");
         form.add("line_items[0][price_data][currency]", payment.getCurrency().toLowerCase(Locale.ROOT));
         form.add("line_items[0][price_data][unit_amount]",
                 toMinor(payment.getAmount(), payment.getCurrency()).toPlainString());
-        form.add("line_items[0][price_data][product_data][name]", "Sujula order " + orderNumber);
-        if (payment.getOrder() != null && payment.getOrder().getCustomer() != null
-                && payment.getOrder().getCustomer().getEmail() != null) {
-            form.add("customer_email", payment.getOrder().getCustomer().getEmail());
-        }
-
-        JsonNode session = post("/v1/checkout/sessions", form, null);
+        form.add("line_items[0][price_data][product_data][name]",
+                "Sujula payment " + payment.getReference());
+        JsonNode session = post("/v1/checkout/sessions", form, providerOperationKey);
         log.info("[Payment] Stripe checkout {} opened for {} ({} {})", session.path("id").asString(),
                 payment.getReference(), payment.getAmount(), payment.getCurrency());
         return new GatewayCheckout(session.path("id").asString(), session.path("url").asString(),

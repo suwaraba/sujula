@@ -31,8 +31,9 @@ public interface PaymentGateway {
      * Opens a checkout for an already-persisted, still-unpaid payment.
      *
      * @param returnUrl where the provider should send the buyer afterwards; may be null
+     * @param providerOperationKey stable identity for this logical provider operation
      */
-    GatewayCheckout createCheckout(Payment payment, String returnUrl);
+    GatewayCheckout createCheckout(Payment payment, String returnUrl, String providerOperationKey);
 
     /**
      * Makes a previously opened checkout non-payable before the service

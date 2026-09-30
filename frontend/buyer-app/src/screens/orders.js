@@ -9,10 +9,14 @@
  * applies to.
  */
 
-import { api } from '../api.js';
-import { signedIn } from '../state.js';
+import { api, idempotencyKey } from '../api.js';
+import {
+  signedIn, getPaymentRetryAttempt, savePaymentRetryAttempt, clearPaymentRetryAttempt
+} from '../state.js';
 import { money } from '../money.js';
 import { esc, icon, toast, setBusy, modal, emptyState, errorState, titleCase, dateLabel } from '../ui.js';
+
+const paymentRetryInFlight = new Set();
 
 function signInGate(what) {
   return `<div class="wrap"><div class="section"><div class="card panel center">
@@ -267,11 +271,23 @@ function confirmCancel(title, subtitle, action) {
 }
 
 function retryPayment(order, reload) {
+  const orderId = Number(order.id);
+  const pending = getPaymentRetryAttempt();
+  if (pending && pending.orderId !== orderId) {
+    toast('Finish the pending payment retry on its original order before starting another.', 'error');
+    return;
+  }
+
   const dialog = modal({
     title: 'Pay for this order',
+    subtitle: pending
+      ? 'Retry the saved payment operation. Nothing is submitted until you press Continue.'
+      : null,
     body: `<div class="choice-list">
       ${['CARD', 'PAYPAL', 'BANK_TRANSFER'].map(code => `
-        <label class="choice"><input type="radio" name="retry" value="${code}">
+        <label class="choice"><input type="radio" name="retry" value="${code}"
+          ${pending && pending.paymentMethod === code ? 'checked' : ''}
+          ${pending && pending.paymentMethod !== code ? 'disabled' : ''}>
           <span class="choice-title">${esc(titleCase(code))}</span></label>`).join('')}
     </div>`,
     footer: `<button class="btn btn-primary" data-action="go">Continue</button>`
@@ -280,15 +296,41 @@ function retryPayment(order, reload) {
   dialog.node.querySelector('[data-action="go"]').addEventListener('click', async event => {
     const chosen = dialog.node.querySelector('input[name="retry"]:checked');
     if (!chosen) { toast('Pick a method.', 'error'); return; }
+    if (paymentRetryInFlight.has(orderId)) return;
+
+    let attempt = getPaymentRetryAttempt();
+    if (attempt) {
+      if (attempt.orderId !== orderId || attempt.paymentMethod !== chosen.value) {
+        toast('Retry the saved order and payment method before starting a new operation.', 'error');
+        return;
+      }
+    } else {
+      attempt = savePaymentRetryAttempt({
+        orderId,
+        paymentMethod: chosen.value,
+        idempotencyKey: idempotencyKey(),
+        createdAt: new Date().toISOString()
+      });
+      if (!attempt) {
+        toast('This payment retry could not be saved safely in this browser.', 'error');
+        return;
+      }
+    }
+    paymentRetryInFlight.add(orderId);
+    const button = event.currentTarget;
     setBusy(event.currentTarget, true, 'Starting…');
     try {
-      const intent = await api.retryPayment(order.id, chosen.value);
+      const intent = await api.retryPayment(orderId, attempt.paymentMethod, attempt.idempotencyKey);
+      clearPaymentRetryAttempt(orderId, attempt.idempotencyKey);
       dialog.close();
       if (intent.checkoutUrl) location.href = intent.checkoutUrl;
       else { toast(intent.instructions || 'Payment started.', 'ok'); reload(); }
     } catch (error) {
+      // The outcome may be uncertain. Keep the exact operation for an explicit retry.
       toast(error.message, 'error');
-      setBusy(event.currentTarget, false);
+      setBusy(button, false);
+    } finally {
+      paymentRetryInFlight.delete(orderId);
     }
   });
 }

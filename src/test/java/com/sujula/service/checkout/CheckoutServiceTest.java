@@ -23,6 +23,7 @@ import com.sujula.service.PaymentService;
 import com.sujula.service.cart.CartStructureFingerprint;
 import com.sujula.service.checkout.impl.CheckoutServiceImpl;
 import com.sujula.service.delivery.DeliveryContextService;
+import com.sujula.service.payment.PaymentOperation;
 import com.sujula.service.reference.CurrencyCatalogue;
 import com.sujula.service.reference.ReferenceDataProperties;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,7 +67,10 @@ class CheckoutServiceTest {
     private OrderService orderService;
     private PaymentService payments;
     private DeliveryContextService deliveryContexts;
-    private CheckoutServiceImpl checkout;
+    private TestCheckoutService checkout;
+
+    private static final PaymentOperation OPERATION =
+            PaymentOperation.of("user:1005:checkout.place:payment", "checkout-test-operation");
 
     @BeforeEach
     void setUp() {
@@ -78,14 +82,34 @@ class CheckoutServiceTest {
         deliveryContexts = mock(DeliveryContextService.class);
         CurrencyCatalogue currencies = CurrencyCatalogue.of(new ReferenceDataProperties());
 
-        checkout = new CheckoutServiceImpl(quotes, orders, carts, orderService, payments,
+        checkout = new TestCheckoutService(quotes, orders, carts, orderService, payments,
                 deliveryContexts, currencies);
 
         when(quotes.save(any(CartQuote.class))).thenAnswer(call -> call.getArgument(0));
-        when(payments.initiate(anyLong(), any(), any())).thenReturn(PaymentResponse.builder()
+        when(payments.initiate(anyLong(), any(), any(), any())).thenReturn(PaymentResponse.builder()
                 .paymentId(9L).reference("PAY-1").method(PaymentMethod.CARD)
                 .status(PaymentStatus.PENDING).amount(new BigDecimal("129.73")).currency("GBP")
                 .build());
+    }
+
+    /** Keeps the pre-operation test vocabulary while production always receives an operation. */
+    private static final class TestCheckoutService extends CheckoutServiceImpl {
+        private TestCheckoutService(CartQuoteRepository quotes, OrderRepository orders,
+                                    CartService carts, OrderService orderService,
+                                    PaymentService payments, DeliveryContextService deliveryContexts,
+                                    CurrencyCatalogue currencies) {
+            super(quotes, orders, carts, orderService, payments, deliveryContexts, currencies);
+        }
+
+        private CheckoutResponses.Placed checkout(
+                Long userId, CheckoutRequests.Checkout request) {
+            return super.checkout(userId, request, OPERATION);
+        }
+
+        private CheckoutResponses.PaymentIntent retryPayment(
+                Long userId, Long orderId, CheckoutRequests.RetryPayment request) {
+            return super.retryPayment(userId, orderId, request, OPERATION);
+        }
     }
 
     private static User buyer(Long id) {
@@ -206,7 +230,7 @@ class CheckoutServiceTest {
                 assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
 
         assertTrue(refused.getMessage().contains("Nothing has been charged"));
-        verify(payments, never()).initiate(anyLong(), any(), any());
+        verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
     /**
@@ -297,7 +321,7 @@ class CheckoutServiceTest {
 
         assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
         verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
-        verify(payments, never()).initiate(anyLong(), any(), any());
+        verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -308,7 +332,7 @@ class CheckoutServiceTest {
 
         assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
         verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
-        verify(payments, never()).initiate(anyLong(), any(), any());
+        verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -341,7 +365,7 @@ class CheckoutServiceTest {
 
         assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
         verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
-        verify(payments, never()).initiate(anyLong(), any(), any());
+        verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -360,7 +384,7 @@ class CheckoutServiceTest {
         assertThrows(ResourceNotFoundException.class, () -> checkout.checkout(BUYER, request("gone")));
 
         verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
-        verify(payments, never()).initiate(anyLong(), any(), any());
+        verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
     // ── Retry ────────────────────────────────────────────────────────────────
