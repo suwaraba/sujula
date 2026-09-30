@@ -7,7 +7,6 @@ import com.sujula.dto.response.order.GuestOrderLookupResponse;
 import com.sujula.dto.response.payment.PaymentResponse;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentStatus;
-import com.sujula.model.order.Order;
 import com.sujula.service.OrderService;
 import com.sujula.service.PaymentService;
 import com.sujula.service.payment.PaymentProperties;
@@ -149,14 +148,15 @@ class OrderControllerLegacyCreationTest {
     }
 
     @Test
-    void historicGuestCancellationRemainsReachable() throws Exception {
-        when(orders.cancelGuestOrder("SJL-1008", "guest@example.com")).thenReturn(new Order());
-
+    void historicGuestCancellationIsGoneBeforeItCanReachOrderService() throws Exception {
         mvc.perform(post("/api/guest/orders/SJL-1008/cancel")
                         .param("email", "guest@example.com"))
-                .andExpect(status().isOk());
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.message").value(
+                        containsString("self-service guest cancellation is no longer available")))
+                .andExpect(jsonPath("$.message").value(containsString("Contact support")));
 
-        verify(orders).cancelGuestOrder("SJL-1008", "guest@example.com");
+        verifyNoInteractions(orders);
     }
 
     @Test

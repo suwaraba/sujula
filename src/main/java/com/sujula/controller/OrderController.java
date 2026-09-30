@@ -36,6 +36,10 @@ public class OrderController {
             "New guest checkout is no longer available. "
                     + "The payer must sign in and use POST /checkout to place an order.";
 
+    private static final String RETIRED_GUEST_CANCELLATION_MESSAGE =
+            "Historic self-service guest cancellation is no longer available. "
+                    + "Contact support for cancellation or refund assistance.";
+
     private final OrderService orderService;
 
     public OrderController(OrderService orderService) {
@@ -80,8 +84,11 @@ public class OrderController {
     }
 
     @PostMapping("/api/guest/orders/{orderNumber}/cancel")
-    public ResponseEntity<Order> cancelGuestOrder(@PathVariable String orderNumber, @RequestParam String email) {
-        return ResponseEntity.ok(orderService.cancelGuestOrder(orderNumber, email));
+    @Operation(summary = "Retired historic guest self-service cancellation", deprecated = true,
+               description = "Gone. Historic guest self-service cancellation is no longer available; "
+                       + "contact support for cancellation or refund assistance.")
+    public ResponseEntity<Void> cancelGuestOrder(@PathVariable String orderNumber, @RequestParam String email) {
+        throw retiredGuestCancellation();
     }
 
     // ── Authenticated self-service ──────────────────────────────────────────
@@ -207,5 +214,9 @@ public class OrderController {
 
     private static ResponseStatusException retiredGuestCreation() {
         return new ResponseStatusException(HttpStatus.GONE, RETIRED_GUEST_CREATION_MESSAGE);
+    }
+
+    private static ResponseStatusException retiredGuestCancellation() {
+        return new ResponseStatusException(HttpStatus.GONE, RETIRED_GUEST_CANCELLATION_MESSAGE);
     }
 }
