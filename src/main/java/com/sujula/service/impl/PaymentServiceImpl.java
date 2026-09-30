@@ -225,6 +225,7 @@ public class PaymentServiceImpl implements PaymentService {
         }
 
         Payment payment = paymentRepository.findByOrderIdForUpdate(order.getId()).orElse(null);
+        ProviderLegSnapshot previousLeg = null;
 
         if (payment == null) {
             payment = Payment.builder()
@@ -238,6 +239,10 @@ public class PaymentServiceImpl implements PaymentService {
                     .note(request.getNote())
                     .build();
         } else {
+            if (payment.getStatus() == PaymentStatus.AUTHORIZED) {
+                throw new BadRequestException(
+                        "This payment is authorized and cannot be reopened until that authorization is resolved");
+            }
             if (payment.getStatus() == PaymentStatus.PAID) {
                 throw new BadRequestException("This order has already been paid");
             }
@@ -256,6 +261,8 @@ public class PaymentServiceImpl implements PaymentService {
             // Switching method (or retrying after a failure) — drop the previous
             // provider leg so a stale checkout URL or client secret can never be
             // presented for the new one.
+            previousLeg = ProviderLegSnapshot.capture(payment);
+            retireExistingProviderLeg(payment);
             payment.setMethod(method);
             payment.setStatus(PaymentStatus.PENDING);
             payment.setTransactionId(null);
@@ -271,7 +278,7 @@ public class PaymentServiceImpl implements PaymentService {
 
         repriceFromOrder(payment, order);
         payment = paymentRepository.save(payment);   // persist before the gateway sees it
-        attachMethodLeg(payment, order, request.getReturnUrl());
+        attachMethodLeg(payment, order, request.getReturnUrl(), previousLeg);
         payment = paymentRepository.save(payment);
 
         order.setPaymentMethod(method);
@@ -281,6 +288,68 @@ public class PaymentServiceImpl implements PaymentService {
         log.info("[Payment] {} opened for order {} via {}",
                 payment.getReference(), order.getOrderNumber(), method);
         return payment;
+    }
+
+    /**
+     * Retires an existing external leg before any field that identifies it is
+     * changed. Provider evidence without an identifier or adapter is not safe
+     * to discard, so those cases fail closed as well.
+     */
+    private void retireExistingProviderLeg(Payment payment) {
+        PaymentMethod previousMethod = payment.getMethod();
+        if (previousMethod == null || !previousMethod.requiresGateway() || !hasProviderLegEvidence(payment)) {
+            return;
+        }
+
+        String previousTransactionId = payment.getTransactionId();
+        if (previousTransactionId == null || previousTransactionId.isBlank()) {
+            throw new BadRequestException(
+                    "The existing provider checkout cannot be safely retired because its identifier is missing");
+        }
+
+        PaymentGateway previousGateway = gatewayFor(previousMethod).orElseThrow(() -> new BadRequestException(
+                "The existing " + previousMethod.getDisplayName().toLowerCase()
+                        + " checkout cannot be safely retired right now"));
+        previousGateway.retireCheckout(previousTransactionId);
+    }
+
+    private boolean hasProviderLegEvidence(Payment payment) {
+        return hasText(payment.getTransactionId())
+                || hasText(payment.getCheckoutUrl())
+                || hasText(payment.getClientSecret())
+                || hasText(payment.getGatewayResponse());
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    /** Values changed while replacing a provider leg, kept until replacement succeeds. */
+    private record ProviderLegSnapshot(PaymentMethod method, PaymentStatus status,
+                                       String transactionId, String checkoutUrl, String clientSecret,
+                                       String gatewayResponse, String failureReason, String instructions,
+                                       String note, BigDecimal amount, String currency) {
+
+        private static ProviderLegSnapshot capture(Payment payment) {
+            return new ProviderLegSnapshot(payment.getMethod(), payment.getStatus(),
+                    payment.getTransactionId(), payment.getCheckoutUrl(), payment.getClientSecret(),
+                    payment.getGatewayResponse(), payment.getFailureReason(), payment.getInstructions(),
+                    payment.getNote(), payment.getAmount(), payment.getCurrency());
+        }
+
+        private void restore(Payment payment) {
+            payment.setMethod(method);
+            payment.setStatus(status);
+            payment.setTransactionId(transactionId);
+            payment.setCheckoutUrl(checkoutUrl);
+            payment.setClientSecret(clientSecret);
+            payment.setGatewayResponse(gatewayResponse);
+            payment.setFailureReason(failureReason);
+            payment.setInstructions(instructions);
+            payment.setNote(note);
+            payment.setAmount(amount);
+            payment.setCurrency(currency);
+        }
     }
 
     /**
@@ -309,13 +378,26 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     /** Gives the payment whatever its method needs: a gateway checkout, or instructions. */
-    private void attachMethodLeg(Payment payment, Order order, String returnUrl) {
+    private void attachMethodLeg(Payment payment, Order order, String returnUrl,
+                                 ProviderLegSnapshot previousLeg) {
         PaymentMethod method = payment.getMethod();
         switch (method.getChannel()) {
             case ONLINE -> {
                 PaymentGateway gateway = gatewayFor(method).orElseThrow(() -> new BadRequestException(
                         method.getDisplayName() + " payments are not available right now"));
-                PaymentGateway.GatewayCheckout checkout = gateway.createCheckout(payment, returnUrl);
+                PaymentGateway.GatewayCheckout checkout;
+                try {
+                    checkout = gateway.createCheckout(payment, returnUrl);
+                } catch (RuntimeException failure) {
+                    if (previousLeg != null) {
+                        // Database state rolls back with the transaction. Also
+                        // restore the managed instance while propagating the
+                        // create failure, retaining the retired ID so a retry
+                        // can reconcile it as already expired.
+                        previousLeg.restore(payment);
+                    }
+                    throw failure;
+                }
                 payment.setTransactionId(checkout.transactionId());
                 payment.setCheckoutUrl(checkout.checkoutUrl());
                 payment.setClientSecret(checkout.clientSecret());

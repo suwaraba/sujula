@@ -35,6 +35,20 @@ public interface PaymentGateway {
     GatewayCheckout createCheckout(Payment payment, String returnUrl);
 
     /**
+     * Makes a previously opened checkout non-payable before the service
+     * replaces its local provider leg.
+     *
+     * <p>The service passes the preserved provider identifier explicitly so an
+     * implementation never has to read it from a {@link Payment} that may
+     * already have been changed for the replacement. Returning normally means
+     * retirement is confirmed; an unknown or failed outcome must throw so the
+     * service can fail closed.
+     *
+     * @param transactionId the provider's checkout/session identifier
+     */
+    void retireCheckout(String transactionId);
+
+    /**
      * True when {@link #createCheckout} has already taken the money, so there is
      * no hosted page to send the buyer to and no callback to wait for.
      *

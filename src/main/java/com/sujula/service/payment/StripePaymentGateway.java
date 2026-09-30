@@ -61,21 +61,31 @@ public class StripePaymentGateway implements PaymentGateway {
     public StripePaymentGateway(StripeProperties stripe, PaymentProperties payments,
                                 CurrencyCatalogue currencies, ObjectMapper mapper,
                                 @Value("${app.frontend.url:}") String frontendUrl) {
+        this(stripe, payments, currencies, mapper, frontendUrl, stripeClient(stripe));
+    }
+
+    StripePaymentGateway(StripeProperties stripe, PaymentProperties payments,
+                         CurrencyCatalogue currencies, ObjectMapper mapper,
+                         String frontendUrl, RestClient http) {
         this.stripe = stripe;
         this.payments = payments;
         this.currencies = currencies;
         this.mapper = mapper;
         this.frontendUrl = frontendUrl;
+        this.http = http;
+        log.info("[Payment] Stripe configured in {} mode",
+                stripe.getSecretKey().startsWith("sk_live_") ? "LIVE" : "test");
+    }
+
+    private static RestClient stripeClient(StripeProperties stripe) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(5));
         factory.setReadTimeout(Duration.ofSeconds(20));
-        this.http = RestClient.builder()
+        return RestClient.builder()
                 .baseUrl(stripe.getApiBase())
                 .requestFactory(factory)
                 .defaultHeader("Authorization", "Bearer " + stripe.getSecretKey())
                 .build();
-        log.info("[Payment] Stripe configured in {} mode",
-                stripe.getSecretKey().startsWith("sk_live_") ? "LIVE" : "test");
     }
 
     @Override
@@ -120,16 +130,50 @@ public class StripePaymentGateway implements PaymentGateway {
             form.add("customer_email", payment.getOrder().getCustomer().getEmail());
         }
 
-        // A checkout reopened for the same payment closes the one before it, so
-        // a buyer holding two tabs cannot pay twice. No idempotency key: the new
-        // session carries a new expires_at, and Stripe refuses a reused key
-        // whose parameters differ.
-        expirePrevious(payment);
         JsonNode session = post("/v1/checkout/sessions", form, null);
         log.info("[Payment] Stripe checkout {} opened for {} ({} {})", session.path("id").asString(),
                 payment.getReference(), payment.getAmount(), payment.getCurrency());
         return new GatewayCheckout(session.path("id").asString(), session.path("url").asString(),
                 null, session.toString());
+    }
+
+    @Override
+    public void retireCheckout(String transactionId) {
+        if (transactionId == null || transactionId.isBlank()) {
+            return;
+        }
+        if (!transactionId.startsWith("cs_")) {
+            throw new BadRequestException("Stripe checkout identifier is invalid; replacement was not started.");
+        }
+
+        RuntimeException retirementFailure;
+        try {
+            JsonNode expired = post("/v1/checkout/sessions/" + transactionId + "/expire",
+                    new LinkedMultiValueMap<>(), null);
+            if (isExpired(expired, transactionId)) {
+                log.info("[Payment] Stripe checkout {} retired", transactionId);
+                return;
+            }
+            retirementFailure = new BadRequestException(
+                    "The card provider did not confirm that the previous checkout was retired.");
+        } catch (RuntimeException failure) {
+            retirementFailure = failure;
+        }
+
+        // The expire request can succeed at Stripe while its response is lost,
+        // and a transaction rollback then leaves the old session ID locally.
+        // Re-read that exact session: only an explicit expired state makes a
+        // retry safe. Open, complete, unknown, and failed reads all fail closed.
+        try {
+            JsonNode current = get("/v1/checkout/sessions/" + transactionId);
+            if (isExpired(current, transactionId)) {
+                log.info("[Payment] Stripe checkout {} was already retired", transactionId);
+                return;
+            }
+        } catch (RuntimeException reconciliationFailure) {
+            retirementFailure.addSuppressed(reconciliationFailure);
+        }
+        throw retirementFailure;
     }
 
     @Override
@@ -153,18 +197,9 @@ public class StripePaymentGateway implements PaymentGateway {
                 fromMinor(refund.path("amount").asLong(), payment.getCurrency()), refund.toString());
     }
 
-    private void expirePrevious(Payment payment) {
-        String previous = payment.getTransactionId();
-        if (previous == null || !previous.startsWith("cs_")) {
-            return;
-        }
-        try {
-            post("/v1/checkout/sessions/" + previous + "/expire", new LinkedMultiValueMap<>(), null);
-        } catch (RuntimeException alreadyClosed) {
-            // Already expired or completed; either way it cannot be paid again.
-            log.debug("[Payment] Previous Stripe checkout {} not expired: {}", previous,
-                    alreadyClosed.getMessage());
-        }
+    private boolean isExpired(JsonNode session, String expectedTransactionId) {
+        return expectedTransactionId.equals(session.path("id").asString())
+                && "expired".equals(session.path("status").asString());
     }
 
     private String paymentIntentOf(Payment payment) {

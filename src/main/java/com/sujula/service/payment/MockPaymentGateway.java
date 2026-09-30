@@ -1,5 +1,6 @@
 package com.sujula.service.payment;
 
+import com.sujula.exceptions.BadRequestException;
 import com.sujula.model.constant.PaymentMethod;
 import com.sujula.model.order.Payment;
 import jakarta.annotation.PostConstruct;
@@ -89,6 +90,16 @@ public class MockPaymentGateway implements PaymentGateway {
 
         return new GatewayCheckout(transactionId, null, null,
                 "{\"gateway\":\"mock\",\"status\":\"succeeded\",\"transactionId\":\"" + transactionId + "\"}");
+    }
+
+    /** The mock creates no external checkout object, so its own IDs need no provider call. */
+    @Override
+    public void retireCheckout(String transactionId) {
+        if (transactionId == null || transactionId.isBlank() || transactionId.startsWith("MOCK-")) {
+            return;
+        }
+        throw new BadRequestException(
+                "The existing provider checkout does not belong to the mock gateway and cannot be retired");
     }
 
     @Override
