@@ -40,6 +40,14 @@ public class OrderController {
             "Historic self-service guest cancellation is no longer available. "
                     + "Contact support for cancellation or refund assistance.";
 
+    private static final String RETIRED_BUYER_CANCELLATION_MESSAGE =
+            "This legacy buyer cancellation endpoint has been retired. "
+                    + "Use the supported buyer cancellation flow at POST /orders/{orderId}/cancel.";
+
+    private static final String RETIRED_ADMIN_CANCELLATION_MESSAGE =
+            "Cancellation through this legacy administrative status endpoint has been retired. "
+                    + "Use the supported admin cancellation workflow at POST /admin/orders/{orderId}/cancel.";
+
     private final OrderService orderService;
 
     public OrderController(OrderService orderService) {
@@ -121,8 +129,10 @@ public class OrderController {
 
     @PostMapping("/api/user/orders/{orderId}/cancel")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<Order> cancelMyOrder(Authentication authentication, @PathVariable Long orderId) {
-        return ResponseEntity.ok(orderService.cancelByCustomer(orderId, currentUserId(authentication)));
+    @Operation(summary = "Retired authenticated buyer cancellation", deprecated = true,
+               description = "Gone. Use POST /orders/{orderId}/cancel through the supported buyer cancellation flow.")
+    public ResponseEntity<Void> cancelMyOrder(@PathVariable Long orderId) {
+        throw retiredBuyerCancellation();
     }
 
     @PutMapping("/api/user/orders/{orderNumber}/schedule")
@@ -188,8 +198,14 @@ public class OrderController {
 
     @PatchMapping("/api/admin/orders/{id}/status")
     @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Update administrative order status",
+               description = "Cancellation is no longer accepted here. Use POST /admin/orders/{orderId}/cancel "
+                       + "through the supported admin cancellation workflow.")
     public ResponseEntity<Order> updateStatus(Authentication authentication, @PathVariable Long id,
                                               @Valid @RequestBody UpdateOrderStatusRequest request) {
+        if (OrderStatus.CANCELLED.equals(request.getStatus())) {
+            throw retiredAdminCancellation();
+        }
         return ResponseEntity.ok(orderService.updateStatus(id, currentUserId(authentication), request));
     }
 
@@ -218,5 +234,13 @@ public class OrderController {
 
     private static ResponseStatusException retiredGuestCancellation() {
         return new ResponseStatusException(HttpStatus.GONE, RETIRED_GUEST_CANCELLATION_MESSAGE);
+    }
+
+    private static ResponseStatusException retiredBuyerCancellation() {
+        return new ResponseStatusException(HttpStatus.GONE, RETIRED_BUYER_CANCELLATION_MESSAGE);
+    }
+
+    private static ResponseStatusException retiredAdminCancellation() {
+        return new ResponseStatusException(HttpStatus.GONE, RETIRED_ADMIN_CANCELLATION_MESSAGE);
     }
 }

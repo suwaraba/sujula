@@ -2,16 +2,22 @@ package com.sujula.controller;
 
 import com.sujula.exceptions.GlobalExceptionHandler;
 import com.sujula.exceptions.ResourceNotFoundException;
+import com.sujula.dto.request.order.UpdateOrderStatusRequest;
 import com.sujula.dto.request.payment.InitiatePaymentRequest;
 import com.sujula.dto.response.order.GuestOrderLookupResponse;
 import com.sujula.dto.response.payment.PaymentResponse;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentStatus;
+import com.sujula.model.constant.UserRole;
+import com.sujula.model.order.Order;
+import com.sujula.model.user.User;
 import com.sujula.service.OrderService;
 import com.sujula.service.PaymentService;
 import com.sujula.service.payment.PaymentProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -20,6 +26,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -27,6 +34,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -36,8 +44,9 @@ class OrderControllerLegacyCreationTest {
 
     private final OrderService orders = mock(OrderService.class);
     private final PaymentService payments = mock(PaymentService.class);
+    private final OrderController controller = new OrderController(orders);
     private final MockMvc mvc = MockMvcBuilders.standaloneSetup(
-                    new OrderController(orders), new PaymentController(payments, new PaymentProperties()))
+                    controller, new PaymentController(payments, new PaymentProperties()))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
 
@@ -157,6 +166,46 @@ class OrderControllerLegacyCreationTest {
                 .andExpect(jsonPath("$.message").value(containsString("Contact support")));
 
         verifyNoInteractions(orders);
+    }
+
+    @Test
+    void legacyBuyerCancellationIsGoneBeforeItCanReachOrderService() throws Exception {
+        mvc.perform(post("/api/user/orders/91/cancel"))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.message").value(
+                        containsString("legacy buyer cancellation endpoint has been retired")))
+                .andExpect(jsonPath("$.message").value(containsString("POST /orders/{orderId}/cancel")));
+
+        verifyNoInteractions(orders);
+    }
+
+    @Test
+    void adminCancelledStatusIsGoneBeforeItCanReachOrderService() throws Exception {
+        mvc.perform(patch("/api/admin/orders/91/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"CANCELLED\"}"))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.message").value(
+                        containsString("legacy administrative status endpoint has been retired")))
+                .andExpect(jsonPath("$.message").value(containsString("POST /admin/orders/{orderId}/cancel")));
+
+        verifyNoInteractions(orders);
+    }
+
+    @Test
+    void adminNonCancellationStatusStillDelegatesToTheExistingService() {
+        Authentication admin = new UsernamePasswordAuthenticationToken(
+                User.builder().id(17L).role(UserRole.ADMIN).build(), null, List.of());
+        UpdateOrderStatusRequest request = UpdateOrderStatusRequest.builder()
+                .status(OrderStatus.PROCESSING)
+                .notes("Payment verified")
+                .build();
+        Order updated = mock(Order.class);
+        when(orders.updateStatus(91L, 17L, request)).thenReturn(updated);
+
+        assertEquals(updated, controller.updateStatus(admin, 91L, request).getBody());
+
+        verify(orders).updateStatus(91L, 17L, request);
     }
 
     @Test
