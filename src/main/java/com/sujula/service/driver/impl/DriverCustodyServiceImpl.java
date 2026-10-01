@@ -273,18 +273,19 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     public DriverResponses.CustodyRecorded arrivedAtOrigin(Long userId, Long shipmentId,
                                                            DriverRequests.Arrived request) {
         Driver driver = requireDriver(userId);
-        Shipment shipment = requireOwnShipment(shipmentId, driver);
-        ShipmentLeg leg = requireActiveLeg(shipment, driver);
+        Shipment shipment = lockOwnShipment(shipmentId, driver);
 
-        Optional<CustodyEvent> already = replayed(userId, request.clientEventId());
+        Optional<CustodyEvent> already = replayed(userId, request.clientEventId(), shipmentId);
         if (already.isPresent()) {
             return replayOf(already.get(), shipment);
         }
+        chain.requireOpen(shipment);
+        ShipmentLeg leg = requireLockedActiveLeg(shipment, driver);
 
         BigDecimal distance = Geofence.metresBetween(request.lat(), request.lng(),
                 shipment.getOriginLatitude(), shipment.getOriginLongitude());
 
-        CustodyEvent event = chain.append(shipment, CustodyEvent.builder()
+        CustodyEvent event = chain.appendDriver(shipment, CustodyEvent.builder()
                 .type(CustodyEventType.ARRIVED_AT_ORIGIN)
                 .leg(leg)
                 .recordedByUserId(userId)
@@ -324,9 +325,9 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     @PreAuthorize("hasRole('ADMIN') or (hasRole('DELIVERY') and #userId == authentication.principal.id)")
     public DriverResponses.CustodyRecorded depositAtPickup(Long userId, Long shipmentId,
                                                            DriverRequests.Handover request) {
-        return handover(userId, shipmentId, request, CustodyEventType.DEPOSITED,
-                HandoverCodeType.VENDOR_TO_PICKUP, false,
-                "Left at the pickup point. It is no longer in your custody.");
+        throw new BadRequestException(
+                "A driver cannot establish pickup-point custody. The authenticated pickup-point "
+                        + "operator must accept the parcel at the counter.");
     }
 
     @Override
@@ -334,14 +335,6 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     @PreAuthorize("hasRole('ADMIN') or (hasRole('DELIVERY') and #userId == authentication.principal.id)")
     public DriverResponses.CustodyRecorded deliver(Long userId, Long shipmentId,
                                                    DriverRequests.Handover request) {
-        if (request.photoUrl() == null || request.photoUrl().isBlank()) {
-            // Asked for here and nowhere else. This is the link that releases
-            // the seller's money and ends the chain, so it carries the most
-            // evidence: a code, a position and a picture.
-            throw new BadRequestException(
-                    "A photograph is required on delivery. It is what settles a dispute months "
-                            + "later about whether a parcel actually arrived.");
-        }
         return handover(userId, shipmentId, request, CustodyEventType.RELEASED,
                 HandoverCodeType.RECIPIENT_RELEASE, true,
                 "Delivered. Thank you.");
@@ -387,13 +380,20 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                                                      boolean againstDestination,
                                                      String success) {
         Driver driver = requireDriver(userId);
-        Shipment shipment = requireOwnShipment(shipmentId, driver);
-        ShipmentLeg leg = requireActiveLeg(shipment, driver);
+        Shipment shipment = lockOwnShipment(shipmentId, driver);
 
-        Optional<CustodyEvent> already = replayed(userId, request.clientEventId());
+        Optional<CustodyEvent> already = replayed(userId, request.clientEventId(), shipmentId);
         if (already.isPresent()) {
             return replayOf(already.get(), shipment);
         }
+        if (type == CustodyEventType.RELEASED
+                && (request.photoUrl() == null || request.photoUrl().isBlank())) {
+            throw new BadRequestException(
+                    "A photograph is required on delivery. It is what settles a dispute months "
+                            + "later about whether a parcel actually arrived.");
+        }
+        chain.requireOpen(shipment);
+        ShipmentLeg leg = requireLockedActiveLeg(shipment, driver);
 
         boolean safeDrop = type == CustodyEventType.RELEASED && isSafeDrop(shipment, request);
         if (!safeDrop && (request.cleanedCode() == null || request.cleanedCode().isBlank())) {
@@ -404,10 +404,6 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                     "The code is required — it is the proof this handover happened. Ask them to "
                             + "read out the six digits.");
         }
-        HandoverCode code = safeDrop
-                ? null
-                : burnCode(shipment, leg, codeType, request.cleanedCode());
-
         Double expectedLat = againstDestination
                 ? shipment.getDestinationLatitude() : shipment.getOriginLatitude();
         Double expectedLng = againstDestination
@@ -438,12 +434,11 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                       + "delivery code instead, or record a failed attempt.");
         }
 
-        CustodyEvent event = chain.append(shipment, CustodyEvent.builder()
+        CustodyEvent pending = CustodyEvent.builder()
                 .type(type)
                 .leg(leg)
                 .recordedByUserId(userId)
                 .codePresented(request.cleanedCode())
-                .handoverCodeId(code == null ? null : code.getId())
                 .latitude(request.lat()).longitude(request.lng())
                 .accuracyMetres(request.accuracy())
                 .metresFromExpected(distance)
@@ -458,7 +453,16 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                 .occurredAt(when(request.capturedAt()))
                 .capturedOffline(request.capturedAt() != null)
                 .clientEventId(request.clientEventId())
-                .build());
+                .build();
+
+        // State and time are checked before burning one-time evidence. appendDriver
+        // repeats the check at the write boundary under the same shipment lock.
+        chain.validateDriver(shipment, pending);
+        HandoverCode code = safeDrop
+                ? null
+                : burnCode(userId, shipment, codeType, request.cleanedCode());
+        pending.setHandoverCodeId(code == null ? null : code.getId());
+        CustodyEvent event = chain.appendDriver(shipment, pending);
 
         advanceLeg(leg, type);
 
@@ -504,11 +508,20 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
      * digits is a hundred thousand guesses to somebody determined and three to
      * somebody who misheard, and the count is what tells them apart.
      */
-    private HandoverCode burnCode(Shipment shipment, ShipmentLeg leg,
+    private HandoverCode burnCode(Long userId, Shipment shipment,
                                   HandoverCodeType codeType, String presented) {
         LocalDateTime now = LocalDateTime.now();
 
-        List<HandoverCode> live = codes.findLiveForShipment(shipment.getId(), codeType, now);
+        List<HandoverCode> live;
+        if (codeType == HandoverCodeType.VENDOR_RELEASE) {
+            if (shipment.getVendorOrder() == null) {
+                throw new BadRequestException(
+                        "This parcel has no seller order against which a collection code can be checked.");
+            }
+            live = codes.lockLiveReleaseCodes(shipment.getVendorOrder().getId(), now);
+        } else {
+            live = codes.lockLiveForShipment(shipment.getId(), codeType, now);
+        }
         if (live.isEmpty()) {
             throw new BadRequestException(switch (codeType) {
                 case VENDOR_RELEASE -> "The seller has not produced a collection code for this "
@@ -522,6 +535,7 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
         for (HandoverCode candidate : live) {
             if (candidate.getCode().equals(presented)) {
                 candidate.setUsed(true);
+                candidate.setUsedByUserId(userId);
                 candidate.setUsedAt(now);
                 codes.save(candidate);
                 return candidate;
@@ -566,20 +580,21 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     public DriverResponses.AttemptFailed deliveryFailed(Long userId, Long shipmentId,
                                                         DriverRequests.DeliveryFailed request) {
         Driver driver = requireDriver(userId);
-        Shipment shipment = requireOwnShipment(shipmentId, driver);
-        ShipmentLeg leg = requireActiveLeg(shipment, driver);
+        Shipment shipment = lockOwnShipment(shipmentId, driver);
 
-        Optional<CustodyEvent> already = replayed(userId, request.clientEventId());
+        Optional<CustodyEvent> already = replayed(userId, request.clientEventId(), shipmentId);
         if (already.isPresent()) {
             return new DriverResponses.AttemptFailed(already.get().getId(), shipmentId,
                     shipment.getStatus(), shipment.getFailedAttempts(), MAX_DELIVERY_ATTEMPTS,
                     shipment.getNextAttemptAfter(), false, "Already recorded.");
         }
+        chain.requireOpen(shipment);
+        ShipmentLeg leg = requireLockedActiveLeg(shipment, driver);
 
         BigDecimal distance = Geofence.metresBetween(request.lat(), request.lng(),
                 shipment.getDestinationLatitude(), shipment.getDestinationLongitude());
 
-        CustodyEvent event = chain.append(shipment, CustodyEvent.builder()
+        CustodyEvent event = chain.appendDriver(shipment, CustodyEvent.builder()
                 .type(CustodyEventType.FAILED_ATTEMPT)
                 .leg(leg)
                 .recordedByUserId(userId)
@@ -634,8 +649,9 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     @PreAuthorize("hasRole('ADMIN') or (hasRole('DELIVERY') and #userId == authentication.principal.id)")
     public DriverResponses.RecipientCodeRequested requestRecipientCode(Long userId, Long shipmentId) {
         Driver driver = requireDriver(userId);
-        Shipment shipment = requireOwnShipment(shipmentId, driver);
-        requireActiveLeg(shipment, driver);
+        Shipment shipment = lockOwnShipment(shipmentId, driver);
+        chain.requireOpen(shipment);
+        requireLockedActiveLeg(shipment, driver);
 
         if (shipment.getCollectedAt() == null) {
             // Accepting a job is not holding the parcel. Emailing a delivery
@@ -736,13 +752,14 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     public DriverResponses.CustodyRecorded transfer(Long userId, Long shipmentId,
                                                     DriverRequests.Transfer request) {
         Driver from = requireDriver(userId);
-        Shipment shipment = requireOwnShipment(shipmentId, from);
-        ShipmentLeg leg = requireActiveLeg(shipment, from);
+        Shipment shipment = lockOwnShipment(shipmentId, from);
 
-        Optional<CustodyEvent> already = replayed(userId, request.clientEventId());
+        Optional<CustodyEvent> already = replayed(userId, request.clientEventId(), shipmentId);
         if (already.isPresent()) {
             return replayOf(already.get(), shipment);
         }
+        chain.requireOpen(shipment);
+        ShipmentLeg leg = requireLockedActiveLeg(shipment, from);
 
         Driver to = drivers.findById(request.toDriverId())
                 .orElseThrow(() -> new ResourceNotFoundException("Driver", request.toDriverId()));
@@ -755,40 +772,15 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                             + "the parcel with nobody accountable for it.");
         }
 
-        // Both sides present something. A transfer attested by one person is a
-        // link nobody can corroborate, and this is the link at which a parcel
-        // would go missing if either half could be forged.
-        HandoverCode mine = burnCode(shipment, leg, HandoverCodeType.DRIVER_TO_DRIVER,
-                request.myCode());
-        if (!request.receivingDriverCode().equals(request.myCode())) {
-            // Two distinct codes is the stronger arrangement, but a single
-            // shared code read aloud by one and typed by the other still proves
-            // they were together. What is refused is one person supplying both
-            // halves from memory.
-            HandoverCode theirs = codes.findLiveForShipment(shipmentId,
-                            HandoverCodeType.DRIVER_TO_DRIVER, LocalDateTime.now()).stream()
-                    .filter(c -> c.getCode().equals(request.receivingDriverCode()))
-                    .findFirst().orElse(null);
-            if (theirs == null) {
-                throw new BadRequestException(
-                        "The receiving driver's code is not right. Both of you have to be here for "
-                                + "this.");
-            }
-            theirs.setUsed(true);
-            theirs.setUsedAt(LocalDateTime.now());
-            codes.save(theirs);
-        }
-
         BigDecimal distance = Geofence.metresBetween(request.lat(), request.lng(),
                 shipment.getDestinationLatitude(), shipment.getDestinationLongitude());
 
-        CustodyEvent event = chain.append(shipment, CustodyEvent.builder()
+        CustodyEvent pending = CustodyEvent.builder()
                 .type(CustodyEventType.TRANSFERRED)
                 .leg(leg)
                 .recordedByUserId(userId)
                 .counterpartyUserId(to.getUser() == null ? null : to.getUser().getId())
                 .codePresented(request.receivingDriverCode())
-                .handoverCodeId(mine.getId())
                 .latitude(request.lat()).longitude(request.lng())
                 .accuracyMetres(request.accuracy())
                 .metresFromExpected(distance)
@@ -799,7 +791,31 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                 .occurredAt(when(request.capturedAt()))
                 .capturedOffline(request.capturedAt() != null)
                 .clientEventId(request.clientEventId())
-                .build());
+                .build();
+
+        chain.validateDriver(shipment, pending);
+
+        // Both sides present something. The shipment lock is already held and
+        // the code rows are locked in that order before either is consumed.
+        HandoverCode mine = burnCode(userId, shipment, HandoverCodeType.DRIVER_TO_DRIVER,
+                request.myCode());
+        if (!request.receivingDriverCode().equals(request.myCode())) {
+            HandoverCode theirs = codes.lockLiveForShipment(shipmentId,
+                            HandoverCodeType.DRIVER_TO_DRIVER, LocalDateTime.now()).stream()
+                    .filter(c -> c.getCode().equals(request.receivingDriverCode()))
+                    .findFirst().orElse(null);
+            if (theirs == null) {
+                throw new BadRequestException(
+                        "The receiving driver's code is not right. Both of you have to be here for "
+                                + "this.");
+            }
+            theirs.setUsed(true);
+            theirs.setUsedByUserId(userId);
+            theirs.setUsedAt(LocalDateTime.now());
+            codes.save(theirs);
+        }
+        pending.setHandoverCodeId(mine.getId());
+        CustodyEvent event = chain.appendDriver(shipment, pending);
 
         // The old leg closes and a new one opens for the driver taking it over,
         // so the chain still has exactly one person accountable at every moment.
@@ -851,7 +867,8 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
 
         for (DriverRequests.SyncEntry entry : ordered) {
             try {
-                Optional<CustodyEvent> already = replayed(userId, entry.clientEventId());
+                Optional<CustodyEvent> already = replayed(
+                        userId, entry.clientEventId(), entry.shipmentId());
                 if (already.isPresent()) {
                     duplicates++;
                     outcomes.add(new DriverResponses.SyncOutcome(entry.clientEventId(),
@@ -859,38 +876,11 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                     continue;
                 }
 
-                Shipment shipment = requireOwnShipment(entry.shipmentId(), driver);
-                ShipmentLeg leg = legs.findActiveLeg(entry.shipmentId(), driver.getId())
-                        .orElse(null);
                 CustodyEventType type = parseType(entry.type());
-
-                BigDecimal distance = Geofence.metresBetween(entry.lat(), entry.lng(),
-                        shipment.getDestinationLatitude(), shipment.getDestinationLongitude());
-
-                CustodyEvent saved = chain.append(shipment, CustodyEvent.builder()
-                        .type(type)
-                        .leg(leg)
-                        .recordedByUserId(userId)
-                        .codePresented(entry.code())
-                        .latitude(entry.lat()).longitude(entry.lng())
-                        .accuracyMetres(entry.accuracy())
-                        .metresFromExpected(distance)
-                        .withinGeofence(Geofence.isWithin(distance, entry.accuracy(),
-                                Geofence.DEFAULT_RADIUS_M))
-                        .photoUrl(entry.photoUrl())
-                        .reasonCode(entry.reasonCode())
-                        .note(entry.note())
-                        .occurredAt(entry.capturedAt())
-                        .capturedOffline(true)
-                        .clientEventId(entry.clientEventId())
-                        .build());
-
-                if (leg != null) {
-                    advanceLeg(leg, type);
-                }
+                Long eventId = dispatchSynced(userId, entry, type);
                 recorded++;
                 outcomes.add(new DriverResponses.SyncOutcome(entry.clientEventId(),
-                        entry.shipmentId(), true, false, saved.getId(), null));
+                        entry.shipmentId(), true, false, eventId, null));
 
             } catch (RuntimeException refused) {
                 // One bad entry must not throw away the rest of a day's work.
@@ -913,6 +903,47 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                           + "listed with the reason — stop retrying those, they will not change.");
     }
 
+    /** Generic sync is a dispatcher, never an alternate custody implementation. */
+    private Long dispatchSynced(Long userId, DriverRequests.SyncEntry entry,
+                                CustodyEventType type) {
+        return switch (type) {
+            case ARRIVED_AT_ORIGIN -> arrivedAtOrigin(userId, entry.shipmentId(),
+                    new DriverRequests.Arrived(entry.lat(), entry.lng(), entry.accuracy(),
+                            entry.capturedAt(), entry.clientEventId())).eventId();
+            case COLLECTED, RELEASED -> handover(userId, entry.shipmentId(),
+                    new DriverRequests.Handover(entry.code(), null,
+                            entry.lat(), entry.lng(), entry.accuracy(), entry.photoUrl(), null,
+                            entry.note(), entry.capturedAt(), entry.clientEventId()),
+                    type,
+                    type == CustodyEventType.COLLECTED
+                            ? HandoverCodeType.VENDOR_RELEASE
+                            : HandoverCodeType.RECIPIENT_RELEASE,
+                    type == CustodyEventType.RELEASED,
+                    type == CustodyEventType.COLLECTED
+                            ? "Collected. The parcel is yours now - take it to the next stop."
+                            : "Delivered. Thank you.").eventId();
+            case FAILED_ATTEMPT -> deliveryFailed(userId, entry.shipmentId(),
+                    new DriverRequests.DeliveryFailed(parseFailureReason(entry.reasonCode()),
+                            entry.note(), entry.photoUrl(), entry.lat(), entry.lng(),
+                            entry.accuracy(), entry.capturedAt(), entry.clientEventId())).eventId();
+            case DEPOSITED, TRANSFERRED, REDISPATCHED, RETURNED -> throw new BadRequestException(
+                    type + " is not supported by generic offline sync. Use its dedicated "
+                            + "counterparty-authenticated workflow.");
+        };
+    }
+
+    private static DriverRequests.DeliveryFailed.FailureReason parseFailureReason(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new BadRequestException("A failed delivery requires a reason code.");
+        }
+        try {
+            return DriverRequests.DeliveryFailed.FailureReason.valueOf(
+                    raw.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException unknown) {
+            throw new BadRequestException("'" + raw + "' is not a delivery failure reason.");
+        }
+    }
+
     private static CustodyEventType parseType(String raw) {
         try {
             return CustodyEventType.valueOf(raw.trim().toUpperCase(java.util.Locale.ROOT));
@@ -924,11 +955,18 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /** An event this device already filed, if it did. */
-    private Optional<CustodyEvent> replayed(Long userId, String clientEventId) {
+    private Optional<CustodyEvent> replayed(Long userId, String clientEventId, Long shipmentId) {
         if (clientEventId == null || clientEventId.isBlank()) {
             return Optional.empty();
         }
-        return events.findByRecordedByUserIdAndClientEventId(userId, clientEventId);
+        Optional<CustodyEvent> existing =
+                events.findByRecordedByUserIdAndClientEventId(userId, clientEventId);
+        if (existing.isPresent()
+                && !shipmentId.equals(existing.get().getShipment().getId())) {
+            throw new BadRequestException(
+                    "That client event id was already used for a different parcel.");
+        }
+        return existing;
     }
 
     private static DriverResponses.CustodyRecorded replayOf(CustodyEvent event, Shipment shipment) {
@@ -1014,9 +1052,16 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                 .orElseThrow(() -> new ResourceNotFoundException("Shipment", shipmentId));
     }
 
-    /** The leg this driver is currently on for this parcel. */
-    private ShipmentLeg requireActiveLeg(Shipment shipment, Driver driver) {
-        return legs.findActiveLeg(shipment.getId(), driver.getId())
+    /** Scope first, then serialize all custody work on the parcel row. */
+    private Shipment lockOwnShipment(Long shipmentId, Driver driver) {
+        requireOwnShipment(shipmentId, driver);
+        return shipments.lockForCustody(shipmentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Shipment", shipmentId));
+    }
+
+    /** The current leg, locked only after the shipment lock. */
+    private ShipmentLeg requireLockedActiveLeg(Shipment shipment, Driver driver) {
+        return legs.lockActiveLeg(shipment.getId(), driver.getId())
                 .orElseThrow(() -> new BadRequestException(
                         "This parcel is not currently yours to move. Accept the job first, or it "
                                 + "has already been handed on."));

@@ -181,10 +181,15 @@ class DriverCustodyServiceTest {
     }
 
     private HandoverCode code(HandoverCodeType type, String value) {
-        HandoverCode saved = codes.save(HandoverCode.builder()
-                .shipment(shipment).codeType(type).code(value).used(false)
-                .expiresAt(LocalDateTime.now().plusDays(2))
-                .build());
+        HandoverCode.HandoverCodeBuilder builder = HandoverCode.builder()
+                .codeType(type).code(value).used(false)
+                .expiresAt(LocalDateTime.now().plusDays(2));
+        if (type == HandoverCodeType.VENDOR_RELEASE) {
+            builder.vendorOrder(shipment.getVendorOrder());
+        } else {
+            builder.shipment(shipment);
+        }
+        HandoverCode saved = codes.save(builder.build());
         entityManager.flush();
         return saved;
     }
@@ -196,11 +201,28 @@ class DriverCustodyServiceTest {
 
     /** Gets the parcel into the driver's hands. */
     private void collectIt() {
+        arriveIt(null, null);
         code(HandoverCodeType.VENDOR_RELEASE, "111111");
         custody.collect(driverUser.getId(), shipment.getId(),
                 handover("111111", ORIGIN_LAT, ORIGIN_LNG, null));
         entityManager.flush();
         entityManager.refresh(shipment);
+    }
+
+    private void arriveIt(LocalDateTime capturedAt, String clientEventId) {
+        custody.arrivedAtOrigin(driverUser.getId(), shipment.getId(),
+                new DriverRequests.Arrived(ORIGIN_LAT, ORIGIN_LNG,
+                        new BigDecimal("10.00"), capturedAt, clientEventId));
+    }
+
+    private DriverRequests.SyncEntry offline(String type, String eventId,
+                                              LocalDateTime capturedAt, String code,
+                                              String photoUrl, String reasonCode) {
+        boolean atDestination = "RELEASED".equals(type) || "FAILED_ATTEMPT".equals(type);
+        return new DriverRequests.SyncEntry(shipment.getId(), type, eventId, capturedAt, code,
+                atDestination ? DEST_LAT : ORIGIN_LAT,
+                atDestination ? DEST_LNG : ORIGIN_LNG,
+                new BigDecimal("10.00"), photoUrl, reasonCode, null);
     }
 
     // ── The privacy window ───────────────────────────────────────────────────
@@ -278,13 +300,14 @@ class DriverCustodyServiceTest {
 
     @Test
     void collectingNeedsTheSellersCode() {
+        arriveIt(null, null);
         code(HandoverCodeType.VENDOR_RELEASE, "111111");
 
         BadRequestException wrong = assertThrows(BadRequestException.class,
                 () -> custody.collect(driverUser.getId(), shipment.getId(),
                         handover("999999", ORIGIN_LAT, ORIGIN_LNG, null)));
         assertTrue(wrong.getMessage().contains("not right"), wrong.getMessage());
-        assertTrue(events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).isEmpty());
+        assertEquals(1, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).size());
     }
 
     @Test
@@ -300,6 +323,7 @@ class DriverCustodyServiceTest {
 
     @Test
     void thereIsNothingToCollectBeforeTheSellerHasPackedIt() {
+        arriveIt(null, null);
         BadRequestException none = assertThrows(BadRequestException.class,
                 () -> custody.collect(driverUser.getId(), shipment.getId(),
                         handover("111111", ORIGIN_LAT, ORIGIN_LNG, null)));
@@ -308,6 +332,7 @@ class DriverCustodyServiceTest {
 
     @Test
     void guessingBurnsTheCodeRatherThanAllowingAThousandTries() {
+        arriveIt(null, null);
         code(HandoverCodeType.VENDOR_RELEASE, "111111");
 
         for (int attempt = 0; attempt < 5; attempt++) {
@@ -655,21 +680,25 @@ class DriverCustodyServiceTest {
     @Test
     void aBatchUploadedTwiceRecordsEachEventOnce() {
         code(HandoverCodeType.VENDOR_RELEASE, "111111");
+        LocalDateTime captured = LocalDateTime.now().minusHours(3);
         DriverRequests.SyncBatch batch = new DriverRequests.SyncBatch(List.of(
+                new DriverRequests.SyncEntry(shipment.getId(), "ARRIVED_AT_ORIGIN", "evt-0",
+                        captured.minusMinutes(5), null,
+                        ORIGIN_LAT, ORIGIN_LNG, new BigDecimal("15.00"), null, null, null),
                 new DriverRequests.SyncEntry(shipment.getId(), "COLLECTED", "evt-1",
-                        LocalDateTime.now().minusHours(3), "111111",
+                        captured, "111111",
                         ORIGIN_LAT, ORIGIN_LNG, new BigDecimal("15.00"), null, null, null)));
 
         DriverResponses.SyncResult first = custody.sync(driverUser.getId(), batch);
         entityManager.flush();
         DriverResponses.SyncResult second = custody.sync(driverUser.getId(), batch);
 
-        assertEquals(1, first.recorded());
+        assertEquals(2, first.recorded());
         assertEquals(0, first.duplicates());
         // The phone could not know whether the first upload landed.
         assertEquals(0, second.recorded());
-        assertEquals(1, second.duplicates());
-        assertEquals(1, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).size());
+        assertEquals(2, second.duplicates());
+        assertEquals(2, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).size());
     }
 
     @Test
@@ -684,12 +713,16 @@ class DriverCustodyServiceTest {
         DriverResponses.SyncResult result = custody.sync(driverUser.getId(),
                 new DriverRequests.SyncBatch(List.of(
                         new DriverRequests.SyncEntry(shipment.getId(), "RELEASED", "evt-b",
-                                morning.plusHours(1), "222222", DEST_LAT, DEST_LNG,
+                                morning.plusHours(2), "222222", DEST_LAT, DEST_LNG,
                                 null, "https://m.invalid/p.jpg", null, null),
                         new DriverRequests.SyncEntry(shipment.getId(), "COLLECTED", "evt-a",
-                                morning, "111111", ORIGIN_LAT, ORIGIN_LNG, null, null, null, null))));
+                                morning.plusHours(1), "111111", ORIGIN_LAT, ORIGIN_LNG,
+                                null, null, null, null),
+                        new DriverRequests.SyncEntry(shipment.getId(), "ARRIVED_AT_ORIGIN", "evt-0",
+                                morning, null, ORIGIN_LAT, ORIGIN_LNG,
+                                null, null, null, null))));
 
-        assertEquals(2, result.recorded());
+        assertEquals(3, result.recorded());
         assertEquals(0, result.rejected());
         entityManager.flush();
         entityManager.refresh(shipment);
@@ -702,6 +735,9 @@ class DriverCustodyServiceTest {
 
         DriverResponses.SyncResult result = custody.sync(driverUser.getId(),
                 new DriverRequests.SyncBatch(List.of(
+                        new DriverRequests.SyncEntry(shipment.getId(), "ARRIVED_AT_ORIGIN", "evt-arrive",
+                                LocalDateTime.now().minusHours(3), null,
+                                ORIGIN_LAT, ORIGIN_LNG, null, null, null, null),
                         new DriverRequests.SyncEntry(shipment.getId(), "COLLECTED", "evt-good",
                                 LocalDateTime.now().minusHours(2), "111111",
                                 ORIGIN_LAT, ORIGIN_LNG, null, null, null, null),
@@ -709,7 +745,7 @@ class DriverCustodyServiceTest {
                                 LocalDateTime.now().minusHours(1), null,
                                 DEST_LAT, DEST_LNG, null, null, null, null))));
 
-        assertEquals(1, result.recorded());
+        assertEquals(2, result.recorded());
         assertEquals(1, result.rejected());
         // Reported entry by entry so the app knows what to stop retrying.
         assertTrue(result.outcomes().stream()
@@ -720,10 +756,9 @@ class DriverCustodyServiceTest {
 
     @Test
     void anOfflineEventIsMarkedAsOneSoTheGapInTheClocksIsExplainable() {
-        code(HandoverCodeType.VENDOR_RELEASE, "111111");
         custody.sync(driverUser.getId(), new DriverRequests.SyncBatch(List.of(
-                new DriverRequests.SyncEntry(shipment.getId(), "COLLECTED", "evt-1",
-                        LocalDateTime.now().minusHours(5), "111111",
+                new DriverRequests.SyncEntry(shipment.getId(), "ARRIVED_AT_ORIGIN", "evt-1",
+                        LocalDateTime.now().minusHours(5), null,
                         ORIGIN_LAT, ORIGIN_LNG, null, null, null, null))));
         entityManager.flush();
 
@@ -733,7 +768,214 @@ class DriverCustodyServiceTest {
         assertTrue(event.getOccurredAt().isBefore(event.getRecordedAt().minusHours(4)));
     }
 
+    @Test
+    void offlineCollectionWithoutAnArrivalOrVendorCodeCannotManufactureCustody() {
+        HandoverCode vendorCode = code(HandoverCodeType.VENDOR_RELEASE, "111111");
+
+        DriverResponses.SyncResult beforeArrival = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("COLLECTED", "collect-too-soon",
+                        LocalDateTime.now(), "111111", null, null))));
+        assertEquals(1, beforeArrival.rejected());
+        assertFalse(vendorCode.isUsed());
+        assertTrue(events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).isEmpty());
+
+        arriveIt(null, "arrived-online");
+        DriverResponses.SyncResult withoutCode = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("COLLECTED", "collect-no-code",
+                        LocalDateTime.now(), null, null, null))));
+        assertEquals(1, withoutCode.rejected());
+        assertFalse(vendorCode.isUsed());
+        assertEquals(1, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).size());
+    }
+
+    @Test
+    void expiredUsedAndInvalidatedVendorCodesDoNotCreateOfflineCollection() {
+        arriveIt(null, "arrived");
+        HandoverCode expired = code(HandoverCodeType.VENDOR_RELEASE, "111111");
+        expired.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+        codes.save(expired);
+        HandoverCode used = code(HandoverCodeType.VENDOR_RELEASE, "222222");
+        used.setUsed(true);
+        used.setUsedAt(LocalDateTime.now());
+        codes.save(used);
+        HandoverCode invalidated = code(HandoverCodeType.VENDOR_RELEASE, "333333");
+        invalidated.setInvalidatedAt(LocalDateTime.now());
+        codes.save(invalidated);
+        entityManager.flush();
+
+        for (String presented : List.of("111111", "222222", "333333")) {
+            DriverResponses.SyncResult result = custody.sync(driverUser.getId(),
+                    new DriverRequests.SyncBatch(List.of(offline("COLLECTED", "bad-" + presented,
+                            LocalDateTime.now(), presented, null, null))));
+            assertEquals(1, result.rejected(), presented);
+        }
+        assertEquals(1, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).size());
+    }
+
+    @Test
+    void offlineDeliveryRequiresCodeAndPhotoAndConsumesValidEvidenceOnce() {
+        collectIt();
+        HandoverCode recipient = code(HandoverCodeType.RECIPIENT_RELEASE, "222222");
+
+        DriverResponses.SyncResult noCode = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("RELEASED", "release-no-code",
+                        LocalDateTime.now(), null, "https://m.invalid/proof.jpg", null))));
+        DriverResponses.SyncResult noPhoto = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("RELEASED", "release-no-photo",
+                        LocalDateTime.now(), "222222", null, null))));
+        DriverResponses.SyncResult wrongCode = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("RELEASED", "release-wrong-code",
+                        LocalDateTime.now(), "999999", "https://m.invalid/proof.jpg", null))));
+
+        assertEquals(1, noCode.rejected());
+        assertEquals(1, noPhoto.rejected());
+        assertEquals(1, wrongCode.rejected());
+        assertFalse(recipient.isUsed());
+
+        DriverResponses.SyncResult valid = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("RELEASED", "release-valid",
+                        LocalDateTime.now(), "222222", "https://m.invalid/proof.jpg", null))));
+        entityManager.flush();
+        entityManager.refresh(recipient);
+        entityManager.refresh(shipment);
+        assertEquals(1, valid.recorded());
+        assertTrue(recipient.isUsed());
+        assertEquals(ShipmentStatus.DELIVERED, shipment.getStatus());
+        assertEquals(1, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).stream()
+                .filter(e -> e.getType() == CustodyEventType.RELEASED).count());
+    }
+
+    @Test
+    void offlineSafeDropNeedsStoredAuthorisationPhotoAndCorroboratingPosition() {
+        collectIt();
+        authoriseSafeDrop("behind the blue gate", null);
+
+        DriverResponses.SyncResult farAway = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(new DriverRequests.SyncEntry(
+                        shipment.getId(), "RELEASED", "safe-far", LocalDateTime.now(), null,
+                        13.4549, -16.5790, new BigDecimal("10.00"),
+                        "https://m.invalid/proof.jpg", null, null))));
+        DriverResponses.SyncResult noPhoto = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("RELEASED", "safe-no-photo",
+                        LocalDateTime.now(), null, null, null))));
+        assertEquals(1, farAway.rejected());
+        assertEquals(1, noPhoto.rejected());
+
+        DriverResponses.SyncResult valid = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("RELEASED", "safe-valid",
+                        LocalDateTime.now(), null, "https://m.invalid/proof.jpg", null))));
+        assertEquals(1, valid.recorded());
+    }
+
     // ── Scoping on writes ────────────────────────────────────────────────────
+
+    @Test
+    void everyNonActiveHistoricalLegStateFailsClosed() {
+        for (LegAssignmentStatus status : List.of(
+                LegAssignmentStatus.OFFERED, LegAssignmentStatus.DECLINED,
+                LegAssignmentStatus.EXPIRED, LegAssignmentStatus.COMPLETED,
+                LegAssignmentStatus.CANCELLED)) {
+            leg.setAssignmentStatus(status);
+            legs.save(leg);
+            entityManager.flush();
+            assertThrows(BadRequestException.class,
+                    () -> custody.arrivedAtOrigin(driverUser.getId(), shipment.getId(),
+                            new DriverRequests.Arrived(ORIGIN_LAT, ORIGIN_LNG, null,
+                                    null, "inactive-" + status)));
+        }
+        assertTrue(events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).isEmpty());
+    }
+
+    @Test
+    void reassignedDriverCannotReplayQueuedEvidence() {
+        User replacementUser = user("replacement@sujula.gm", UserRole.DELIVERY);
+        Driver replacement = drivers.save(Driver.builder().user(replacementUser)
+                .status(DriverStatus.APPROVED).available(true)
+                .vehicleType(VehicleType.MOTOR).maxWeight(20).build());
+        leg.setAssignmentStatus(LegAssignmentStatus.CANCELLED);
+        legs.save(leg);
+        legs.save(ShipmentLeg.builder().shipment(shipment).sequence(2)
+                .legType(LegType.ORIGIN_TO_RECIPIENT)
+                .assignmentStatus(LegAssignmentStatus.ACCEPTED).driver(replacement)
+                .originLatitude(ORIGIN_LAT).originLongitude(ORIGIN_LNG)
+                .destinationLatitude(DEST_LAT).destinationLongitude(DEST_LNG)
+                .earning(BigDecimal.ZERO).earningCurrency("GMD").build());
+        entityManager.flush();
+
+        DriverResponses.SyncResult result = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("ARRIVED_AT_ORIGIN", "stale-driver",
+                        LocalDateTime.now(), null, null, null))));
+        assertEquals(1, result.rejected());
+        assertTrue(events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).isEmpty());
+    }
+
+    @Test
+    void cancelledShipmentRejectsBeforeCodeConsumptionOrLegCompletion() {
+        arriveIt(null, "arrived-before-cancel");
+        HandoverCode vendorCode = code(HandoverCodeType.VENDOR_RELEASE, "111111");
+        shipment.setCancelledAt(LocalDateTime.now());
+        shipments.save(shipment);
+        entityManager.flush();
+
+        assertThrows(BadRequestException.class,
+                () -> custody.collect(driverUser.getId(), shipment.getId(),
+                        handover("111111", ORIGIN_LAT, ORIGIN_LNG, null)));
+        entityManager.refresh(vendorCode);
+        entityManager.refresh(leg);
+        assertFalse(vendorCode.isUsed());
+        assertEquals(LegAssignmentStatus.ACCEPTED, leg.getAssignmentStatus());
+        assertEquals(1, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).size());
+    }
+
+    @Test
+    void staleOfflineEvidenceCannotRegressAnAdvancedChain() {
+        LocalDateTime arrivalTime = LocalDateTime.now().minusHours(2);
+        arriveIt(arrivalTime, "arrived");
+        code(HandoverCodeType.VENDOR_RELEASE, "111111");
+        custody.collect(driverUser.getId(), shipment.getId(),
+                new DriverRequests.Handover("111111", null, ORIGIN_LAT, ORIGIN_LNG,
+                        null, null, null, null, arrivalTime.plusHours(1), "collected"));
+
+        DriverResponses.SyncResult stale = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("FAILED_ATTEMPT", "stale-failure",
+                        arrivalTime.plusMinutes(30), null, null, "NOBODY_HOME"))));
+        entityManager.refresh(shipment);
+        assertEquals(1, stale.rejected());
+        assertEquals(ShipmentStatus.OUT_FOR_DELIVERY, shipment.getStatus());
+        assertEquals(2, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).size());
+    }
+
+    @Test
+    void newClientEventIdCannotRepeatACompletedCollection() {
+        collectIt();
+        HandoverCode second = code(HandoverCodeType.VENDOR_RELEASE, "333333");
+
+        DriverResponses.SyncResult duplicateAction = custody.sync(driverUser.getId(),
+                new DriverRequests.SyncBatch(List.of(offline("COLLECTED", "new-id-same-action",
+                        LocalDateTime.now(), "333333", null, null))));
+        assertEquals(1, duplicateAction.rejected());
+        assertFalse(second.isUsed());
+        assertEquals(1, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).stream()
+                .filter(e -> e.getType() == CustodyEventType.COLLECTED).count());
+    }
+
+    @Test
+    void driverPickupDepositAndGenericCounterpartyEventsFailClosed() {
+        collectIt();
+        int before = events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).size();
+        assertThrows(BadRequestException.class,
+                () -> custody.depositAtPickup(driverUser.getId(), shipment.getId(),
+                        handover("123456", DEST_LAT, DEST_LNG, null)));
+
+        for (String type : List.of("DEPOSITED", "TRANSFERRED", "REDISPATCHED", "RETURNED")) {
+            DriverResponses.SyncResult result = custody.sync(driverUser.getId(),
+                    new DriverRequests.SyncBatch(List.of(offline(type, "blocked-" + type,
+                            LocalDateTime.now(), "123456", null, null))));
+            assertEquals(1, result.rejected(), type);
+        }
+        assertEquals(before,
+                events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).size());
+    }
 
     @Test
     void aDriverWhoHasNotAcceptedTheJobCannotMoveTheParcel() {

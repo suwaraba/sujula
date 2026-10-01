@@ -89,6 +89,15 @@ public interface HandoverCodeRepository extends JpaRepository<HandoverCode, Long
          + "AND h.used = FALSE AND h.invalidatedAt IS NULL")
     List<HandoverCode> findLiveReleaseCodes(@Param("vendorOrderId") Long vendorOrderId);
 
+    /** The seller's still-live codes, locked while one is checked and consumed. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT h FROM HandoverCode h WHERE h.vendorOrder.id = :vendorOrderId "
+         + "AND h.codeType = com.sujula.model.constant.HandoverCodeType.VENDOR_RELEASE "
+         + "AND h.used = FALSE AND h.invalidatedAt IS NULL AND h.expiresAt > :now "
+         + "ORDER BY h.createdAt DESC")
+    List<HandoverCode> lockLiveReleaseCodes(@Param("vendorOrderId") Long vendorOrderId,
+                                             @Param("now") LocalDateTime now);
+
     // ── Shipment codes ───────────────────────────────────────────────────────
 
     /**
@@ -106,6 +115,15 @@ public interface HandoverCodeRepository extends JpaRepository<HandoverCode, Long
          + "AND h.codeType = :codeType AND h.used = FALSE AND h.invalidatedAt IS NULL "
          + "AND h.expiresAt > :now ORDER BY h.createdAt DESC")
     List<HandoverCode> findLiveForShipment(@Param("shipmentId") Long shipmentId,
+                                           @Param("codeType") HandoverCodeType codeType,
+                                           @Param("now") LocalDateTime now);
+
+    /** Shipment-scoped codes, locked while one is checked and consumed. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT h FROM HandoverCode h WHERE h.shipment.id = :shipmentId "
+         + "AND h.codeType = :codeType AND h.used = FALSE AND h.invalidatedAt IS NULL "
+         + "AND h.expiresAt > :now ORDER BY h.createdAt DESC")
+    List<HandoverCode> lockLiveForShipment(@Param("shipmentId") Long shipmentId,
                                            @Param("codeType") HandoverCodeType codeType,
                                            @Param("now") LocalDateTime now);
 

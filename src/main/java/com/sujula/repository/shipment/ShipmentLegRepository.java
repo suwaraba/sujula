@@ -75,6 +75,16 @@ public interface ShipmentLegRepository extends JpaRepository<ShipmentLeg, Long> 
     Optional<ShipmentLeg> findActiveLeg(@Param("shipmentId") Long shipmentId,
                                         @Param("driverId") Long driverId);
 
+    /** The current driver's leg, locked after its shipment lock has been taken. */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT l FROM ShipmentLeg l WHERE l.shipment.id = :shipmentId "
+         + "AND l.driver.id = :driverId "
+         + "AND l.assignmentStatus IN (com.sujula.model.constant.LegAssignmentStatus.ACCEPTED, "
+         + "                           com.sujula.model.constant.LegAssignmentStatus.IN_PROGRESS) "
+         + "ORDER BY l.sequence ASC LIMIT 1")
+    Optional<ShipmentLeg> lockActiveLeg(@Param("shipmentId") Long shipmentId,
+                                        @Param("driverId") Long driverId);
+
     /** The next leg after this one, for handing a parcel onward. */
     @Query("SELECT l FROM ShipmentLeg l WHERE l.shipment.id = :shipmentId "
          + "AND l.sequence > :afterSequence ORDER BY l.sequence ASC LIMIT 1")

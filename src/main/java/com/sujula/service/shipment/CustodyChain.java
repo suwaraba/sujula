@@ -2,6 +2,7 @@ package com.sujula.service.shipment;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
 
 import org.springframework.stereotype.Component;
@@ -81,15 +82,49 @@ public class CustodyChain {
      */
     @Transactional
     public CustodyEvent append(Shipment shipment, CustodyEvent event) {
+        return append(shipment, event, false);
+    }
+
+    /**
+     * Appends an event through the stricter driver state machine.
+     *
+     * <p>Pickup operators and the audited admin override have different
+     * counterparties. Driver mutations all enter here so live requests and
+     * offline replay cannot drift into two policies.
+     */
+    @Transactional
+    public CustodyEvent appendDriver(Shipment shipment, CustodyEvent event) {
+        return append(shipment, event, true);
+    }
+
+    /** Validates driver state before a one-time code is consumed. */
+    public void validateDriver(Shipment shipment, CustodyEvent event) {
+        requireOpen(shipment);
+        requireSaneClock(event);
+        List<CustodyEvent> current =
+                events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId());
+        requireNotStale(current, event);
+        requireDriverAllowed(current, event);
+    }
+
+    private CustodyEvent append(Shipment shipment, CustodyEvent event, boolean driverAction) {
+        requireOpen(shipment);
         requireSaneClock(event);
 
         List<CustodyEvent> chain = events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId());
-        requireAllowed(shipment, chain, event.getType());
+        requireNotStale(chain, event);
+        if (driverAction) {
+            requireDriverAllowed(chain, event);
+        } else {
+            requireAllowed(shipment, chain, event.getType());
+        }
 
         event.setShipment(shipment);
         CustodyEvent saved = events.save(event);
 
         chain.add(saved);
+        chain.sort(Comparator.comparing(CustodyEvent::getOccurredAt)
+                .thenComparing(e -> e.getId() == null ? Long.MAX_VALUE : e.getId()));
         rederive(shipment, chain);
 
         log.info("[Custody] {} on shipment {} by user {} — {} ({}m from expected)",
@@ -97,6 +132,93 @@ public class CustodyChain {
                 saved.isWithinGeofence() ? "attested" : "position not corroborated",
                 saved.getMetresFromExpected());
         return saved;
+    }
+
+    /** Refuses a cancelled parcel before any evidence can be consumed. */
+    public void requireOpen(Shipment shipment) {
+        if (shipment.getCancelledAt() != null || shipment.getStatus() == ShipmentStatus.CANCELLED) {
+            throw new BadRequestException(
+                    "This parcel is cancelled. Its custody chain cannot be changed or reopened.");
+        }
+    }
+
+    /** A delayed device timestamp is evidence metadata, never authority to rewrite history. */
+    private static void requireNotStale(List<CustodyEvent> chain, CustodyEvent next) {
+        if (chain.isEmpty()) {
+            return;
+        }
+        CustodyEvent latest = chain.get(chain.size() - 1);
+        if (next.getOccurredAt().isBefore(latest.getOccurredAt())) {
+            throw new BadRequestException(
+                    "This offline event is older than custody evidence already accepted for the "
+                            + "parcel. It cannot be inserted later and rewrite the current state.");
+        }
+    }
+
+    /** Exact predecessor and active-leg rules for every driver-authored event. */
+    private static void requireDriverAllowed(List<CustodyEvent> chain, CustodyEvent event) {
+        CustodyEventType next = event.getType();
+        ShipmentLeg leg = event.getLeg();
+        if (leg == null) {
+            throw new BadRequestException("A driver custody event requires the current active leg.");
+        }
+
+        CustodyEventType previous = chain.isEmpty() ? null : chain.get(chain.size() - 1).getType();
+        switch (next) {
+            case ARRIVED_AT_ORIGIN -> {
+                requireLegStatus(leg, LegAssignmentStatus.ACCEPTED, next);
+                if (!leg.getLegType().startsAtOrigin() || previous != null) {
+                    throw wrongPredecessor(next, previous, "a new origin leg with no earlier event");
+                }
+            }
+            case COLLECTED -> {
+                requireLegStatus(leg, LegAssignmentStatus.ACCEPTED, next);
+                if (!leg.getLegType().startsAtOrigin()
+                        || previous != CustodyEventType.ARRIVED_AT_ORIGIN) {
+                    throw wrongPredecessor(next, previous, "ARRIVED_AT_ORIGIN");
+                }
+            }
+            case RELEASED, FAILED_ATTEMPT -> {
+                requireLegStatus(leg, LegAssignmentStatus.IN_PROGRESS, next);
+                if (!leg.getLegType().endsWithRecipient() || !driverCarryingAfter(previous)) {
+                    throw wrongPredecessor(next, previous,
+                            "COLLECTED, REDISPATCHED, TRANSFERRED or FAILED_ATTEMPT on a recipient leg");
+                }
+            }
+            case TRANSFERRED -> {
+                requireLegStatus(leg, LegAssignmentStatus.IN_PROGRESS, next);
+                if (!driverCarryingAfter(previous)) {
+                    throw wrongPredecessor(next, previous,
+                            "COLLECTED, REDISPATCHED, TRANSFERRED or FAILED_ATTEMPT");
+                }
+            }
+            case DEPOSITED, REDISPATCHED, RETURNED -> throw new BadRequestException(
+                    next + " is not accepted from a driver custody request. Use the dedicated "
+                            + "authenticated counterparty workflow.");
+        }
+    }
+
+    private static boolean driverCarryingAfter(CustodyEventType previous) {
+        return previous == CustodyEventType.COLLECTED
+                || previous == CustodyEventType.REDISPATCHED
+                || previous == CustodyEventType.TRANSFERRED
+                || previous == CustodyEventType.FAILED_ATTEMPT;
+    }
+
+    private static void requireLegStatus(ShipmentLeg leg, LegAssignmentStatus expected,
+                                         CustodyEventType event) {
+        if (leg.getAssignmentStatus() != expected) {
+            throw new BadRequestException(event + " requires the current leg to be " + expected
+                    + ", not " + leg.getAssignmentStatus() + ".");
+        }
+    }
+
+    private static BadRequestException wrongPredecessor(CustodyEventType next,
+                                                         CustodyEventType previous,
+                                                         String required) {
+        return new BadRequestException(next + " cannot follow "
+                + (previous == null ? "the start of the chain" : previous)
+                + ". It requires " + required + ".");
     }
 
     /**
