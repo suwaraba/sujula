@@ -6,10 +6,12 @@ import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.Review;
 import com.sujula.model.constant.DeliveryStatus;
+import com.sujula.model.constant.CustodyEventType;
 import com.sujula.model.constant.FxSource;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.constant.RefundRequestStatus;
+import com.sujula.model.constant.ShipmentStatus;
 import com.sujula.model.constant.VendorOrderStatus;
 import com.sujula.model.delivery.Delivery;
 import com.sujula.model.delivery.DeliveryTracking;
@@ -17,11 +19,14 @@ import com.sujula.model.money.FxSnapshot;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.OrderItem;
 import com.sujula.model.order.OrderStatusHistory;
+import com.sujula.model.order.Payment;
 import com.sujula.model.order.RefundRequest;
 import com.sujula.model.order.VendorOrder;
+import com.sujula.model.shipment.Shipment;
 import com.sujula.model.user.User;
 import com.sujula.model.user.Vendor;
 import com.sujula.repository.PickupPointRepository;
+import com.sujula.repository.PaymentRepository;
 import com.sujula.repository.delivery.DeliveryRepository;
 import com.sujula.repository.delivery.DeliveryTrackingRepository;
 import com.sujula.repository.order.OrderRepository;
@@ -30,11 +35,15 @@ import com.sujula.repository.order.RefundRequestRepository;
 import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.repository.product.ProductRepository;
 import com.sujula.repository.product.ReviewRepository;
+import com.sujula.repository.shipment.CustodyEventRepository;
+import com.sujula.repository.shipment.ShipmentRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.service.buyerorder.impl.BuyerOrderServiceImpl;
 import com.sujula.service.invoice.InvoiceService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
@@ -76,11 +85,14 @@ class BuyerOrderServiceTest {
     private static final Long SLICE_B = 4200L;   // Dakar, already with a driver
 
     private OrderRepository orders;
+    private PaymentRepository payments;
     private VendorOrderRepository vendorOrders;
     private RefundRequestRepository refunds;
     private OrderStatusHistoryRepository history;
     private DeliveryRepository deliveries;
     private DeliveryTrackingRepository tracking;
+    private ShipmentRepository shipments;
+    private CustodyEventRepository custodyEvents;
     private ReviewRepository reviews;
     private ProductRepository products;
     private UserRepository users;
@@ -92,11 +104,14 @@ class BuyerOrderServiceTest {
     @BeforeEach
     void setUp() {
         orders = mock(OrderRepository.class);
+        payments = mock(PaymentRepository.class);
         vendorOrders = mock(VendorOrderRepository.class);
         refunds = mock(RefundRequestRepository.class);
         history = mock(OrderStatusHistoryRepository.class);
         deliveries = mock(DeliveryRepository.class);
         tracking = mock(DeliveryTrackingRepository.class);
+        shipments = mock(ShipmentRepository.class);
+        custodyEvents = mock(CustodyEventRepository.class);
         reviews = mock(ReviewRepository.class);
         products = mock(ProductRepository.class);
         users = mock(UserRepository.class);
@@ -104,8 +119,9 @@ class BuyerOrderServiceTest {
         invoices = mock(InvoiceService.class);
         moneyLedger = mock(com.sujula.service.money.MoneyLedger.class);
 
-        service = new BuyerOrderServiceImpl(orders, vendorOrders, refunds, history, deliveries,
-                tracking, reviews, products, users, pickupPoints, invoices, moneyLedger);
+        service = new BuyerOrderServiceImpl(orders, payments, vendorOrders, refunds, history, deliveries,
+                tracking, shipments, custodyEvents, reviews, products, users, pickupPoints,
+                invoices, moneyLedger);
 
         when(orders.save(any(Order.class))).thenAnswer(call -> call.getArgument(0));
         when(vendorOrders.save(any(VendorOrder.class))).thenAnswer(call -> call.getArgument(0));
@@ -114,6 +130,8 @@ class BuyerOrderServiceTest {
         when(refunds.findOpenForVendorOrder(anyLong(), anyList())).thenReturn(Optional.empty());
         when(reviews.findProductIdsReviewedBy(anyLong())).thenReturn(List.of());
         when(deliveries.findByOrderItemOrderId(anyLong())).thenReturn(List.of());
+        when(shipments.findByVendorOrderId(anyLong())).thenReturn(Optional.empty());
+        when(moneyLedger.releaseEscrow(any(VendorOrder.class), any(LocalDateTime.class))).thenReturn(2);
         when(tracking.findTrail(any())).thenReturn(List.of());
         when(users.findById(BUYER)).thenReturn(Optional.of(user(BUYER)));
     }
@@ -203,8 +221,27 @@ class BuyerOrderServiceTest {
     }
 
     private void given(Order order) {
+        Payment payment = Payment.builder()
+                .order(order)
+                .reference("PAY-TESTONE")
+                .status(order.getPaymentStatus())
+                .amount(order.getTotal())
+                .currency(order.getCurrency())
+                .build();
+        order.setPayment(payment);
         when(orders.findByIdAndCustomerId(ORDER, BUYER)).thenReturn(Optional.of(order));
         when(orders.findByIdAndCustomerId(ORDER, INTRUDER)).thenReturn(Optional.empty());
+        when(orders.findByIdAndCustomerIdForUpdate(ORDER, BUYER)).thenReturn(Optional.of(order));
+        when(orders.findByIdAndCustomerIdForUpdate(ORDER, INTRUDER)).thenReturn(Optional.empty());
+        when(payments.findByOrderId(ORDER)).thenReturn(Optional.of(payment));
+    }
+
+    private void deliveredLegacy(VendorOrder slice) {
+        Delivery delivery = new Delivery();
+        delivery.setId(9000L + slice.getId());
+        delivery.setOrderItem(slice.getItems().getFirst());
+        delivery.setStatus(DeliveryStatus.DELIVERED);
+        when(deliveries.findByOrderItemOrderId(ORDER)).thenReturn(List.of(delivery));
     }
 
     // ── Ownership ────────────────────────────────────────────────────────────
@@ -406,37 +443,32 @@ class BuyerOrderServiceTest {
     }
 
     @Test
-    void confirmingReceiptWritesEvidenceBeforeItMovesTheStatus() {
+    void legacyReceiptRequiresEvidenceAndDoesNotManufactureIt() {
         Order order = order(VendorOrderStatus.SHIPPED, PaymentStatus.PAID);
         given(order);
 
         VendorOrder slice = order.getVendorOrders().get(1);
         Delivery parcel = new Delivery();
         parcel.setId(9001L);
-        parcel.setStatus(DeliveryStatus.OUT_FOR_DELIVERY);
+        parcel.setStatus(DeliveryStatus.DELIVERED);
         parcel.setOrderItem(slice.getItems().get(0));
         when(deliveries.findByOrderItemOrderId(ORDER)).thenReturn(List.of(parcel));
 
         BuyerOrderResponses.ReceiptConfirmed result = service.confirmReceipt(
                 BUYER, ORDER, SLICE_B, new BuyerOrderRequests.ConfirmReceipt("Got it"));
 
-        // The custody chain records who said so. Without this the parcel reaches
-        // DELIVERED with nobody having handed it to anybody.
-        ArgumentCaptor<DeliveryTracking> evidence = ArgumentCaptor.forClass(DeliveryTracking.class);
-        verify(tracking).save(evidence.capture());
-        assertEquals(DeliveryStatus.DELIVERED, evidence.getValue().getStatus());
-        assertEquals(BUYER, evidence.getValue().getRecordedBy().getId());
-        assertEquals(parcel, evidence.getValue().getDelivery());
-
         assertEquals(VendorOrderStatus.DELIVERED, result.status());
         assertTrue(result.escrowReleased());
         assertNotNull(slice.getEscrowReleasedAt());
+        verify(tracking, never()).save(any());
+        verify(deliveries, never()).save(any());
     }
 
     @Test
     void confirmingReceiptTwiceReleasesEscrowOnce() {
         Order order = order(VendorOrderStatus.SHIPPED, PaymentStatus.PAID);
         given(order);
+        deliveredLegacy(order.getVendorOrders().get(1));
 
         service.confirmReceipt(BUYER, ORDER, SLICE_B, new BuyerOrderRequests.ConfirmReceipt(null));
         LocalDateTime first = order.getVendorOrders().get(1).getEscrowReleasedAt();
@@ -446,6 +478,111 @@ class BuyerOrderServiceTest {
 
         assertEquals(first, order.getVendorOrders().get(1).getEscrowReleasedAt());
         assertTrue(again.message().contains("already"), again.message());
+        verify(moneyLedger, times(1)).postSale(any());
+        verify(moneyLedger, times(1)).releaseEscrow(any(), any());
+        verify(tracking, never()).save(any());
+    }
+
+    @Test
+    void shippedSliceWithoutDeliveredEvidenceCannotReleaseEscrow() {
+        Order order = order(VendorOrderStatus.SHIPPED, PaymentStatus.PAID);
+        given(order);
+
+        assertThrows(BadRequestException.class, () -> service.confirmReceipt(
+                BUYER, ORDER, SLICE_B, new BuyerOrderRequests.ConfirmReceipt(null)));
+
+        assertNull(order.getVendorOrders().get(1).getReceiptConfirmedAt());
+        verify(moneyLedger, never()).postSale(any());
+        verify(moneyLedger, never()).releaseEscrow(any(), any());
+    }
+
+    @Test
+    void deliveredLegacyCannotOverrideLinkedShipmentWithoutRelease() {
+        Order order = order(VendorOrderStatus.SHIPPED, PaymentStatus.PAID);
+        given(order);
+        VendorOrder slice = order.getVendorOrders().get(1);
+        deliveredLegacy(slice);
+        Shipment shipment = Shipment.builder().reference("SHP-TEST-1").vendorOrder(slice).build();
+        shipment.setId(55L);
+        when(shipments.findByVendorOrderId(SLICE_B)).thenReturn(Optional.of(shipment));
+
+        assertThrows(BadRequestException.class, () -> service.confirmReceipt(
+                BUYER, ORDER, SLICE_B, new BuyerOrderRequests.ConfirmReceipt(null)));
+        verify(moneyLedger, never()).postSale(any());
+    }
+
+    @Test
+    void verifiedShipmentReleasePermitsConfirmation() {
+        Order order = order(VendorOrderStatus.SHIPPED, PaymentStatus.PAID);
+        given(order);
+        VendorOrder slice = order.getVendorOrders().get(1);
+        Shipment shipment = org.mockito.Mockito.mock(Shipment.class);
+        when(shipment.getId()).thenReturn(55L);
+        when(shipment.getStatus()).thenReturn(ShipmentStatus.DELIVERED);
+        when(shipments.findByVendorOrderId(SLICE_B)).thenReturn(Optional.of(shipment));
+        when(custodyEvents.existsByShipmentIdAndType(55L, CustodyEventType.RELEASED))
+                .thenReturn(true);
+
+        BuyerOrderResponses.ReceiptConfirmed result = service.confirmReceipt(
+                BUYER, ORDER, SLICE_B, new BuyerOrderRequests.ConfirmReceipt(null));
+
+        assertTrue(result.escrowReleased());
+        assertNotNull(slice.getReceiptConfirmedAt());
+        verify(deliveries, never()).save(any());
+        verify(tracking, never()).save(any());
+    }
+
+    @ParameterizedTest(name = "authoritative payment {0}")
+    @EnumSource(PaymentStatus.class)
+    void authoritativePaymentMustBePaidBeforeReceiptCanRelease(PaymentStatus status) {
+        Order order = order(VendorOrderStatus.SHIPPED, PaymentStatus.PAID);
+        given(order);
+        VendorOrder slice = order.getVendorOrders().get(1);
+        deliveredLegacy(slice);
+        Payment authoritative = Payment.builder()
+                .order(order)
+                .reference("PAY-AUTHORITATIVE")
+                .status(status)
+                .amount(order.getTotal())
+                .currency(order.getCurrency())
+                .build();
+        when(payments.findByOrderId(ORDER)).thenReturn(Optional.of(authoritative));
+
+        if (status == PaymentStatus.PAID) {
+            BuyerOrderResponses.ReceiptConfirmed result = service.confirmReceipt(
+                    BUYER, ORDER, SLICE_B, new BuyerOrderRequests.ConfirmReceipt(null));
+            assertTrue(result.escrowReleased());
+            assertNotNull(slice.getReceiptConfirmedAt());
+            assertNotNull(slice.getEscrowReleasedAt());
+            verify(moneyLedger).postSale(slice);
+            verify(moneyLedger).releaseEscrow(any(), any());
+        } else {
+            assertThrows(BadRequestException.class, () -> service.confirmReceipt(
+                    BUYER, ORDER, SLICE_B, new BuyerOrderRequests.ConfirmReceipt(null)));
+            assertNull(slice.getReceiptConfirmedAt());
+            assertNull(slice.getEscrowReleasedAt());
+            verify(moneyLedger, never()).postSale(any());
+            verify(moneyLedger, never()).releaseEscrow(any(), any());
+            verify(tracking, never()).save(any());
+        }
+    }
+
+    @Test
+    void refundedAndDisputedSlicesFailClosed() {
+        Order refunded = order(VendorOrderStatus.SHIPPED, PaymentStatus.PARTIALLY_REFUNDED);
+        given(refunded);
+        deliveredLegacy(refunded.getVendorOrders().get(1));
+        assertThrows(BadRequestException.class, () -> service.confirmReceipt(
+                BUYER, ORDER, SLICE_B, new BuyerOrderRequests.ConfirmReceipt(null)));
+
+        Order disputed = order(VendorOrderStatus.SHIPPED, PaymentStatus.PAID);
+        disputed.getVendorOrders().get(1).setDisputeFrozenAt(LocalDateTime.now());
+        given(disputed);
+        deliveredLegacy(disputed.getVendorOrders().get(1));
+        assertThrows(BadRequestException.class, () -> service.confirmReceipt(
+                BUYER, ORDER, SLICE_B, new BuyerOrderRequests.ConfirmReceipt(null)));
+        assertNull(disputed.getVendorOrders().get(1).getEscrowReleasedAt());
+        verify(moneyLedger, never()).postSale(any());
     }
 
     // ── Reviews ──────────────────────────────────────────────────────────────

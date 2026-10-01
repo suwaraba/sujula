@@ -16,6 +16,12 @@ import com.sujula.model.constant.ReturnStatus;
 @Repository
 public interface ReturnRequestRepository extends JpaRepository<ReturnRequest, Long> {
 
+    /** Scalar route to the slice, so escalation can lock Order before loading return state. */
+    @Query("SELECT r.vendorOrder.id FROM ReturnRequest r "
+         + "WHERE r.id = :id AND r.requestedBy.id = :userId")
+    Optional<Long> findVendorOrderIdByIdAndBuyerId(@Param("id") Long id,
+                                                    @Param("userId") Long userId);
+
     boolean existsByReference(String reference);
 
     /**

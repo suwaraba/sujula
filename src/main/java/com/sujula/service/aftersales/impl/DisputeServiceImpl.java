@@ -32,6 +32,8 @@ import com.sujula.model.user.User;
 import com.sujula.repository.aftersales.DisputeEvidenceRepository;
 import com.sujula.repository.aftersales.DisputeMessageRepository;
 import com.sujula.repository.aftersales.DisputeRepository;
+import com.sujula.repository.aftersales.ReturnRequestRepository;
+import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.service.aftersales.DisputeService;
@@ -81,6 +83,8 @@ public class DisputeServiceImpl implements DisputeService {
     private final DisputeRepository disputes;
     private final DisputeMessageRepository messages;
     private final DisputeEvidenceRepository evidence;
+    private final ReturnRequestRepository returns;
+    private final OrderRepository orders;
     private final VendorOrderRepository vendorOrders;
     private final UserRepository users;
     private final MoneyLedger ledger;
@@ -88,11 +92,14 @@ public class DisputeServiceImpl implements DisputeService {
 
     public DisputeServiceImpl(DisputeRepository disputes, DisputeMessageRepository messages,
                               DisputeEvidenceRepository evidence,
+                              ReturnRequestRepository returns, OrderRepository orders,
                               VendorOrderRepository vendorOrders, UserRepository users,
                               MoneyLedger ledger, CurrencyCatalogue currencies) {
         this.disputes = disputes;
         this.messages = messages;
         this.evidence = evidence;
+        this.returns = returns;
+        this.orders = orders;
         this.vendorOrders = vendorOrders;
         this.users = users;
         this.ledger = ledger;
@@ -106,8 +113,7 @@ public class DisputeServiceImpl implements DisputeService {
     @PreAuthorize("isAuthenticated()")
     public AfterSalesResponses.DisputeDetail open(Long userId,
                                                   AfterSalesRequests.OpenDispute request) {
-        VendorOrder slice = vendorOrders.findById(request.vendorOrderId())
-                .orElseThrow(() -> new ResourceNotFoundException("Order", request.vendorOrderId()));
+        VendorOrder slice = lockSlice(request.vendorOrderId());
         requireBuyerOf(slice, userId);
         requireInsideTheWindow(slice);
 
@@ -149,9 +155,13 @@ public class DisputeServiceImpl implements DisputeService {
 
     @Override
     @Transactional
-    public Dispute escalateFromReturn(Long userId, ReturnRequest returnRequest, String description,
+    public Dispute escalateFromReturn(Long userId, Long returnRequestId, String description,
                                       DisputeReason reason) {
-        VendorOrder slice = returnRequest.getVendorOrder();
+        Long sliceId = returns.findVendorOrderIdByIdAndBuyerId(returnRequestId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Return", returnRequestId));
+        VendorOrder slice = lockSlice(sliceId);
+        ReturnRequest returnRequest = returns.findByIdAndBuyerId(returnRequestId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Return", returnRequestId));
 
         // Deliberately no window check here. The buyer opened the return inside
         // the window and has been waiting on the seller ever since; a clock that
@@ -200,6 +210,15 @@ public class DisputeServiceImpl implements DisputeService {
      * the two bites depends on whether the parcel had been delivered when the
      * argument started, and both are applied so it does not matter.
      */
+    private VendorOrder lockSlice(Long vendorOrderId) {
+        Long orderId = vendorOrders.findOrderIdById(vendorOrderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", vendorOrderId));
+        Order order = orders.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", vendorOrderId));
+        return vendorOrders.findByIdAndOrderId(vendorOrderId, order.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Order", vendorOrderId));
+    }
+
     private void freeze(Dispute dispute, VendorOrder slice, String why) {
         LocalDateTime now = LocalDateTime.now();
         slice.setDisputeFrozenAt(now);

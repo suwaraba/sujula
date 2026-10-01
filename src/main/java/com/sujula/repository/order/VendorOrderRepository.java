@@ -18,6 +18,13 @@ import java.util.Optional;
 @Repository
 public interface VendorOrderRepository extends JpaRepository<VendorOrder, Long> {
 
+    /** Scalar parent lookup used before acquiring the common Order lock. */
+    @Query("SELECT vo.order.id FROM VendorOrder vo WHERE vo.id = :id")
+    Optional<Long> findOrderIdById(@Param("id") Long id);
+
+    /** Reloads a slice only after its parent Order has been locked. */
+    Optional<VendorOrder> findByIdAndOrderId(Long id, Long orderId);
+
     List<VendorOrder> findByOrderId(Long orderId);
 
     /** Whether this vendor has anything in this order — the basis of every vendor-scoped check. */

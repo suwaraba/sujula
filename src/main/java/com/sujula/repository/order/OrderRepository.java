@@ -19,6 +19,11 @@ import java.util.Optional;
 @Repository
 public interface OrderRepository extends JpaRepository<Order, Long> {
 
+    /** Common parent-row serialization boundary for order-scoped state changes. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o WHERE o.id = :id")
+    Optional<Order> findByIdForUpdate(@Param("id") Long id);
+
     /** Parent-row lock acquired before the optional Payment row is read or created. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT o FROM Order o WHERE o.id = :id")
@@ -59,6 +64,17 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
      */
     @Query("SELECT o FROM Order o WHERE o.id = :id AND o.customer.id = :customerId")
     Optional<Order> findByIdAndCustomerId(@Param("id") Long id, @Param("customerId") Long customerId);
+
+    /** The buyer-owned parent row, locked before a slice or its money is changed. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o WHERE o.id = :id AND o.customer.id = :customerId")
+    Optional<Order> findByIdAndCustomerIdForUpdate(@Param("id") Long id,
+                                                   @Param("customerId") Long customerId);
+
+    /** Parent-first serialization for a refund addressed by its payment id. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o JOIN o.payment p WHERE p.id = :paymentId")
+    Optional<Order> findByPaymentIdForUpdate(@Param("paymentId") Long paymentId);
 
     /** The buyer's own orders, newest first, optionally narrowed by status. */
     @Query(value = "SELECT o FROM Order o WHERE o.customer.id = :customerId "

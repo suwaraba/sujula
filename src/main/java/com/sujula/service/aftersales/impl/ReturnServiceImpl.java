@@ -32,6 +32,7 @@ import com.sujula.model.order.VendorOrder;
 import com.sujula.model.user.User;
 import com.sujula.model.user.Vendor;
 import com.sujula.repository.aftersales.ReturnRequestRepository;
+import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.user.VendorRepository;
@@ -67,6 +68,7 @@ public class ReturnServiceImpl implements ReturnService {
     private static final String REFERENCE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
 
     private final ReturnRequestRepository returns;
+    private final OrderRepository orders;
     private final VendorOrderRepository vendorOrders;
     private final com.sujula.repository.shipment.ShipmentRepository shipments;
     private final VendorRepository vendors;
@@ -74,11 +76,13 @@ public class ReturnServiceImpl implements ReturnService {
     private final CurrencyCatalogue currencies;
     private final DisputeService disputes;
 
-    public ReturnServiceImpl(ReturnRequestRepository returns, VendorOrderRepository vendorOrders,
+    public ReturnServiceImpl(ReturnRequestRepository returns, OrderRepository orders,
+                             VendorOrderRepository vendorOrders,
                              com.sujula.repository.shipment.ShipmentRepository shipments,
                              VendorRepository vendors, UserRepository users,
                              CurrencyCatalogue currencies, DisputeService disputes) {
         this.returns = returns;
+        this.orders = orders;
         this.vendorOrders = vendorOrders;
         this.shipments = shipments;
         this.vendors = vendors;
@@ -395,6 +399,15 @@ public class ReturnServiceImpl implements ReturnService {
     @PreAuthorize("isAuthenticated()")
     public AfterSalesResponses.ReturnDetail escalate(Long userId, Long returnId,
                                                      AfterSalesRequests.EscalateReturn request) {
+        Long sliceId = returns.findVendorOrderIdByIdAndBuyerId(returnId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Return", returnId));
+        Long orderId = vendorOrders.findOrderIdById(sliceId)
+                .orElseThrow(() -> new ResourceNotFoundException("Return", returnId));
+        Order order = orders.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Return", returnId));
+        vendorOrders.findByIdAndOrderId(sliceId, order.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Return", returnId));
+
         ReturnRequest row = requireBuyer(returnId, userId);
         if (row.getStatus() == ReturnStatus.ESCALATED) {
             throw new BadRequestException(
@@ -408,7 +421,7 @@ public class ReturnServiceImpl implements ReturnService {
         // Raising the dispute is what freezes the seller's money, and it is done
         // there rather than here — there is exactly one writer of that freeze and
         // this is not it.
-        Dispute dispute = disputes.escalateFromReturn(userId, row, request.description(),
+        Dispute dispute = disputes.escalateFromReturn(userId, row.getId(), request.description(),
                 reasonFor(row));
 
         row.setStatus(ReturnStatus.ESCALATED);

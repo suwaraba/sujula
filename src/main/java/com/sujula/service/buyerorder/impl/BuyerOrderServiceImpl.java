@@ -11,9 +11,11 @@ import com.sujula.model.delivery.DeliveryTracking;
 import com.sujula.model.delivery.PickupPoint;
 import com.sujula.model.money.FxSnapshot;
 import com.sujula.model.order.*;
+import com.sujula.model.shipment.Shipment;
 import com.sujula.model.user.User;
 import com.sujula.model.user.Vendor;
 import com.sujula.repository.PickupPointRepository;
+import com.sujula.repository.PaymentRepository;
 import com.sujula.repository.delivery.DeliveryRepository;
 import com.sujula.service.invoice.InvoiceService;
 import com.sujula.repository.delivery.DeliveryTrackingRepository;
@@ -23,6 +25,8 @@ import com.sujula.repository.order.RefundRequestRepository;
 import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.repository.product.ProductRepository;
 import com.sujula.repository.product.ReviewRepository;
+import com.sujula.repository.shipment.CustodyEventRepository;
+import com.sujula.repository.shipment.ShipmentRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.service.buyerorder.BuyerOrderService;
 import lombok.extern.slf4j.Slf4j;
@@ -63,13 +67,19 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
 
     private static final List<RefundRequestStatus> OPEN =
             List.of(RefundRequestStatus.REQUESTED, RefundRequestStatus.APPROVED);
+    private static final List<RefundRequestStatus> RELEASE_BLOCKING_REFUNDS =
+            List.of(RefundRequestStatus.REQUESTED, RefundRequestStatus.APPROVED,
+                    RefundRequestStatus.COMPLETED);
 
     private final OrderRepository orders;
+    private final PaymentRepository payments;
     private final VendorOrderRepository vendorOrders;
     private final RefundRequestRepository refunds;
     private final OrderStatusHistoryRepository history;
     private final DeliveryRepository deliveries;
     private final DeliveryTrackingRepository deliveryTracking;
+    private final ShipmentRepository shipments;
+    private final CustodyEventRepository custodyEvents;
     private final ReviewRepository reviews;
     private final ProductRepository products;
     private final UserRepository users;
@@ -84,21 +94,27 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
      */
     private final com.sujula.service.money.MoneyLedger moneyLedger;
 
-    public BuyerOrderServiceImpl(OrderRepository orders, VendorOrderRepository vendorOrders,
+    public BuyerOrderServiceImpl(OrderRepository orders, PaymentRepository payments,
+                                 VendorOrderRepository vendorOrders,
                                  RefundRequestRepository refunds,
                                  OrderStatusHistoryRepository history,
                                  DeliveryRepository deliveries,
                                  DeliveryTrackingRepository deliveryTracking,
+                                 ShipmentRepository shipments,
+                                 CustodyEventRepository custodyEvents,
                                  ReviewRepository reviews, ProductRepository products,
                                  UserRepository users, PickupPointRepository pickupPoints,
                                  InvoiceService invoices,
                                  com.sujula.service.money.MoneyLedger moneyLedger) {
         this.orders = orders;
+        this.payments = payments;
         this.vendorOrders = vendorOrders;
         this.refunds = refunds;
         this.history = history;
         this.deliveries = deliveries;
         this.deliveryTracking = deliveryTracking;
+        this.shipments = shipments;
+        this.custodyEvents = custodyEvents;
         this.reviews = reviews;
         this.products = products;
         this.users = users;
@@ -170,7 +186,7 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
     @Transactional
     public BuyerOrderResponses.Cancelled cancel(Long userId, Long orderId,
                                                 BuyerOrderRequests.Cancel request) {
-        Order order = requireOwn(orderId, userId);
+        Order order = requireOwnForUpdate(orderId, userId);
 
         if (order.getStatus() == OrderStatus.CANCELLED) {
             // Cancelling twice is not an error. A retried tap should not fail.
@@ -229,7 +245,7 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
     public BuyerOrderResponses.Cancelled cancelVendorOrder(Long userId, Long orderId,
                                                            Long vendorOrderId,
                                                            BuyerOrderRequests.Cancel request) {
-        Order order = requireOwn(orderId, userId);
+        Order order = requireOwnForUpdate(orderId, userId);
         VendorOrder slice = requireSlice(order, vendorOrderId);
 
         if (isCancelled(slice)) {
@@ -318,7 +334,7 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
             Long userId, Long orderId, Long vendorOrderId,
             BuyerOrderRequests.ConfirmReceipt request) {
 
-        Order order = requireOwn(orderId, userId);
+        Order order = requireOwnForUpdate(orderId, userId);
         VendorOrder slice = requireSlice(order, vendorOrderId);
 
         if (slice.isReceiptConfirmed()) {
@@ -329,6 +345,35 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
         if (isCancelled(slice)) {
             throw new BadRequestException("Those items were cancelled, so there is nothing to receive.");
         }
+        if (order.getStatus() == OrderStatus.CANCELLED || order.getStatus() == OrderStatus.REFUNDED) {
+            throw new BadRequestException(
+                    "This order is " + order.getStatus() + ", so receipt cannot release funds.");
+        }
+        Payment payment = payments.findByOrderId(order.getId()).orElseThrow(() ->
+                new BadRequestException(
+                        "This order has no settled payment, so receipt cannot release funds."));
+        if (payment.getStatus() == PaymentStatus.REFUNDED
+                || payment.getStatus() == PaymentStatus.PARTIALLY_REFUNDED
+                || order.getPaymentStatus() == PaymentStatus.REFUNDED
+                || order.getPaymentStatus() == PaymentStatus.PARTIALLY_REFUNDED
+                || (order.getPayment() != null
+                    && (order.getPayment().getStatus() == PaymentStatus.REFUNDED
+                        || order.getPayment().getStatus() == PaymentStatus.PARTIALLY_REFUNDED))) {
+            throw new BadRequestException(
+                    "This payment has been refunded, so receipt cannot release funds.");
+        }
+        if (payment.getStatus() != PaymentStatus.PAID) {
+            throw new BadRequestException(
+                    "This payment is not paid, so receipt cannot release funds.");
+        }
+        if (refunds.existsByVendorOrderIdAndStatusIn(slice.getId(), RELEASE_BLOCKING_REFUNDS)) {
+            throw new BadRequestException(
+                    "A refund exists for these items, so receipt cannot release funds.");
+        }
+        if (slice.getDisputeFrozenAt() != null) {
+            throw new BadRequestException(
+                    "These items are disputed, so their funds must remain in escrow.");
+        }
         if (slice.isPreDispatch()) {
             // Confirming receipt of something nobody has sent would release funds
             // for goods still on a shelf.
@@ -336,44 +381,26 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
                     "Those items have not been dispatched yet, so they cannot have arrived.");
         }
 
+        requireDeliveredEvidence(order, slice);
+
         LocalDateTime now = LocalDateTime.now();
-        User confirmedBy = users.findById(userId).orElse(null);
-
-        // The status is the consequence, not the input. What actually happened
-        // is that a named, authenticated buyer stated the goods had arrived, so
-        // that statement is written into the custody trail first and the slice
-        // follows from it. Without this the chain shows a parcel reaching
-        // DELIVERED with nobody having handed it to anybody.
-        for (Delivery parcel : deliveries.findByOrderItemOrderId(order.getId())) {
-            if (parcel.getOrderItem() == null || parcel.getOrderItem().getVendorOrder() == null
-                    || !slice.getId().equals(parcel.getOrderItem().getVendorOrder().getId())) {
-                continue;
-            }
-            deliveryTracking.save(DeliveryTracking.builder()
-                    .delivery(parcel)
-                    .status(DeliveryStatus.DELIVERED)
-                    .description("Receipt confirmed by the buyer")
-                    .recordedBy(confirmedBy)
-                    .build());
-
-            if (parcel.getStatus() != DeliveryStatus.DELIVERED) {
-                parcel.setStatus(DeliveryStatus.DELIVERED);
-                parcel.setDeliveredAt(now);
-                parcel.setActualDeliveredAt(now);
-                deliveries.save(parcel);
-            }
-        }
-
-        slice.setReceiptConfirmedAt(now);
-        slice.setEscrowReleasedAt(now);
-        slice.setStatus(VendorOrderStatus.DELIVERED);
-        vendorOrders.save(slice);
 
         // The seller's money follows the parcel. Posting the sale here rather
         // than at checkout is what makes escrow real: until the buyer says the
         // goods arrived, there is nothing in the ledger to pay out.
         moneyLedger.postSale(slice);
-        moneyLedger.releaseEscrow(slice, now);
+        int released = moneyLedger.releaseEscrow(slice, now);
+        if (released == 0 && slice.getEscrowReleasedAt() == null) {
+            throw new BadRequestException(
+                    "Escrow could not be released for these items. Receipt was not confirmed.");
+        }
+
+        slice.setReceiptConfirmedAt(now);
+        if (slice.getEscrowReleasedAt() == null) {
+            slice.setEscrowReleasedAt(now);
+        }
+        slice.setStatus(VendorOrderStatus.DELIVERED);
+        vendorOrders.save(slice);
 
         log.info("[Order] Buyer {} confirmed receipt of slice {} — escrow released",
                 userId, slice.getId());
@@ -795,6 +822,48 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
     private Order requireOwn(Long orderId, Long userId) {
         return orders.findByIdAndCustomerId(orderId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+    }
+
+    private Order requireOwnForUpdate(Long orderId, Long userId) {
+        return orders.findByIdAndCustomerIdForUpdate(orderId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+    }
+
+    /**
+     * Shipment custody is authoritative when it exists. Only old slices without
+     * a shipment may use legacy delivery rows, and every line in that slice must
+     * already be delivered before a buyer can release money.
+     */
+    private void requireDeliveredEvidence(Order order, VendorOrder slice) {
+        Optional<Shipment> linked = shipments.findByVendorOrderId(slice.getId());
+        if (linked.isPresent()) {
+            Shipment shipment = linked.get();
+            boolean released = shipment.getStatus() == ShipmentStatus.DELIVERED
+                    && custodyEvents.existsByShipmentIdAndType(
+                            shipment.getId(), CustodyEventType.RELEASED);
+            if (!released) {
+                throw new BadRequestException(
+                        "This parcel has no verified recipient release, so receipt cannot be confirmed.");
+            }
+            return;
+        }
+
+        Set<Long> deliveredLines = deliveries.findByOrderItemOrderId(order.getId()).stream()
+                .filter(delivery -> delivery.getOrderItem() != null
+                        && delivery.getOrderItem().getVendorOrder() != null
+                        && slice.getId().equals(delivery.getOrderItem().getVendorOrder().getId())
+                        && delivery.getStatus() == DeliveryStatus.DELIVERED)
+                .map(Delivery::getOrderItem)
+                .map(OrderItem::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        boolean everyLineDelivered = slice.getItems() != null && !slice.getItems().isEmpty()
+                && slice.getItems().stream().allMatch(item -> item.getId() != null
+                        && deliveredLines.contains(item.getId()));
+        if (!everyLineDelivered) {
+            throw new BadRequestException(
+                    "These items have no pre-existing delivered evidence, so receipt cannot be confirmed.");
+        }
     }
 
     private static VendorOrder requireSlice(Order order, Long vendorOrderId) {

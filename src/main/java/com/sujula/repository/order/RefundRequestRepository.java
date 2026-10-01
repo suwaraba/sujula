@@ -30,6 +30,10 @@ public interface RefundRequestRepository extends JpaRepository<RefundRequest, Lo
 
     List<RefundRequest> findByOrderIdOrderByCreatedAtDesc(Long orderId);
 
+    /** A requested, approved or completed refund makes escrow release unsafe. */
+    boolean existsByVendorOrderIdAndStatusIn(Long vendorOrderId,
+                                             List<RefundRequestStatus> statuses);
+
     /** The queue an administrator works through. */
     @Query("SELECT r FROM RefundRequest r JOIN FETCH r.order JOIN FETCH r.vendorOrder "
          + "WHERE r.status = :status ORDER BY r.createdAt ASC")

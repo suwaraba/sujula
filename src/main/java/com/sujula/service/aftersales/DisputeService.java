@@ -6,7 +6,6 @@ import com.sujula.dto.request.aftersales.AfterSalesRequests;
 import com.sujula.dto.response.PagedResponse;
 import com.sujula.dto.response.aftersales.AfterSalesResponses;
 import com.sujula.model.aftersales.Dispute;
-import com.sujula.model.aftersales.ReturnRequest;
 import com.sujula.model.constant.DisputeReason;
 import com.sujula.model.constant.DisputeStatus;
 
@@ -57,6 +56,6 @@ public interface DisputeService {
      * service linking the two rows together — and because the freeze has to
      * happen here, in the one place that knows how to do all three parts of it.
      */
-    Dispute escalateFromReturn(Long userId, ReturnRequest returnRequest, String description,
+    Dispute escalateFromReturn(Long userId, Long returnRequestId, String description,
                                DisputeReason reason);
 }

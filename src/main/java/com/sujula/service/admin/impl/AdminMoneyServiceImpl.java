@@ -50,6 +50,7 @@ import com.sujula.repository.finance.PayoutBatchRepository;
 import com.sujula.repository.finance.ReportExportRepository;
 import com.sujula.repository.money.PayoutRepository;
 import com.sujula.repository.money.VendorLedgerEntryRepository;
+import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.RefundRequestRepository;
 import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.repository.user.BankAccountRepository;
@@ -119,6 +120,7 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
     private static final java.time.Duration EXPORT_TTL = java.time.Duration.ofHours(24);
 
     private final PaymentRepository payments;
+    private final OrderRepository orders;
     private final VendorOrderRepository vendorOrders;
     private final RefundRequestRepository refunds;
     private final VendorLedgerEntryRepository ledger;
@@ -141,7 +143,8 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
     @Value("${sujula.money.payout-floor:}")
     private String configuredFloor;
 
-    public AdminMoneyServiceImpl(PaymentRepository payments, VendorOrderRepository vendorOrders,
+    public AdminMoneyServiceImpl(PaymentRepository payments, OrderRepository orders,
+                                 VendorOrderRepository vendorOrders,
                                  RefundRequestRepository refunds,
                                  VendorLedgerEntryRepository ledger, VendorRepository vendors,
                                  PayoutRepository payouts, PayoutBatchRepository batches,
@@ -153,6 +156,7 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
                                  NotificationService notifications,
                                  com.sujula.repository.user.UserRepository users) {
         this.payments = payments;
+        this.orders = orders;
         this.vendorOrders = vendorOrders;
         this.refunds = refunds;
         this.ledger = ledger;
@@ -280,6 +284,11 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
     public AdminMoneyResponses.RefundMade refund(
             User staff, Long paymentId, AdminMoneyRequests.Refund request) {
 
+        // Parent first: receipt confirmation takes this same lock before it
+        // inspects the slice or ledger, so refund and release cannot both decide
+        // from stale preconditions.
+        orders.findByPaymentIdForUpdate(paymentId).orElseThrow(
+                () -> new ResourceNotFoundException("No such payment."));
         Payment payment = requirePayment(paymentId);
         if (!payment.isPaid() && payment.getStatus() != PaymentStatus.PARTIALLY_REFUNDED) {
             throw new BadRequestException(
