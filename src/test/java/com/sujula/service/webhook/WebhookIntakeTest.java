@@ -26,9 +26,12 @@ import com.sujula.model.user.User;
 import com.sujula.model.webhook.WebhookEvent;
 import com.sujula.repository.PaymentRepository;
 import com.sujula.repository.order.OrderRepository;
+import com.sujula.repository.order.OrderStatusHistoryRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.webhook.WebhookEventRepository;
 import com.sujula.service.NotificationService;
+import com.sujula.service.EmailService;
+import com.sujula.service.payment.PaymentSettlementService;
 
 import jakarta.persistence.EntityManager;
 
@@ -36,6 +39,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * What happens to a webhook between arriving and being acted on.
@@ -48,6 +54,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({WebhookIntake.class, WebhookProcessor.class, WebhookProperties.class,
+         PaymentSettlementService.class,
          WebhookRecorder.class, com.sujula.service.reference.CurrencyCatalogue.class,
          com.sujula.service.reference.ReferenceDataProperties.class,
          WebhookIntakeTest.Json.class})
@@ -70,10 +77,12 @@ class WebhookIntakeTest {
     @Autowired private WebhookEventRepository events;
     @Autowired private PaymentRepository payments;
     @Autowired private OrderRepository orders;
+    @Autowired private OrderStatusHistoryRepository history;
     @Autowired private UserRepository users;
     @Autowired private EntityManager entityManager;
 
     @MockitoBean private NotificationService notifications;
+    @MockitoBean private EmailService email;
 
     private Payment payment;
 
@@ -229,8 +238,44 @@ class WebhookIntakeTest {
 
         assertEquals(PaymentStatus.PAID,
                 payments.findById(payment.getId()).orElseThrow().getStatus());
+        assertEquals(OrderStatus.CONFIRMED,
+                orders.findById(payment.getOrder().getId()).orElseThrow().getStatus());
+        assertEquals(1, history.findByOrderIdOrderByChangedAtAsc(payment.getOrder().getId()).size());
         assertEquals(WebhookStatus.PROCESSED,
                 events.findById(accepted.eventRowId()).orElseThrow().getStatus());
+        verify(notifications, never()).send(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void stripeCompletedPaidUsesCanonicalSettlement() {
+        WebhookEvent event = stripe("evt_stripe_paid", "checkout.session.completed", "paid");
+
+        processor.runOne(event.getId());
+        entityManager.flush();
+
+        assertEquals(PaymentStatus.PAID,
+                payments.findById(payment.getId()).orElseThrow().getStatus());
+        assertEquals(OrderStatus.CONFIRMED,
+                orders.findById(payment.getOrder().getId()).orElseThrow().getStatus());
+        assertEquals(1, history.findByOrderIdOrderByChangedAtAsc(payment.getOrder().getId()).size());
+    }
+
+    @Test
+    void stripeCompletedUnpaidWaitsAndAsyncFailureUsesTheFailureTransition() {
+        WebhookEvent waiting = stripe("evt_stripe_wait", "checkout.session.completed", "unpaid");
+        processor.runOne(waiting.getId());
+        assertEquals(WebhookStatus.IGNORED, events.findById(waiting.getId()).orElseThrow().getStatus());
+        assertEquals(PaymentStatus.PENDING,
+                payments.findById(payment.getId()).orElseThrow().getStatus());
+
+        WebhookEvent failed = stripe("evt_stripe_failed",
+                "checkout.session.async_payment_failed", "unpaid");
+        processor.runOne(failed.getId());
+        entityManager.flush();
+
+        assertEquals(WebhookStatus.PROCESSED, events.findById(failed.getId()).orElseThrow().getStatus());
+        assertEquals(PaymentStatus.FAILED,
+                payments.findById(payment.getId()).orElseThrow().getStatus());
     }
 
     @Test
@@ -367,5 +412,18 @@ class WebhookIntakeTest {
         WebhookEvent stored = events.findById(accepted.eventRowId()).orElseThrow();
         assertEquals(WebhookStatus.PROCESSED, stored.getStatus());
         assertTrue(stored.getOutcome().contains("did not arrive"));
+    }
+
+    private WebhookEvent stripe(String eventId, String type, String paymentStatus) {
+        return events.saveAndFlush(WebhookEvent.builder()
+                .kind(WebhookKind.PSP).provider("stripe").eventId(eventId).eventType(type)
+                .status(WebhookStatus.RECEIVED).signatureValid(true)
+                .receivedAt(LocalDateTime.now())
+                .payload("{\"id\":\"" + eventId + "\",\"type\":\"" + type
+                        + "\",\"data\":{\"object\":{\"id\":\"cs_" + eventId
+                        + "\",\"currency\":\"eur\",\"amount_total\":10864,"
+                        + "\"payment_status\":\"" + paymentStatus
+                        + "\",\"metadata\":{\"reference\":\"PAY-HOOK-0001\"}}}}")
+                .build());
     }
 }

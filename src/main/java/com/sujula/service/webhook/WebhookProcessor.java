@@ -10,15 +10,21 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.sujula.model.constant.NotificationEvent;
+import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.constant.WebhookStatus;
+import com.sujula.model.order.Order;
 import com.sujula.model.order.Payment;
 import com.sujula.model.store.KycDocument;
 import com.sujula.model.webhook.WebhookEvent;
 import com.sujula.repository.PaymentRepository;
+import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.store.KycDocumentRepository;
 import com.sujula.repository.webhook.WebhookEventRepository;
 import com.sujula.service.NotificationService;
+import com.sujula.service.payment.PaymentSettlementService;
+import com.sujula.service.payment.ProviderPaymentTransitionPolicy;
+import com.sujula.service.payment.ProviderPaymentTransitionPolicy.Decision;
 import com.sujula.service.reference.CurrencyCatalogue;
 
 import lombok.extern.slf4j.Slf4j;
@@ -52,26 +58,32 @@ public class WebhookProcessor {
 
     private final WebhookEventRepository events;
     private final PaymentRepository payments;
+    private final OrderRepository orders;
     private final KycDocumentRepository kycDocuments;
     private final NotificationService notifications;
     private final ObjectMapper mapper;
     private final CurrencyCatalogue currencies;
+    private final PaymentSettlementService settlements;
 
     public WebhookProcessor(WebhookEventRepository events, PaymentRepository payments,
+                            OrderRepository orders,
                             KycDocumentRepository kycDocuments,
                             NotificationService notifications, ObjectMapper mapper,
-                            CurrencyCatalogue currencies) {
+                            CurrencyCatalogue currencies,
+                            PaymentSettlementService settlements) {
         this.events = events;
         this.payments = payments;
+        this.orders = orders;
         this.kycDocuments = kycDocuments;
         this.notifications = notifications;
         this.mapper = mapper;
         this.currencies = currencies;
+        this.settlements = settlements;
     }
 
     @Transactional
     public void runOne(Long eventRowId) {
-        WebhookEvent event = events.findById(eventRowId).orElse(null);
+        WebhookEvent event = events.findByIdForUpdate(eventRowId).orElse(null);
         if (event == null || !event.isPending()) {
             return;
         }
@@ -97,27 +109,62 @@ public class WebhookProcessor {
 
     private void handlePayment(WebhookEvent event, JsonNode body) {
         String type = lower(event.getEventType());
+        boolean failure = false;
         if ("stripe".equalsIgnoreCase(event.getProvider())) {
-            if (StripeEvents.awaitingFunds(type, body)) {
+            StripeEvents.Action action = StripeEvents.classify(type, body);
+            if (action == StripeEvents.Action.AWAITING_FUNDS) {
                 finish(event, WebhookStatus.IGNORED, null,
-                        "Checkout completed with the payment still pending. The money arrives as "
-                                + "checkout.session.async_payment_succeeded, which is what settles it.");
+                        "Checkout completed while payment was still pending; awaiting the asynchronous result.");
                 return;
             }
+            if (action == StripeEvents.Action.REFUND_EVIDENCE) {
+                finish(event, WebhookStatus.IGNORED, null,
+                        "Stripe refund evidence was recorded; this callback has not moved money.");
+                return;
+            }
+            if (action == StripeEvents.Action.IGNORE) {
+                finish(event, WebhookStatus.IGNORED, null,
+                        type == null
+                                ? "Stripe event type is missing; no financial action was taken."
+                                : "Unsupported Stripe event type " + event.getEventType()
+                                        + "; no financial action was taken.");
+                return;
+            }
+            failure = action == StripeEvents.Action.FAILURE;
             body = StripeEvents.flatten(body, mapper, currencies);
+        } else {
+            if (type == null) {
+                finish(event, WebhookStatus.IGNORED, null,
+                        "Payment event type is missing; no financial action was taken.");
+                return;
+            }
+            switch (type) {
+                case "payment.succeeded", "payment.paid", "payment.completed" -> failure = false;
+                case "payment.failed", "payment.declined" -> failure = true;
+                case "charge.refunded", "payment.refunded" -> {
+                    finish(event, WebhookStatus.IGNORED, null,
+                            "A refund event was recorded as evidence and has not moved anything.");
+                    return;
+                }
+                default -> {
+                    finish(event, WebhookStatus.IGNORED, null,
+                            "Nothing on this platform acts on \"" + event.getEventType() + "\".");
+                    return;
+                }
+            }
         }
         String reference = text(body, "reference", "transactionId", "transaction_id",
                 "paymentReference", "payment_reference");
         String providerId = text(body, "id", "paymentId", "payment_id", "intentId", "intent_id");
 
-        Payment payment = null;
+        Long orderId = null;
         if (reference != null) {
-            payment = payments.findByReference(reference).orElse(null);
+            orderId = payments.findOrderIdByReference(reference).orElse(null);
         }
-        if (payment == null && providerId != null) {
-            payment = payments.findByTransactionId(providerId).orElse(null);
+        if (orderId == null && providerId != null) {
+            orderId = payments.findOrderIdByTransactionId(providerId).orElse(null);
         }
-        if (payment == null) {
+        if (orderId == null) {
             // Not a failure. Providers send events for things this platform
             // never created, and recording "not ours" stops somebody later
             // assuming a missing effect was a bug.
@@ -127,33 +174,40 @@ public class WebhookProcessor {
             return;
         }
 
-        if (type != null && (type.contains("fail") || type.contains("declin"))) {
-            markFailed(event, payment, body);
-            return;
-        }
-        if (type != null && (type.contains("refund") || type.contains("charge.refund"))) {
-            // Refunds are decided here, not announced to us. A provider-initiated
-            // refund is recorded and flagged rather than applied: the platform's
-            // own refund path writes the ledger rows, and a webhook that moved
-            // money would bypass every one of them (C3).
-            finish(event, WebhookStatus.IGNORED, payment.getReference(),
-                    "A refund event was received. Refunds are recorded through the platform's own "
-                            + "refund path so the ledger rows are written — this event is kept as "
-                            + "evidence and has not moved anything.");
-            return;
-        }
-        if (type != null && !(type.contains("succe") || type.contains("paid")
-                              || type.contains("complet"))) {
-            finish(event, WebhookStatus.IGNORED, payment.getReference(),
-                    "Nothing on this platform acts on \"" + event.getEventType() + "\".");
+        Order order = orders.findByIdForPaymentUpdate(orderId).orElse(null);
+        Payment payment = order == null ? null
+                : payments.findByOrderIdForUpdate(orderId).orElse(null);
+        if (payment == null || (reference != null && !reference.equals(payment.getReference())
+                && (providerId == null || !providerId.equals(payment.getTransactionId())))) {
+            finish(event, WebhookStatus.IGNORED, reference,
+                    "The payment identity changed before it could be locked; no action was taken.");
             return;
         }
 
-        if (payment.isPaid()) {
+        if (order.getStatus() == OrderStatus.CANCELLED
+                || order.getStatus() == OrderStatus.REFUNDED) {
+            finish(event, WebhookStatus.IGNORED, payment.getReference(),
+                    "Order " + order.getOrderNumber() + " is " + order.getStatus()
+                            + "; the late provider event was retained without changing money state.");
+            return;
+        }
+
+        if (failure) {
+            applyFailure(event, payment, body);
+            return;
+        }
+        Decision decision = ProviderPaymentTransitionPolicy.decide(
+                payment.getStatus(), PaymentStatus.PAID);
+        if (decision == Decision.NO_OP) {
             // Already settled, by an earlier delivery of this event or by the
             // return from checkout. Not a failure and not a second credit.
             finish(event, WebhookStatus.PROCESSED, payment.getReference(),
                     "Already marked paid — nothing to do.");
+            return;
+        }
+        if (decision == Decision.REJECT) {
+            finish(event, WebhookStatus.IGNORED, payment.getReference(),
+                    "A success event cannot reopen payment state " + payment.getStatus() + ".");
             return;
         }
 
@@ -179,48 +233,38 @@ public class WebhookProcessor {
             return;
         }
 
-        payment.setStatus(PaymentStatus.PAID);
-        payment.setPaidAt(LocalDateTime.now());
         if (providerId != null && payment.getTransactionId() == null) {
             payment.setTransactionId(providerId);
         }
+        settlements.settle(payment, null, providerId, null);
         payments.save(payment);
 
-        if (payment.getOrder() != null) {
-            payment.getOrder().setPaymentStatus(PaymentStatus.PAID);
-            if (payment.getOrder().getPaidAt() == null) {
-                payment.getOrder().setPaidAt(LocalDateTime.now());
-            }
-            if (payment.getOrder().getCustomer() != null) {
-                notifications.send(payment.getOrder().getCustomer().getId(),
-                        "Payment received",
-                        "We have your payment for " + payment.getOrder().getOrderNumber()
-                                + ". The sellers have been told to start packing.",
-                        NotificationEvent.ORDER_UPDATE, payment.getOrder().getOrderNumber());
-            }
-        }
-
         finish(event, WebhookStatus.PROCESSED, payment.getReference(),
-                "Marked paid, at the amount and currency the payment was created for.");
+                "Applied the canonical paid settlement at the payment's amount and currency.");
     }
 
-    private void markFailed(WebhookEvent event, Payment payment, JsonNode body) {
+    private void applyFailure(WebhookEvent event, Payment payment, JsonNode body) {
         String reason = text(body, "failureReason", "failure_reason", "message", "reason");
-        if (payment.isPaid()) {
+        Decision decision = ProviderPaymentTransitionPolicy.decide(
+                payment.getStatus(), PaymentStatus.FAILED);
+        if (decision == Decision.NO_OP) {
+            finish(event, WebhookStatus.PROCESSED, payment.getReference(),
+                    "Payment was already failed; no duplicate transition was applied.");
+            return;
+        }
+        if (decision == Decision.REJECT) {
             // A failure event arriving after a success is out-of-order delivery,
             // which providers do. Un-paying an order on it would cancel goods
             // that are already being packed.
             finish(event, WebhookStatus.IGNORED, payment.getReference(),
-                    "A failure event arrived for a payment that is already settled — events can "
-                            + "arrive out of order, and nothing has been undone.");
+                    "A failure event cannot regress payment state " + payment.getStatus() + ".");
             return;
         }
         payment.setStatus(PaymentStatus.FAILED);
         payment.setFailureReason(reason == null ? "The provider reported a failure." : reason);
         payments.save(payment);
-        if (payment.getOrder() != null) {
-            payment.getOrder().setPaymentStatus(PaymentStatus.FAILED);
-        }
+        payment.getOrder().setPaymentStatus(PaymentStatus.FAILED);
+        orders.save(payment.getOrder());
         finish(event, WebhookStatus.PROCESSED, payment.getReference(),
                 "Marked failed: " + payment.getFailureReason());
     }
@@ -320,8 +364,13 @@ public class WebhookProcessor {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markFailed(Long eventRowId, String reason, int maxAttempts) {
-        events.findById(eventRowId).ifPresent(event -> {
-            boolean giveUp = event.getAttempts() >= maxAttempts;
+        events.findByIdForUpdate(eventRowId).ifPresent(event -> {
+            if (event.getStatus().isFinished()) {
+                return;
+            }
+            int attempts = event.getAttempts() + 1;
+            event.setAttempts(attempts);
+            boolean giveUp = attempts >= maxAttempts;
             event.setStatus(giveUp ? WebhookStatus.FAILED : WebhookStatus.RETRYING);
             event.setFailureReason(truncate(reason, 2000));
             if (giveUp) {

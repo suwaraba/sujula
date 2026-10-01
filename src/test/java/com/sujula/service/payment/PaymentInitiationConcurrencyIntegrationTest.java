@@ -43,7 +43,8 @@ import static org.mockito.Mockito.mock;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
-@Import({PaymentServiceImpl.class, PaymentInitiationConcurrencyIntegrationTest.Config.class})
+@Import({PaymentServiceImpl.class, PaymentSettlementService.class,
+         PaymentInitiationConcurrencyIntegrationTest.Config.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PaymentInitiationConcurrencyIntegrationTest {
 

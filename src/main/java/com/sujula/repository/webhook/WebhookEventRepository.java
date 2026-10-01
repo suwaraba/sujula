@@ -6,6 +6,7 @@ import java.util.Optional;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,7 +15,13 @@ import com.sujula.model.constant.WebhookKind;
 import com.sujula.model.constant.WebhookStatus;
 import com.sujula.model.webhook.WebhookEvent;
 
+import jakarta.persistence.LockModeType;
+
 public interface WebhookEventRepository extends JpaRepository<WebhookEvent, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT e FROM WebhookEvent e WHERE e.id = :id")
+    Optional<WebhookEvent> findByIdForUpdate(@Param("id") Long id);
 
     Optional<WebhookEvent> findByProviderAndEventId(String provider, String eventId);
 

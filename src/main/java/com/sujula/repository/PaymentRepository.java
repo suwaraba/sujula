@@ -25,6 +25,12 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     Optional<Payment> findByTransactionId(String transactionId);
 
+    @Query("SELECT p.order.id FROM Payment p WHERE p.reference = :reference")
+    Optional<Long> findOrderIdByReference(@Param("reference") String reference);
+
+    @Query("SELECT p.order.id FROM Payment p WHERE p.transactionId = :transactionId")
+    Optional<Long> findOrderIdByTransactionId(@Param("transactionId") String transactionId);
+
     boolean existsByReference(String reference);
 
     /**
@@ -38,10 +44,6 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM Payment p WHERE p.order.id = :orderId")
     Optional<Payment> findByOrderIdForUpdate(@Param("orderId") Long orderId);
-
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT p FROM Payment p WHERE p.transactionId = :transactionId")
-    Optional<Payment> findByTransactionIdForUpdate(@Param("transactionId") String transactionId);
 
     Page<Payment> findByStatus(PaymentStatus status, Pageable pageable);
 

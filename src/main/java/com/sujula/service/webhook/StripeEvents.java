@@ -20,7 +20,31 @@ import tools.jackson.databind.node.ObjectNode;
  */
 final class StripeEvents {
 
+    enum Action {
+        SUCCESS,
+        FAILURE,
+        AWAITING_FUNDS,
+        REFUND_EVIDENCE,
+        IGNORE
+    }
+
     private StripeEvents() {}
+
+    /** Exact supported event map. Unknown or missing types always fail closed. */
+    static Action classify(String eventType, JsonNode body) {
+        if (eventType == null) {
+            return Action.IGNORE;
+        }
+        return switch (eventType) {
+            case "checkout.session.completed" -> awaitingFunds(eventType, body)
+                    ? Action.AWAITING_FUNDS : Action.SUCCESS;
+            case "checkout.session.async_payment_succeeded" -> Action.SUCCESS;
+            case "checkout.session.async_payment_failed" -> Action.FAILURE;
+            case "checkout.session.expired" -> Action.IGNORE;
+            case "charge.refunded" -> Action.REFUND_EVIDENCE;
+            default -> Action.IGNORE;
+        };
+    }
 
     /**
      * What a completed checkout needs before it counts. A session can complete

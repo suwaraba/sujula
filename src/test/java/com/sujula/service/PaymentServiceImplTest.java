@@ -27,6 +27,7 @@ import com.sujula.service.impl.PaymentServiceImpl;
 import com.sujula.service.payment.PaymentGateway;
 import com.sujula.service.payment.PaymentOperation;
 import com.sujula.service.payment.PaymentProperties;
+import com.sujula.service.payment.PaymentSettlementService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -107,10 +108,12 @@ class PaymentServiceImplTest {
         ObjectProvider<PaymentGateway> noGateways = mock(ObjectProvider.class);
         when(noGateways.stream()).thenAnswer(invocation -> java.util.stream.Stream.empty());
 
-        service = new PaymentServiceImpl(paymentRepository, orderRepository, statusHistoryRepository,
+        PaymentSettlementService settlements = new PaymentSettlementService(
+                orderRepository, statusHistoryRepository, emailService, notificationService);
+        service = new PaymentServiceImpl(paymentRepository, orderRepository,
                 vendorOrderRepository, userRepository, vendorRepository,
-                emailService, notificationService, mock(AuditService.class),
-                properties, noGateways);
+                notificationService, mock(AuditService.class),
+                properties, noGateways, settlements);
 
         order = new Order();
         order.setId(7L);
@@ -159,10 +162,13 @@ class PaymentServiceImplTest {
     private PaymentServiceImpl serviceWith(PaymentGateway gateway) {
         ObjectProvider<PaymentGateway> gateways = mock(ObjectProvider.class);
         when(gateways.stream()).thenAnswer(invocation -> java.util.stream.Stream.of(gateway));
-        return new PaymentServiceImpl(paymentRepository, orderRepository, statusHistoryRepository,
+        EmailService email = mock(EmailService.class);
+        NotificationService notifications = mock(NotificationService.class);
+        PaymentSettlementService settlements = new PaymentSettlementService(
+                orderRepository, statusHistoryRepository, email, notifications);
+        return new PaymentServiceImpl(paymentRepository, orderRepository,
                 mock(VendorOrderRepository.class), userRepository, mock(VendorRepository.class),
-                mock(EmailService.class), mock(NotificationService.class), mock(AuditService.class),
-                properties, gateways);
+                notifications, mock(AuditService.class), properties, gateways, settlements);
     }
 
     @Test
@@ -549,7 +555,8 @@ class PaymentServiceImplTest {
         Payment paid = pending(PaymentMethod.CARD);
         paid.setTransactionId("pi_abc");
         paid.setStatus(PaymentStatus.PAID);
-        when(paymentRepository.findByTransactionIdForUpdate("pi_abc")).thenReturn(Optional.of(paid));
+        when(paymentRepository.findOrderIdByTransactionId("pi_abc")).thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(paid));
 
         PaymentResponse payment = service.handleCallback(PaymentCallbackRequest.builder()
                 .transactionId("pi_abc").status(PaymentStatus.PAID).build());
@@ -562,10 +569,81 @@ class PaymentServiceImplTest {
     void aCallbackClaimingTheWrongAmountIsRejected() {
         Payment pending = pending(PaymentMethod.CARD);
         pending.setTransactionId("pi_abc");
-        when(paymentRepository.findByTransactionIdForUpdate("pi_abc")).thenReturn(Optional.of(pending));
+        when(paymentRepository.findOrderIdByTransactionId("pi_abc")).thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending));
 
         assertThrows(BadRequestException.class, () -> service.handleCallback(PaymentCallbackRequest.builder()
                 .transactionId("pi_abc").status(PaymentStatus.PAID).amount(new BigDecimal("1.00")).build()));
+    }
+
+    @Test
+    void aValidPaidCallbackLocksOrderBeforePaymentAndUsesCanonicalSettlement() {
+        Payment pending = pending(PaymentMethod.CARD);
+        pending.setTransactionId("pi_paid");
+        when(paymentRepository.findOrderIdByTransactionId("pi_paid")).thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending));
+
+        PaymentResponse response = service.handleCallback(PaymentCallbackRequest.builder()
+                .transactionId("pi_paid").status(PaymentStatus.PAID)
+                .amount(new BigDecimal("1200.00")).build());
+
+        assertEquals(PaymentStatus.PAID, response.getStatus());
+        assertEquals(PaymentStatus.PAID, order.getPaymentStatus());
+        assertEquals(OrderStatus.CONFIRMED, order.getStatus());
+        verify(statusHistoryRepository, times(1)).save(any(OrderStatusHistory.class));
+        InOrder locks = inOrder(orderRepository, paymentRepository);
+        locks.verify(orderRepository).findByIdForPaymentUpdate(7L);
+        locks.verify(paymentRepository).findByOrderIdForUpdate(7L);
+    }
+
+    @Test
+    void aPaidPaymentCannotRegressOnALateFailureCallback() {
+        Payment paid = pending(PaymentMethod.CARD);
+        paid.setTransactionId("pi_late_failure");
+        paid.setStatus(PaymentStatus.PAID);
+        when(paymentRepository.findOrderIdByTransactionId("pi_late_failure"))
+                .thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(paid));
+
+        PaymentResponse response = service.handleCallback(PaymentCallbackRequest.builder()
+                .transactionId("pi_late_failure").status(PaymentStatus.FAILED).build());
+
+        assertEquals(PaymentStatus.PAID, response.getStatus());
+        verify(statusHistoryRepository, never()).save(any(OrderStatusHistory.class));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = PaymentStatus.class,
+            names = {"CANCELLED", "PARTIALLY_REFUNDED", "REFUNDED"})
+    void terminalPaymentsCannotBeReopenedBySuccess(PaymentStatus current) {
+        Payment terminal = pending(PaymentMethod.CARD);
+        terminal.setTransactionId("pi_terminal");
+        terminal.setStatus(current);
+        when(paymentRepository.findOrderIdByTransactionId("pi_terminal"))
+                .thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(terminal));
+
+        PaymentResponse response = service.handleCallback(PaymentCallbackRequest.builder()
+                .transactionId("pi_terminal").status(PaymentStatus.PAID).build());
+
+        assertEquals(current, response.getStatus());
+        verify(statusHistoryRepository, never()).save(any(OrderStatusHistory.class));
+    }
+
+    @Test
+    void aRefundCallbackCannotRefundMoneyThatWasNeverSettled() {
+        Payment pending = pending(PaymentMethod.CARD);
+        pending.setTransactionId("pi_unsettled_refund");
+        when(paymentRepository.findOrderIdByTransactionId("pi_unsettled_refund"))
+                .thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending));
+
+        PaymentResponse response = service.handleCallback(PaymentCallbackRequest.builder()
+                .transactionId("pi_unsettled_refund").status(PaymentStatus.REFUNDED)
+                .amount(new BigDecimal("1200.00")).build());
+
+        assertEquals(PaymentStatus.PENDING, response.getStatus());
+        assertEquals(0, BigDecimal.ZERO.compareTo(response.getAmountRefunded()));
     }
 
     // ── Who may take the money ───────────────────────────────────────────────

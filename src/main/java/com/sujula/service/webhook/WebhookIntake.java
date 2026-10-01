@@ -10,8 +10,6 @@ import java.util.Optional;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import com.sujula.model.constant.WebhookKind;
 import com.sujula.model.constant.WebhookStatus;
@@ -61,11 +59,10 @@ public class WebhookIntake {
     /**
      * Verifies and records one delivery.
      *
-     * <p>REQUIRES_NEW so the row survives a duplicate collision: the insert that
-     * loses the race rolls back its own transaction, and a caller sharing one
-     * would lose whatever else it had done.
+     * <p>The insert is delegated to {@link WebhookRecorder} on a REQUIRES_NEW
+     * boundary. A unique-key loser therefore rolls back before this method
+     * converts the collision into a duplicate acknowledgement.
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Accepted receive(WebhookKind kind, String rawProvider, byte[] body,
                             String signature, String timestamp) {
 
@@ -124,8 +121,7 @@ public class WebhookIntake {
                 .build();
 
         try {
-            events.save(event);
-            events.flush();
+            event = recorder.recordAccepted(event);
         } catch (DataIntegrityViolationException race) {
             // Two deliveries of the same event arrived at once. The constraint
             // decided which won, which is the whole reason it is a constraint

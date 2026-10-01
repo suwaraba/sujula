@@ -35,6 +35,18 @@ public class WebhookRecorder {
     }
 
     /**
+     * The insert has its own transaction so a unique-key loser is fully rolled
+     * back before intake converts that collision into a successful duplicate
+     * acknowledgement.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public WebhookEvent recordAccepted(WebhookEvent event) {
+        events.save(event);
+        events.flush();
+        return event;
+    }
+
+    /**
      * @return the stored row, or null when it could not be written — which is
      *         never a reason to fail the request. The refusal stands either way.
      */

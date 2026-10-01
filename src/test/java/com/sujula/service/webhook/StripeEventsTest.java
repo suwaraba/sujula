@@ -59,4 +59,32 @@ class StripeEventsTest {
         assertFalse(StripeEvents.awaitingFunds("checkout.session.completed",
                 completed("eur", 10800, "paid")));
     }
+
+    @Test
+    void supportedEventsAreMappedExactly() {
+        assertEquals(StripeEvents.Action.SUCCESS,
+                StripeEvents.classify("checkout.session.completed",
+                        completed("eur", 10800, "paid")));
+        assertEquals(StripeEvents.Action.AWAITING_FUNDS,
+                StripeEvents.classify("checkout.session.completed",
+                        completed("eur", 10800, "unpaid")));
+        assertEquals(StripeEvents.Action.SUCCESS,
+                StripeEvents.classify("checkout.session.async_payment_succeeded", mapper.createObjectNode()));
+        assertEquals(StripeEvents.Action.FAILURE,
+                StripeEvents.classify("checkout.session.async_payment_failed", mapper.createObjectNode()));
+        assertEquals(StripeEvents.Action.IGNORE,
+                StripeEvents.classify("checkout.session.expired", mapper.createObjectNode()));
+        assertEquals(StripeEvents.Action.REFUND_EVIDENCE,
+                StripeEvents.classify("charge.refunded", mapper.createObjectNode()));
+    }
+
+    @Test
+    void missingUnknownAndSubstringLookalikesFailClosed() {
+        assertEquals(StripeEvents.Action.IGNORE,
+                StripeEvents.classify(null, mapper.createObjectNode()));
+        assertEquals(StripeEvents.Action.IGNORE,
+                StripeEvents.classify("payment_intent.succeeded", mapper.createObjectNode()));
+        assertEquals(StripeEvents.Action.IGNORE,
+                StripeEvents.classify("checkout.session.completed.evil", mapper.createObjectNode()));
+    }
 }

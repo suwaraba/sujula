@@ -15,23 +15,23 @@ import com.sujula.model.constant.PaymentMethod;
 import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.constant.UserRole;
 import com.sujula.model.order.Order;
-import com.sujula.model.order.OrderStatusHistory;
 import com.sujula.model.order.Payment;
 import com.sujula.model.user.User;
 import com.sujula.repository.PaymentRepository;
 import com.sujula.repository.order.OrderRepository;
-import com.sujula.repository.order.OrderStatusHistoryRepository;
 import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.AuditService;
-import com.sujula.service.EmailService;
 import com.sujula.model.constant.NotificationEvent;
 import com.sujula.service.NotificationService;
 import com.sujula.service.PaymentService;
 import com.sujula.service.payment.PaymentGateway;
 import com.sujula.service.payment.PaymentProperties;
 import com.sujula.service.payment.PaymentOperation;
+import com.sujula.service.payment.PaymentSettlementService;
+import com.sujula.service.payment.ProviderPaymentTransitionPolicy;
+import com.sujula.service.payment.ProviderPaymentTransitionPolicy.Decision;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -79,38 +79,35 @@ public class PaymentServiceImpl implements PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final OrderRepository orderRepository;
-    private final OrderStatusHistoryRepository statusHistoryRepository;
     private final VendorOrderRepository vendorOrderRepository;
     private final UserRepository userRepository;
     private final VendorRepository vendorRepository;
-    private final EmailService emailService;
     private final NotificationService notificationService;
     private final AuditService auditService;
     private final PaymentProperties properties;
     private final ObjectProvider<PaymentGateway> gateways;
+    private final PaymentSettlementService settlements;
 
     public PaymentServiceImpl(PaymentRepository paymentRepository,
                               OrderRepository orderRepository,
-                              OrderStatusHistoryRepository statusHistoryRepository,
                               VendorOrderRepository vendorOrderRepository,
                               UserRepository userRepository,
                               VendorRepository vendorRepository,
-                              EmailService emailService,
                               NotificationService notificationService,
                               AuditService auditService,
                               PaymentProperties properties,
-                              ObjectProvider<PaymentGateway> gateways) {
+                              ObjectProvider<PaymentGateway> gateways,
+                              PaymentSettlementService settlements) {
         this.paymentRepository = paymentRepository;
         this.orderRepository = orderRepository;
-        this.statusHistoryRepository = statusHistoryRepository;
         this.vendorOrderRepository = vendorOrderRepository;
         this.userRepository = userRepository;
         this.vendorRepository = vendorRepository;
-        this.emailService = emailService;
         this.notificationService = notificationService;
         this.auditService = auditService;
         this.properties = properties;
         this.gateways = gateways;
+        this.settlements = settlements;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -467,7 +464,13 @@ public class PaymentServiceImpl implements PaymentService {
             throw new BadRequestException("status must not be null");
         }
 
-        Payment payment = paymentRepository.findByTransactionIdForUpdate(callback.getTransactionId())
+        Long orderId = paymentRepository.findOrderIdByTransactionId(callback.getTransactionId())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Payment", "no payment for transaction " + callback.getTransactionId()));
+        Order order = orderRepository.findByIdForPaymentUpdate(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+        Payment payment = paymentRepository.findByOrderIdForUpdate(orderId)
+                .filter(found -> callback.getTransactionId().equals(found.getTransactionId()))
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Payment", "no payment for transaction " + callback.getTransactionId()));
 
@@ -477,14 +480,25 @@ public class PaymentServiceImpl implements PaymentService {
             payment.setGatewayResponse(callback.getRawPayload());
         }
 
-        if (payment.getStatus() == callback.getStatus()) {
+        Decision decision = ProviderPaymentTransitionPolicy.decide(
+                payment.getStatus(), callback.getStatus());
+        if (decision == Decision.NO_OP) {
             log.info("[Payment] Duplicate callback ignored: {} already {}",
                     payment.getReference(), callback.getStatus());
             return PaymentResponse.from(paymentRepository.save(payment));
         }
-        if (payment.getStatus().isClosed() || payment.getStatus() == PaymentStatus.PARTIALLY_REFUNDED) {
+        if (decision == Decision.REJECT) {
             log.warn("[Payment] Late callback ({}) for {} which is already {} — ignored",
                     callback.getStatus(), payment.getReference(), payment.getStatus());
+            return PaymentResponse.from(paymentRepository.save(payment));
+        }
+
+        if ((callback.getStatus() == PaymentStatus.PAID
+                || callback.getStatus() == PaymentStatus.FAILED)
+                && UNPAYABLE_ORDER_STATUSES.contains(order.getStatus())) {
+            log.warn("[Payment] Callback ({}) for {} ignored because order {} is {}",
+                    callback.getStatus(), payment.getReference(), order.getOrderNumber(),
+                    order.getStatus());
             return PaymentResponse.from(paymentRepository.save(payment));
         }
 
@@ -682,27 +696,9 @@ public class PaymentServiceImpl implements PaymentService {
      * @param collectorUserId whoever confirmed it; null for a gateway callback
      */
     private void settle(Payment payment, Long collectorUserId, String collectionReference, String note) {
-        payment.setStatus(PaymentStatus.PAID);
-        payment.setPaidAt(LocalDateTime.now());
-        payment.setFailureReason(null);
-        if (collectionReference != null) {
-            payment.setCollectionReference(collectionReference);
-        }
-        if (note != null) {
-            payment.setNote(note);
-        }
-        if (collectorUserId != null) {
-            payment.setConfirmedBy(userRepository.findById(collectorUserId).orElse(null));
-        }
-
-        Order order = payment.getOrder();
-        order.setPaymentStatus(PaymentStatus.PAID);
-        order.setPaymentMethod(payment.getMethod());
-        order.setPaidAt(payment.getPaidAt());
-        orderRepository.save(order);
-
-        advanceOrderOnPayment(order, payment);
-        announceSettlement(order, payment);
+        User confirmer = collectorUserId == null ? null
+                : userRepository.findById(collectorUserId).orElse(null);
+        settlements.settle(payment, confirmer, collectionReference, note);
     }
 
     private void fail(Payment payment, String reason) {
@@ -751,46 +747,6 @@ public class PaymentServiceImpl implements PaymentService {
             order.setPaidAt(null);
         }
         orderRepository.save(order);
-    }
-
-    /**
-     * Moves a still-pending order to CONFIRMED now that its money is in.
-     *
-     * <p>Only from PENDING: an order paid in person is already SHIPPED or
-     * DELIVERED by the time the driver hands the cash in, and nothing about the
-     * payment should drag its fulfilment status backwards.
-     */
-    private void advanceOrderOnPayment(Order order, Payment payment) {
-        if (order.getStatus() != OrderStatus.PENDING) {
-            return;
-        }
-        OrderStatus from = order.getStatus();
-        order.setStatus(OrderStatus.CONFIRMED);
-        orderRepository.save(order);
-
-        statusHistoryRepository.save(OrderStatusHistory.builder()
-                .order(order)
-                .fromStatus(from)
-                .toStatus(OrderStatus.CONFIRMED)
-                .notes("Payment received via " + payment.getMethod().getDisplayName()
-                        + " (" + payment.getReference() + ")")
-                .build());
-    }
-
-    /** Best-effort buyer confirmation — never let a mail or notification failure undo a payment. */
-    private void announceSettlement(Order order, Payment payment) {
-        try {
-            String email = order.getContactEmail();
-            if (email != null && !email.isBlank()) {
-                emailService.sendOrderConfirmationEmail(email, order.getDisplayName(), order.getOrderNumber());
-            }
-        } catch (Exception ex) {
-            log.warn("[Payment] Could not email the payment confirmation for {}: {}",
-                    order.getOrderNumber(), ex.getMessage());
-        }
-        notifyBuyer(order, "Payment Received",
-                "We have received your " + payment.getMethod().getDisplayName().toLowerCase()
-                        + " payment for order " + order.getOrderNumber() + ".");
     }
 
     private void notifyBuyer(Order order, String title, String message) {
@@ -896,6 +852,8 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     private Payment requirePayment(Long orderId) {
+        orderRepository.findByIdForPaymentUpdate(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
         return paymentRepository.findByOrderIdForUpdate(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Payment", "no payment has been started for order " + orderId));
