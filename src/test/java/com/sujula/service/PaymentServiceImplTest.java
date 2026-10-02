@@ -689,29 +689,34 @@ class PaymentServiceImplTest {
     // ── Refunds ──────────────────────────────────────────────────────────────
 
     @Test
-    void aPartialRefundLeavesTheRestSettled() {
+    void aParentOnlyPartialRefundFailsClosedWithoutChangingPaymentOrOrder() {
         Payment paid = pending(PaymentMethod.CARD);
         paid.setStatus(PaymentStatus.PAID);
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(paid));
 
-        PaymentResponse payment = service.refund(7L,
-                RefundPaymentRequest.builder().amount(new BigDecimal("200.00")).reason("Damaged item").build(), null);
+        BadRequestException refused = assertThrows(BadRequestException.class, () -> service.refund(7L,
+                RefundPaymentRequest.builder().amount(new BigDecimal("200.00"))
+                        .reason("Damaged item").build(), null));
 
-        assertEquals(PaymentStatus.PARTIALLY_REFUNDED, payment.getStatus());
-        assertEquals(new BigDecimal("200.00"), payment.getAmountRefunded());
-        assertEquals(PaymentStatus.PARTIALLY_REFUNDED, order.getPaymentStatus());
+        assertTrue(refused.getMessage().contains("vendor sub-order"));
+        assertEquals(PaymentStatus.PAID, paid.getStatus());
+        assertEquals(BigDecimal.ZERO, paid.getAmountRefunded());
+        assertEquals(PaymentStatus.PENDING, order.getPaymentStatus());
+        verify(paymentRepository, never()).save(any(Payment.class));
     }
 
     @Test
-    void refundingEverythingClosesThePayment() {
+    void aParentOnlyFullRefundCannotInferASliceFromAMultiVendorPayment() {
         Payment paid = pending(PaymentMethod.CARD);
         paid.setStatus(PaymentStatus.PAID);
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(paid));
 
-        PaymentResponse payment = service.refund(7L, null, null);
+        BadRequestException refused = assertThrows(
+                BadRequestException.class, () -> service.refund(7L, null, null));
 
-        assertEquals(PaymentStatus.REFUNDED, payment.getStatus());
-        assertEquals(new BigDecimal("1200.00"), payment.getAmountRefunded());
+        assertTrue(refused.getMessage().contains("vendor sub-order"));
+        assertEquals(PaymentStatus.PAID, paid.getStatus());
+        verify(paymentRepository, never()).save(any(Payment.class));
     }
 
     @Test

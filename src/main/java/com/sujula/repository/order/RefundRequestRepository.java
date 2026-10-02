@@ -5,12 +5,15 @@ import com.sujula.model.order.RefundRequest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
+
+import jakarta.persistence.LockModeType;
 
 @Repository
 public interface RefundRequestRepository extends JpaRepository<RefundRequest, Long> {
@@ -40,4 +43,33 @@ public interface RefundRequestRepository extends JpaRepository<RefundRequest, Lo
     Page<RefundRequest> findByStatus(@Param("status") RefundRequestStatus status, Pageable pageable);
 
     boolean existsByReference(String reference);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM RefundRequest r WHERE r.id = :id")
+    Optional<RefundRequest> findByIdForUpdate(@Param("id") Long id);
+
+    @Query("SELECT r.order.id FROM RefundRequest r WHERE r.id = :id")
+    Optional<Long> findOrderIdById(@Param("id") Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<RefundRequest> findFirstByVendorOrderIdAndStatusInOrderByCreatedAtAsc(
+            Long vendorOrderId, List<RefundRequestStatus> statuses);
+
+    @Query("SELECT COALESCE(SUM(r.amount), 0) FROM RefundRequest r "
+         + "WHERE r.order.id = :orderId AND r.status IN :statuses")
+    java.math.BigDecimal sumDisplayByOrderAndStatusIn(
+            @Param("orderId") Long orderId,
+            @Param("statuses") List<RefundRequestStatus> statuses);
+
+    @Query("SELECT COALESCE(SUM(r.amount), 0) FROM RefundRequest r "
+         + "WHERE r.vendorOrder.id = :vendorOrderId AND r.status IN :statuses")
+    java.math.BigDecimal sumDisplayByVendorOrderAndStatusIn(
+            @Param("vendorOrderId") Long vendorOrderId,
+            @Param("statuses") List<RefundRequestStatus> statuses);
+
+    @Query("SELECT COALESCE(SUM(r.amountNative), 0) FROM RefundRequest r "
+         + "WHERE r.vendorOrder.id = :vendorOrderId AND r.status IN :statuses")
+    java.math.BigDecimal sumNativeByVendorOrderAndStatusIn(
+            @Param("vendorOrderId") Long vendorOrderId,
+            @Param("statuses") List<RefundRequestStatus> statuses);
 }

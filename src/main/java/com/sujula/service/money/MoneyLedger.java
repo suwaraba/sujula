@@ -177,7 +177,9 @@ public class MoneyLedger {
         LocalDateTime availability = availabilityOfSale(slice, at);
 
         List<VendorLedgerEntry> posted = new ArrayList<>();
-        if (refunded.signum() != 0) {
+        if (refunded.signum() != 0
+                && !entries.existsByVendorOrderIdAndTypeAndReference(
+                        slice.getId(), LedgerEntryType.REFUND, reference)) {
             posted.add(save(dated(slice, LedgerEntryType.REFUND, refunded.negate(), currency, at,
                     availability,
                     reason == null || reason.isBlank()
@@ -186,7 +188,9 @@ public class MoneyLedger {
                     reference)));
         }
         BigDecimal givenBack = round(commissionReversal, currency).abs();
-        if (givenBack.signum() != 0) {
+        if (givenBack.signum() != 0
+                && !entries.existsByVendorOrderIdAndTypeAndReference(
+                        slice.getId(), LedgerEntryType.COMMISSION_REVERSAL, reference)) {
             posted.add(save(dated(slice, LedgerEntryType.COMMISSION_REVERSAL, givenBack, currency, at,
                     availability,
                     "Commission returned on the refunded part of " + orderNumber(slice), reference)));

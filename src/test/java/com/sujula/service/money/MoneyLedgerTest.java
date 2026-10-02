@@ -287,6 +287,27 @@ class MoneyLedgerTest {
     }
 
     @Test
+    void replayingOneRefundReferencePostsEachFinancialEntryOnce() {
+        VendorOrder sale = slice("SJL-L-REFUND-ONCE", "GMD", "9700.00", "970.00");
+        ledger.postSale(sale);
+        entityManager.flush();
+
+        ledger.postRefund(sale, new BigDecimal("1000.00"), new BigDecimal("100.00"),
+                "RFN-ONCE", "Retry", LocalDateTime.now());
+        ledger.postRefund(sale, new BigDecimal("1000.00"), new BigDecimal("100.00"),
+                "RFN-ONCE", "Retry", LocalDateTime.now());
+        entityManager.flush();
+
+        List<com.sujula.model.money.VendorLedgerEntry> rows =
+                entries.findByVendorOrderIdOrderByOccurredAtAsc(sale.getId());
+        assertEquals(1, rows.stream().filter(entry -> entry.getType() == LedgerEntryType.REFUND)
+                .count());
+        assertEquals(1, rows.stream()
+                .filter(entry -> entry.getType() == LedgerEntryType.COMMISSION_REVERSAL)
+                .count());
+    }
+
+    @Test
     void refundingASaleThatIsStillHeldCancelsItInsideEscrow() {
         VendorOrder sale = slice("SJL-L-0017", "GMD", "9700.00", "970.00");
         ledger.postSale(sale);

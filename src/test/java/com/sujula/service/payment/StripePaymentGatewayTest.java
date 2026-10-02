@@ -186,6 +186,26 @@ class StripePaymentGatewayTest {
         server.verify();
     }
 
+    @Test
+    void refundUsesTheDurableRefundRequestIdentityAsItsStripeIdempotencyKey() {
+        server.expect(once(), requestTo(API_BASE + "/v1/refunds"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("Idempotency-Key", "refund-request-417"))
+                .andExpect(content().string(containsString("payment_intent=pi_PAID")))
+                .andExpect(content().string(containsString("amount=2500")))
+                .andRespond(withSuccess(
+                        "{\"id\":\"re_417\",\"amount\":2500,\"status\":\"succeeded\"}",
+                        APPLICATION_JSON));
+
+        PaymentGateway.GatewayRefund refunded = gateway.refund(
+                payment("pi_PAID"), new BigDecimal("25.00"), "Damaged",
+                "refund-request-417");
+
+        assertEquals("re_417", refunded.refundId());
+        assertEquals(new BigDecimal("25.00"), refunded.amount());
+        server.verify();
+    }
+
     private Payment payment(String transactionId) {
         Order order = new Order();
         order.setOrderNumber("SJL-TEST0001");

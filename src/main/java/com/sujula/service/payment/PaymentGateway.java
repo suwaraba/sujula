@@ -67,7 +67,8 @@ public interface PaymentGateway {
      *
      * @throws UnsupportedOperationException when the provider cannot refund programmatically
      */
-    default GatewayRefund refund(Payment payment, BigDecimal amount, String reason) {
+    default GatewayRefund refund(Payment payment, BigDecimal amount, String reason,
+                                 String providerOperationKey) {
         throw new UnsupportedOperationException(
                 name() + " does not support programmatic refunds; refund it in the provider dashboard "
                         + "and record it here afterwards");

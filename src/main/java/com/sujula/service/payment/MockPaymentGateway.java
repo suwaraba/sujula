@@ -110,9 +110,14 @@ public class MockPaymentGateway implements PaymentGateway {
     }
 
     @Override
-    public GatewayRefund refund(Payment payment, BigDecimal amount, String reason) {
-        String refundId = "MOCKREF-" + UUID.randomUUID().toString().replace("-", "")
-                .substring(0, 16).toUpperCase(Locale.ROOT);
+    public GatewayRefund refund(Payment payment, BigDecimal amount, String reason,
+                                String providerOperationKey) {
+        if (providerOperationKey == null || providerOperationKey.isBlank()) {
+            throw new IllegalArgumentException("A refund needs a stable provider operation key");
+        }
+        String refundId = "MOCKREF-" + UUID.nameUUIDFromBytes(
+                        providerOperationKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .toString().replace("-", "").substring(0, 16).toUpperCase(Locale.ROOT);
 
         log.warn("[Payment] MOCK gateway returning {} {} for {} without moving anything (refund {})",
                 amount, payment.getCurrency(), payment.getReference(), refundId);

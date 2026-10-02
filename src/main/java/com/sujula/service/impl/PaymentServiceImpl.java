@@ -595,49 +595,9 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional
     public PaymentResponse refund(Long orderId, RefundPaymentRequest request, Long adminUserId) {
-        Payment payment = requirePayment(orderId);
-        if (payment.getStatus() != PaymentStatus.PAID && payment.getStatus() != PaymentStatus.PARTIALLY_REFUNDED) {
-            throw new BadRequestException(
-                    "Only a settled payment can be refunded. This one is " + payment.getStatus());
-        }
-
-        BigDecimal refundable = payment.getRefundableAmount();
-        BigDecimal amount = (request != null && request.getAmount() != null)
-                ? request.getAmount().setScale(2, RoundingMode.HALF_UP)
-                : refundable;
-        if (amount.signum() <= 0) {
-            throw new BadRequestException("Refund amount must be positive");
-        }
-        if (amount.compareTo(refundable) > 0) {
-            throw new BadRequestException("Refund of " + amount + " " + payment.getCurrency()
-                    + " exceeds the refundable balance of " + refundable + " " + payment.getCurrency());
-        }
-
-        // Online methods can return the money through the provider; everything
-        // else is settled outside the platform, so we only record what happened.
-        if (payment.getMethod().requiresGateway()) {
-            Optional<PaymentGateway> gateway = gatewayFor(payment.getMethod());
-            if (gateway.isPresent()) {
-                try {
-                    PaymentGateway.GatewayRefund result = gateway.get().refund(
-                            payment, amount, request != null ? request.getReason() : null);
-                    payment.setGatewayResponse(result.rawResponse());
-                } catch (UnsupportedOperationException ex) {
-                    log.warn("[Payment] {} cannot refund {} programmatically — recording the refund only: {}",
-                            gateway.get().name(), payment.getReference(), ex.getMessage());
-                }
-            }
-        }
-
-        applyRefund(payment, amount, request != null ? request.getReason() : null, adminUserId);
-        Payment saved = paymentRepository.save(payment);
-        auditPayment(AuditAction.PAYMENT_REFUNDED, saved,
-                amount + " " + saved.getCurrency() + " refunded, leaving the payment " + saved.getStatus(),
-                request != null ? request.getReason() : null);
-        notifyBuyer(saved.getOrder(), "Refund Processed",
-                "A refund of " + amount + " " + saved.getCurrency() + " for order "
-                        + saved.getOrder().getOrderNumber() + " has been processed.");
-        return PaymentResponse.from(saved);
+        throw new BadRequestException(
+                "Order-level refunds are retired. Refund an explicitly identified vendor sub-order "
+                        + "through the canonical admin refund workflow.");
     }
 
     // ─────────────────────────────────────────────────────────────────────────

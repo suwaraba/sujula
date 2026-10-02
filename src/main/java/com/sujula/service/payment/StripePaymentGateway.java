@@ -160,7 +160,8 @@ public class StripePaymentGateway implements PaymentGateway {
     }
 
     @Override
-    public GatewayRefund refund(Payment payment, BigDecimal amount, String reason) {
+    public GatewayRefund refund(Payment payment, BigDecimal amount, String reason,
+                                String providerOperationKey) {
         String intent = paymentIntentOf(payment);
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("payment_intent", intent);
@@ -170,12 +171,10 @@ public class StripePaymentGateway implements PaymentGateway {
         if (reason != null && !reason.isBlank()) {
             form.add("metadata[note]", reason.length() > 450 ? reason.substring(0, 450) : reason);
         }
-        // Keyed on what had been refunded before this one, so a retry of the same
-        // refund is the same request to Stripe and a second, later refund is not.
-        String key = "refund-" + payment.getReference() + "-"
-                + (payment.getAmountRefunded() == null ? "0" : payment.getAmountRefunded().toPlainString())
-                + "-" + amount.toPlainString();
-        JsonNode refund = post("/v1/refunds", form, key);
+        if (providerOperationKey == null || providerOperationKey.isBlank()) {
+            throw new IllegalArgumentException("A refund needs a stable provider operation key");
+        }
+        JsonNode refund = post("/v1/refunds", form, providerOperationKey);
         return new GatewayRefund(refund.path("id").asString(),
                 fromMinor(refund.path("amount").asLong(), payment.getCurrency()), refund.toString());
     }

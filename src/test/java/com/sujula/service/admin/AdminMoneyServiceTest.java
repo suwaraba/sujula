@@ -52,6 +52,7 @@ import com.sujula.service.money.FxSpreadRegistry;
 import com.sujula.service.money.MoneyLedger;
 import com.sujula.service.reference.CurrencyCatalogue;
 import com.sujula.service.reference.ReferenceDataProperties;
+import com.sujula.service.refund.RefundCoordinator;
 import com.sujula.service.security.StepUpVerifier;
 
 import jakarta.persistence.EntityManager;
@@ -63,9 +64,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * The platform's money.
@@ -113,6 +116,7 @@ class AdminMoneyServiceTest {
     @MockitoBean private StepUpVerifier stepUp;
     @MockitoBean private NotificationService notifications;
     @MockitoBean private ExchangeRateService exchangeRates;
+    @MockitoBean private RefundCoordinator refundCoordinator;
 
     private User operator;
     private User second;
@@ -196,115 +200,47 @@ class AdminMoneyServiceTest {
     // ── Refunds ──────────────────────────────────────────────────────────────
 
     @Test
-    void aRefundNamesASubOrderAndGivesBackWhatThatSellerWasPaid() {
+    void adminRefundDelegatesEveryMoneyDecisionToTheCanonicalCoordinator() {
+        LocalDateTime rateAt = LocalDateTime.now().minusDays(3);
+        when(refundCoordinator.execute(any())).thenReturn(
+                new RefundCoordinator.RefundResult(44L, "RFD-44", slice.getId(),
+                        "Kombo Electronics", new BigDecimal("108.64"), "EUR",
+                        new BigDecimal("9700.00"), "GMD", new BigDecimal("0.01120000"),
+                        rateAt, false, true));
+        AdminMoneyRequests.Refund request = new AdminMoneyRequests.Refund(
+                slice.getId(), null, null, "Handset arrived cracked.", null, null);
+
         AdminMoneyResponses.RefundMade made = money.refund(operator, payment.getId(),
-                new AdminMoneyRequests.Refund(slice.getId(), null, null,
-                        "Handset arrived cracked.", null, null));
+                request);
 
         assertEquals(new BigDecimal("9700.00"), made.amountNative());
         assertEquals("GMD", made.nativeCurrency());
         assertEquals(new BigDecimal("108.64"), made.amount());
         assertEquals("EUR", made.currency());
-        // The whole payment was 132.16 across the order. Refunding this seller's
-        // part gives back 108.64, not a proportion of 132.16 (C3).
-        assertTrue(made.amount().compareTo(payment.getAmount()) < 0);
-    }
-
-    @Test
-    void aRefundIsConvertedAtTheOrdersOwnRateRatherThanTodays() {
-        AdminMoneyResponses.RefundMade made = money.refund(operator, payment.getId(),
-                new AdminMoneyRequests.Refund(slice.getId(), null, null, "Cracked.", null, null));
-
         assertEquals(new BigDecimal("0.01120000"), made.fxRate());
-        assertNotNull(made.fxRateAt());
-        // Nothing in the refund path reads a rate table. Had it done so, this
-        // test would pass today and fail the morning the rate moved.
-        verify(exchangeRates, never()).getLatestRates(anyString(), org.mockito.ArgumentMatchers.any());
+        assertEquals(rateAt, made.fxRateAt());
+
+        org.mockito.ArgumentCaptor<RefundCoordinator.RefundCommand> command =
+                org.mockito.ArgumentCaptor.forClass(RefundCoordinator.RefundCommand.class);
+        verify(refundCoordinator).execute(command.capture());
+        assertEquals(operator, command.getValue().staff());
+        assertEquals(payment.getId(), command.getValue().paymentId());
+        assertEquals(slice.getId(), command.getValue().vendorOrderId());
+        assertTrue(command.getValue().fullRefund());
+        assertEquals("Handset arrived cracked.", command.getValue().reason());
     }
 
     @Test
-    void aPartialRefundWithOnlyOneOfItsTwoAmountsIsRefused() {
+    void coordinatorRefusalPropagatesWithoutFallbackRefundArithmetic() {
+        when(refundCoordinator.execute(any()))
+                .thenThrow(new BadRequestException("same-currency amounts must match"));
+
         BadRequestException refused = assertThrows(BadRequestException.class,
                 () -> money.refund(operator, payment.getId(),
-                        new AdminMoneyRequests.Refund(slice.getId(),
-                                new BigDecimal("50.00"), null, "Half.", null, null)));
-        // Working the other half out here would use today's rate, and the buyer
-        // would get back a different number from the one they paid.
-        assertTrue(refused.getMessage().contains("today's exchange rate"));
-    }
+                        new AdminMoneyRequests.Refund(slice.getId(), BigDecimal.ONE,
+                                BigDecimal.TEN, "Wrong.", null, null)));
 
-    @Test
-    void twoAmountsThatDoNotAgreeAtTheOrdersRateAreRefused() {
-        BadRequestException refused = assertThrows(BadRequestException.class,
-                () -> money.refund(operator, payment.getId(),
-                        new AdminMoneyRequests.Refund(slice.getId(),
-                                new BigDecimal("90.00"), new BigDecimal("1000.00"),
-                                "Typed wrong.", null, null)));
-        assertTrue(refused.getMessage().contains("do not agree"));
-    }
-
-    @Test
-    void refundingMoreThanTheSellerWasEverPaidIsRefused() {
-        money.refund(operator, payment.getId(),
-                new AdminMoneyRequests.Refund(slice.getId(), null, null, "All of it.", null, null));
-        entityManager.flush();
-
-        assertTrue(assertThrows(BadRequestException.class,
-                () -> money.refund(operator, payment.getId(),
-                        new AdminMoneyRequests.Refund(slice.getId(),
-                                new BigDecimal("11.20"), new BigDecimal("1000.00"),
-                                "Again.", null, null)))
-                .getMessage().contains("more than the seller was ever paid"));
-    }
-
-    @Test
-    void aRefundReturnsTheCommissionAsItsOwnRowRatherThanNettingIt() {
-        money.refund(operator, payment.getId(),
-                new AdminMoneyRequests.Refund(slice.getId(), null, null, "Cracked.", null, null));
-        entityManager.flush();
-
-        List<com.sujula.model.money.VendorLedgerEntry> rows =
-                ledger.findByVendorOrderIdOrderByOccurredAtAsc(slice.getId());
-
-        assertTrue(rows.stream().anyMatch(r -> r.getType() == LedgerEntryType.REFUND));
-        // A seller checking a refund is specifically looking to see they were
-        // not charged commission on a sale that did not happen.
-        assertTrue(rows.stream().anyMatch(r -> r.getType() == LedgerEntryType.COMMISSION_REVERSAL),
-                "the commission comes back as a line of its own");
-    }
-
-    @Test
-    void asmallRefundDoesNotDemandThePasswordAndALargeOneDoes() {
-        money.refund(operator, payment.getId(),
-                new AdminMoneyRequests.Refund(slice.getId(), null, null, "Cracked.", null, null));
-        // 108.64 EUR is below the threshold: an agent settling a dozen small
-        // complaints who retypes a password each time ends up with it on a
-        // sticky note, which is worse than the risk.
-        verify(stepUp, never()).verify(org.mockito.ArgumentMatchers.any(), anyString(),
-                org.mockito.ArgumentMatchers.any(), anyString());
-    }
-
-    @Test
-    void aSubOrderFromAnotherPaymentIsNotFoundRatherThanRefused() {
-        Order other = orders.save(Order.builder()
-                .orderNumber("SJL-MONEY-0002").customer(order.getCustomer())
-                .status(OrderStatus.PROCESSING).paymentStatus(PaymentStatus.PAID)
-                .currency("EUR").subtotal(BigDecimal.TEN).total(BigDecimal.TEN)
-                .billingCountry("ES").shippingCountry("GM").build());
-        VendorOrder elsewhere = vendorOrders.save(VendorOrder.builder()
-                .order(other).vendor(kombo).status(VendorOrderStatus.PENDING)
-                .nativeCurrency("GMD")
-                .subtotalNative(BigDecimal.TEN).totalNative(BigDecimal.TEN)
-                .subtotal(BigDecimal.TEN).total(BigDecimal.TEN)
-                .build());
-        entityManager.flush();
-
-        // Not found, not forbidden: confirming it exists tells the caller
-        // something about an order that is not the one they are looking at.
-        assertThrows(com.sujula.exceptions.ResourceNotFoundException.class,
-                () -> money.refund(operator, payment.getId(),
-                        new AdminMoneyRequests.Refund(elsewhere.getId(), null, null,
-                                "Wrong one.", null, null)));
+        assertEquals("same-currency amounts must match", refused.getMessage());
     }
 
     // ── Ledger ───────────────────────────────────────────────────────────────

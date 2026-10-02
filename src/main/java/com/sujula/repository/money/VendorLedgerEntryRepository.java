@@ -25,6 +25,9 @@ import com.sujula.model.money.VendorLedgerEntry;
 @Repository
 public interface VendorLedgerEntryRepository extends JpaRepository<VendorLedgerEntry, Long> {
 
+    boolean existsByVendorOrderIdAndTypeAndReference(
+            Long vendorOrderId, LedgerEntryType type, String reference);
+
     /**
      * Every ledger row raised by one order, across all its sellers.
      *

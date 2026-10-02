@@ -37,7 +37,6 @@ import com.sujula.model.finance.ReportExport;
 import com.sujula.model.money.FxSnapshot;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.Payment;
-import com.sujula.model.order.RefundRequest;
 import com.sujula.model.order.VendorOrder;
 import com.sujula.model.user.BankAccount;
 import com.sujula.model.user.Payout;
@@ -62,6 +61,7 @@ import com.sujula.service.admin.AdminMoneyService;
 import com.sujula.service.money.FxSpreadRegistry;
 import com.sujula.service.money.MoneyLedger;
 import com.sujula.service.reference.CurrencyCatalogue;
+import com.sujula.service.refund.RefundCoordinator;
 import com.sujula.service.security.StepUpVerifier;
 
 import lombok.extern.slf4j.Slf4j;
@@ -104,8 +104,6 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
      * with the password on a sticky note, and that is worse than the risk it was
      * guarding against.
      */
-    private static final BigDecimal REFUND_STEP_UP_ABOVE = new BigDecimal("5000.00");
-
     /** A transfer costs a fee whatever it carries. Below this it costs more than it moves. */
     private static final BigDecimal DEFAULT_PAYOUT_FLOOR = new BigDecimal("500.00");
 
@@ -139,6 +137,7 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
     private final AuditService audit;
     private final NotificationService notifications;
     private final com.sujula.repository.user.UserRepository users;
+    private final RefundCoordinator refundCoordinator;
 
     @Value("${sujula.money.payout-floor:}")
     private String configuredFloor;
@@ -154,7 +153,8 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
                                  ExchangeRateService exchangeRates, CurrencyCatalogue currencies,
                                  StepUpVerifier stepUp, AuditService audit,
                                  NotificationService notifications,
-                                 com.sujula.repository.user.UserRepository users) {
+                                 com.sujula.repository.user.UserRepository users,
+                                 RefundCoordinator refundCoordinator) {
         this.payments = payments;
         this.orders = orders;
         this.vendorOrders = vendorOrders;
@@ -175,6 +175,7 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
         this.audit = audit;
         this.notifications = notifications;
         this.users = users;
+        this.refundCoordinator = refundCoordinator;
     }
 
     // ── Payments ─────────────────────────────────────────────────────────────
@@ -283,213 +284,18 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
     @Transactional
     public AdminMoneyResponses.RefundMade refund(
             User staff, Long paymentId, AdminMoneyRequests.Refund request) {
-
-        // Parent first: receipt confirmation takes this same lock before it
-        // inspects the slice or ledger, so refund and release cannot both decide
-        // from stale preconditions.
-        orders.findByPaymentIdForUpdate(paymentId).orElseThrow(
-                () -> new ResourceNotFoundException("No such payment."));
-        Payment payment = requirePayment(paymentId);
-        if (!payment.isPaid() && payment.getStatus() != PaymentStatus.PARTIALLY_REFUNDED) {
-            throw new BadRequestException(
-                    "That payment is " + payment.getStatus() + ". There is nothing to give back "
-                            + "until money has actually been taken.");
-        }
-
-        VendorOrder slice = vendorOrders.findById(request.vendorOrderId()).orElseThrow(
-                () -> new ResourceNotFoundException("No such sub-order."));
-        if (slice.getOrder() == null || payment.getOrder() == null
-                || !slice.getOrder().getId().equals(payment.getOrder().getId())) {
-            // Not found rather than forbidden: confirming the sub-order exists
-            // tells the caller something about an order that is not theirs.
-            throw new ResourceNotFoundException("No such sub-order on this payment.");
-        }
-
-        String nativeCurrency = slice.getNativeCurrency();
-        FxSnapshot fx = slice.getFx();
-        String displayCurrency = fx != null && fx.getDisplayCurrency() != null
-                ? fx.getDisplayCurrency() : payment.getCurrency();
-
-        Amounts amounts = resolveRefundAmounts(slice, request, nativeCurrency, displayCurrency, fx);
-
-        BigDecimal alreadyNative = refundedNativeFor(slice);
-        BigDecimal sliceTotalNative = slice.getTotalNative() == null
-                ? BigDecimal.ZERO : slice.getTotalNative();
-        if (alreadyNative.add(amounts.nativeAmount()).compareTo(sliceTotalNative) > 0) {
-            throw new BadRequestException(String.format(
-                    "That sub-order is worth %s %s and %s has already gone back. Refunding %s more "
-                            + "would return more than the seller was ever paid.",
-                    sliceTotalNative, nativeCurrency, alreadyNative, amounts.nativeAmount()));
-        }
-
-        // Above the threshold, the administrator's own password. An admin session
-        // left open on a desk must not be able to move a large sum on its own.
-        boolean stepUpRequired = amounts.displayAmount().compareTo(REFUND_STEP_UP_ABOVE) > 0;
-        if (stepUpRequired) {
-            stepUp.verify(staff, request.password(), request.totpCode(),
-                    "refunding " + amounts.displayAmount() + " " + displayCurrency);
-        }
-
-        RefundRequest record = RefundRequest.builder()
-                .reference(reference("RFD"))
-                .order(slice.getOrder())
-                .vendorOrder(slice)
-                .requestedBy(staff)
-                .status(RefundRequestStatus.APPROVED)
-                .amount(amounts.displayAmount())
-                .currency(displayCurrency)
-                .amountNative(amounts.nativeAmount())
-                .fx(fx)
-                .reason(request.reason())
-                .decidedBy(staff)
-                .decidedAt(LocalDateTime.now())
-                .decisionNote("Refunded by " + staff.getEmail())
-                .paymentId(payment.getId())
-                // Set by hand: the column is NOT NULL and the entity carries no
-                // creation timestamp, so every caller states it. The other two
-                // refund paths do the same.
-                .createdAt(LocalDateTime.now())
-                .build();
-        refunds.save(record);
-
-        // The commission on refunded goods goes back to the seller, as its own
-        // row rather than netted in: a seller checking a refund is specifically
-        // looking to see they were not charged commission on a sale that did not
-        // happen.
-        BigDecimal commissionBack = commissionShareOf(slice, amounts.nativeAmount(), nativeCurrency);
-        money.postRefund(slice, amounts.nativeAmount(), commissionBack, record.getReference(),
-                request.reason(), LocalDateTime.now());
-
-        BigDecimal refundedSoFar = (payment.getAmountRefunded() == null
-                ? BigDecimal.ZERO : payment.getAmountRefunded()).add(amounts.displayAmount());
-        payment.setAmountRefunded(refundedSoFar);
-        payment.setStatus(refundedSoFar.compareTo(payment.getAmount()) >= 0
-                ? PaymentStatus.REFUNDED : PaymentStatus.PARTIALLY_REFUNDED);
-        if (payment.getRefundedAt() == null) {
-            payment.setRefundedAt(LocalDateTime.now());
-        }
-        payments.save(payment);
-
-        audit.record(AuditAction.PAYMENT_REFUNDED, "PAYMENT", payment.getId(),
-                payment.getReference(),
-                staff.getEmail() + " refunded " + amounts.displayAmount() + " " + displayCurrency
-                        + " (" + amounts.nativeAmount() + " " + nativeCurrency + ") on sub-order "
-                        + slice.getId() + (stepUpRequired ? ", with step-up" : ""),
-                request.reason());
-
-        notifyRefund(slice, amounts, displayCurrency, nativeCurrency, request.reason());
-
+        RefundCoordinator.RefundResult result = refundCoordinator.execute(
+                new RefundCoordinator.RefundCommand(staff, paymentId, request.vendorOrderId(),
+                        request.amount(), request.amountNative(), request.isFullRefund(),
+                        request.reason(), request.password(), request.totpCode()));
         return new AdminMoneyResponses.RefundMade(
-                record.getId(), record.getReference(), slice.getId(),
-                slice.getVendor() == null ? null : slice.getVendor().getStoreName(),
-                amounts.displayAmount(), displayCurrency,
-                amounts.nativeAmount(), nativeCurrency,
-                fx == null ? null : fx.getRate(), fx == null ? null : fx.getRateAt(),
-                stepUpRequired,
-                (request.isFullRefund() ? "The whole sub-order has gone back. "
-                                        : "A partial refund has gone back. ")
-                        + "Converted at the rate this order was placed at"
-                        + (fx == null || fx.getRateAt() == null ? "" : " on " + fx.getRateAt().toLocalDate())
-                        + ", not today's — the buyer gets back what they paid.");
-    }
-
-    /** What is going back, in both currencies, and never re-converted. */
-    private record Amounts(BigDecimal nativeAmount, BigDecimal displayAmount) {}
-
-    private Amounts resolveRefundAmounts(VendorOrder slice, AdminMoneyRequests.Refund request,
-                                         String nativeCurrency, String displayCurrency,
-                                         FxSnapshot fx) {
-        if (request.isFullRefund()) {
-            return new Amounts(
-                    currencies.round(orZero(slice.getTotalNative()), nativeCurrency),
-                    currencies.round(orZero(slice.getTotal()), displayCurrency));
-        }
-        if (request.amount() == null || request.amountNative() == null) {
-            // Deriving the missing half would mean converting, and converting
-            // means reading a rate — today's rate, which is not the rate this
-            // order was placed at. The caller is asked for both so the pair is
-            // explicit and checkable rather than silently re-priced.
-            throw new BadRequestException(
-                    "Send both amounts or neither. A partial refund has a figure in the buyer's "
-                            + "currency and a figure in the seller's, and working one out from the "
-                            + "other here would use today's exchange rate rather than the one this "
-                            + "order was placed at — which is how a buyer gets back a different "
-                            + "number from the one they paid.");
-        }
-
-        BigDecimal nativeAmount = currencies.round(request.amountNative(), nativeCurrency);
-        BigDecimal displayAmount = currencies.round(request.amount(), displayCurrency);
-
-        // The two halves have to be consistent at the order's own rate. A
-        // tolerance rather than equality because rounding to two different
-        // currency scales genuinely produces a small difference.
-        if (fx != null && fx.getRate() != null && fx.getRate().signum() > 0
-                && !nativeCurrency.equalsIgnoreCase(displayCurrency)) {
-            BigDecimal expected = currencies.round(
-                    nativeAmount.multiply(fx.getRate()), displayCurrency);
-            BigDecimal tolerance = currencies.smallestUnit(displayCurrency)
-                    .multiply(BigDecimal.valueOf(2));
-            if (expected.subtract(displayAmount).abs().compareTo(tolerance) > 0) {
-                throw new BadRequestException(String.format(
-                        "Those two amounts do not agree. %s %s at this order's own rate of %s is "
-                                + "%s %s, not %s. The rate is the one frozen when the order was "
-                                + "placed and it is not recomputed here.",
-                        nativeAmount, nativeCurrency, fx.getRate(), expected, displayCurrency,
-                        displayAmount));
-            }
-        }
-        return new Amounts(nativeAmount, displayAmount);
-    }
-
-    /** The commission that came off this much of the sub-order, handed back. */
-    private BigDecimal commissionShareOf(VendorOrder slice, BigDecimal refundedNative,
-                                         String currency) {
-        BigDecimal total = orZero(slice.getTotalNative());
-        BigDecimal commission = orZero(slice.getCommissionNative()).abs();
-        if (total.signum() == 0 || commission.signum() == 0) {
-            return BigDecimal.ZERO;
-        }
-        // Proportional to what is going back, which is the one place a proportion
-        // is right: it is a proportion of ONE seller's own figures, not a
-        // proportion of a payment shared between several (C3).
-        return currencies.round(
-                commission.multiply(refundedNative).divide(total, 8, RoundingMode.HALF_UP),
-                currency);
-    }
-
-    private BigDecimal refundedNativeFor(VendorOrder slice) {
-        if (slice.getOrder() == null) return BigDecimal.ZERO;
-        return refunds.findByOrderIdOrderByCreatedAtDesc(slice.getOrder().getId()).stream()
-                .filter(r -> r.getVendorOrder() != null
-                        && r.getVendorOrder().getId().equals(slice.getId()))
-                .filter(r -> r.getStatus() == RefundRequestStatus.APPROVED
-                        || r.getStatus() == RefundRequestStatus.COMPLETED)
-                .map(r -> orZero(r.getAmountNative()))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
-
-    private void notifyRefund(VendorOrder slice, Amounts amounts, String displayCurrency,
-                              String nativeCurrency, String reason) {
-        // The seller, in their own currency. Telling a Gambian seller their
-        // balance moved by 42 EUR is telling them nothing they can check.
-        if (slice.getVendor() != null && slice.getVendor().getUser() != null) {
-            notifications.send(slice.getVendor().getUser().getId(),
-                    "A refund was issued on one of your orders",
-                    amounts.nativeAmount() + " " + nativeCurrency + " has come off your balance"
-                            + (reason == null || reason.isBlank() ? "." : ": " + reason)
-                            + " The commission on it has been returned to you as a separate line.",
-                    NotificationEvent.PAYOUT_SENT, String.valueOf(slice.getId()));
-        }
-        // The buyer, in the currency they were charged in.
-        if (slice.getOrder() != null && slice.getOrder().getCustomer() != null) {
-            notifications.send(slice.getOrder().getCustomer().getId(),
-                    "A refund is on its way",
-                    amounts.displayAmount() + " " + displayCurrency + " is being returned"
-                            + (reason == null || reason.isBlank() ? "." : ": " + reason)
-                            + " It can take a few days to appear on your statement.",
-                    NotificationEvent.ORDER_UPDATE,
-                    String.valueOf(slice.getOrder().getId()));
-        }
+                result.refundRequestId(), result.reference(), result.vendorOrderId(),
+                result.storeName(), result.displayAmount(), result.displayCurrency(),
+                result.nativeAmount(), result.nativeCurrency(), result.fxRate(), result.fxRateAt(),
+                result.stepUpRequired(),
+                (result.fullSliceRefund() ? "The whole sub-order has gone back. "
+                                          : "A partial refund has gone back. ")
+                        + "Converted at the rate this order was placed at, not today's.");
     }
 
     // ── Ledger ───────────────────────────────────────────────────────────────
