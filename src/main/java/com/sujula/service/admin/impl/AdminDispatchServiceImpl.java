@@ -48,6 +48,7 @@ import com.sujula.service.NotificationService;
 import com.sujula.service.admin.AdminDispatchService;
 import com.sujula.service.security.StepUpVerifier;
 import com.sujula.service.shipment.CustodyChain;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 import com.sujula.service.shipment.Geofence;
 
 import lombok.extern.slf4j.Slf4j;
@@ -89,13 +90,15 @@ public class AdminDispatchServiceImpl implements AdminDispatchService {
     private final StepUpVerifier stepUp;
     private final AuditService audit;
     private final NotificationService notifications;
+    private final HomeShipmentCoordinator shipmentCoordinator;
 
     public AdminDispatchServiceImpl(OrderRepository orders, VendorOrderRepository vendorOrders,
                                     ShipmentRepository shipments, ShipmentLegRepository legs,
                                     CustodyEventRepository events, DriverRepository drivers,
                                     VendorLedgerEntryRepository ledger, CustodyChain chain,
                                     StepUpVerifier stepUp, AuditService audit,
-                                    NotificationService notifications) {
+                                    NotificationService notifications,
+                                    HomeShipmentCoordinator shipmentCoordinator) {
         this.orders = orders;
         this.vendorOrders = vendorOrders;
         this.shipments = shipments;
@@ -107,6 +110,7 @@ public class AdminDispatchServiceImpl implements AdminDispatchService {
         this.stepUp = stepUp;
         this.audit = audit;
         this.notifications = notifications;
+        this.shipmentCoordinator = shipmentCoordinator;
     }
 
     // ── Orders ───────────────────────────────────────────────────────────────
@@ -193,7 +197,8 @@ public class AdminDispatchServiceImpl implements AdminDispatchService {
     @Transactional
     public AdminDispatchResponses.OrderCancelled forceCancel(
             User staff, Long orderId, AdminDispatchRequests.ForceCancelOrder request) {
-        Order order = requireOrder(orderId);
+        Order order = orders.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
         LocalDateTime now = LocalDateTime.now();
 
         // One slice or all of them, never "some" (C3). An administrator who
@@ -205,32 +210,20 @@ public class AdminDispatchServiceImpl implements AdminDispatchService {
 
         List<Long> cancelled = new ArrayList<>();
         List<String> refunds = new ArrayList<>();
+        int parcelsStopped = 0;
         for (VendorOrder slice : targets) {
+            slice = shipmentCoordinator.lockSlice(orderId, slice.getId());
             if (slice.getStatus() == VendorOrderStatus.CANCELLED) {
                 continue;
+            }
+            if (shipmentCoordinator.cancelBeforeCollection(slice)) {
+                parcelsStopped++;
             }
             slice.setStatus(VendorOrderStatus.CANCELLED);
             slice.setCancelledAt(now);
             slice.setRejectionReason("Cancelled by " + staff.getEmail() + ": " + request.reason());
             vendorOrders.save(slice);
             cancelled.add(slice.getId());
-        }
-
-        // Parcels stop too. A cancelled order whose parcel is still moving is
-        // goods being delivered that have been refunded, and the driver finds
-        // out at the door.
-        int parcelsStopped = 0;
-        for (Shipment shipment : shipments.findByOrderId(orderId)) {
-            boolean mine = request.vendorOrderId() == null
-                    || (shipment.getVendorOrder() != null
-                        && request.vendorOrderId().equals(shipment.getVendorOrder().getId()));
-            if (mine && shipment.getCancelledAt() == null
-                    && !shipment.getStatus().isFinished()) {
-                shipment.setCancelledAt(now);
-                chain.rederive(shipment,
-                        events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()));
-                parcelsStopped++;
-            }
         }
 
         if (request.vendorOrderId() == null
@@ -261,6 +254,14 @@ public class AdminDispatchServiceImpl implements AdminDispatchService {
         Order order = requireOrder(orderId);
         VendorOrder slice = requireSliceOf(order, vendorOrderId);
         VendorOrderStatus from = slice.getStatus();
+
+        if (request.status() == VendorOrderStatus.READY_FOR_PICKUP
+                || request.status() == VendorOrderStatus.SHIPPED
+                || request.status() == VendorOrderStatus.CANCELLED) {
+            throw new BadRequestException(
+                    "That status is established by canonical ready, verified collection, or the "
+                            + "supported cancellation workflow; it cannot be forced here.");
+        }
 
         if (from == request.status()) {
             throw new BadRequestException("It is already " + readable(from) + ".");
@@ -392,7 +393,7 @@ public class AdminDispatchServiceImpl implements AdminDispatchService {
     @Transactional
     public AdminDispatchResponses.AssignmentMade assign(
             User staff, Long shipmentId, AdminDispatchRequests.AssignShipment request) {
-        Shipment shipment = requireShipment(shipmentId);
+        Shipment shipment = requireLockedOpenShipment(shipmentId);
         // Locked before anything is read off it. Two dispatchers on a busy
         // morning is the ordinary race, and the loser must be told rather than
         // silently overwriting the winner.
@@ -463,7 +464,7 @@ public class AdminDispatchServiceImpl implements AdminDispatchService {
     @Transactional
     public AdminDispatchResponses.AssignmentRemoved unassign(
             User staff, Long shipmentId, AdminDispatchRequests.UnassignShipment request) {
-        Shipment shipment = requireShipment(shipmentId);
+        Shipment shipment = requireLockedOpenShipment(shipmentId);
         ShipmentLeg leg = legs.lockNextLeg(shipmentId)
                 .orElseThrow(() -> new BadRequestException("Nothing to unassign on this parcel."));
 
@@ -505,7 +506,7 @@ public class AdminDispatchServiceImpl implements AdminDispatchService {
     @Transactional
     public AdminDispatchResponses.AssignmentMade reassign(
             User staff, Long shipmentId, AdminDispatchRequests.ReassignShipment request) {
-        Shipment shipment = requireShipment(shipmentId);
+        Shipment shipment = requireLockedOpenShipment(shipmentId);
 
         // Only before anybody has it, or after an attempt failed. A parcel in a
         // driver's hands moves by a transfer with both of them attesting, not by
@@ -626,21 +627,12 @@ public class AdminDispatchServiceImpl implements AdminDispatchService {
     @Transactional
     public AdminDispatchResponses.ShipmentCancelled cancelShipment(
             User staff, Long shipmentId, AdminDispatchRequests.CancelShipment request) {
-        Shipment shipment = requireShipment(shipmentId);
-        if (shipment.getStatus().isFinished()) {
+        Shipment shipment = shipmentCoordinator.cancelShipmentBeforeCollection(shipmentId);
+        if (shipment.getStatus().isFinished()
+                && shipment.getStatus() != ShipmentStatus.CANCELLED) {
             throw new BadRequestException(
                     "That parcel's journey is already over — it is " + readable(shipment.getStatus())
                             + ".");
-        }
-
-        shipment.setCancelledAt(LocalDateTime.now());
-        chain.rederive(shipment, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipmentId));
-
-        for (ShipmentLeg leg : legs.findByShipmentIdOrderBySequenceAsc(shipmentId)) {
-            if (leg.getAssignmentStatus() != LegAssignmentStatus.COMPLETED) {
-                leg.setAssignmentStatus(LegAssignmentStatus.CANCELLED);
-                legs.save(leg);
-            }
         }
 
         audit.record(AuditAction.SHIPMENT_CANCELLED_BY_ADMIN, "SHIPMENT", shipmentId,
@@ -702,6 +694,14 @@ public class AdminDispatchServiceImpl implements AdminDispatchService {
     private Shipment requireShipment(Long shipmentId) {
         return shipments.findById(shipmentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Parcel", shipmentId));
+    }
+
+    /** Dispatch follows the same Shipment-before-leg order as cancellation. */
+    private Shipment requireLockedOpenShipment(Long shipmentId) {
+        Shipment shipment = shipments.lockForCustody(shipmentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Parcel", shipmentId));
+        chain.requireOpen(shipment);
+        return shipment;
     }
 
     private Driver requireDriver(Long driverId) {

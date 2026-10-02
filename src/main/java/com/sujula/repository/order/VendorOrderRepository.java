@@ -5,6 +5,7 @@ import com.sujula.model.order.VendorOrder;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -24,6 +25,12 @@ public interface VendorOrderRepository extends JpaRepository<VendorOrder, Long> 
 
     /** Reloads a slice only after its parent Order has been locked. */
     Optional<VendorOrder> findByIdAndOrderId(Long id, Long orderId);
+
+    /** Commercial slice lock, always acquired after the common parent Order lock. */
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT vo FROM VendorOrder vo WHERE vo.id = :id AND vo.order.id = :orderId")
+    Optional<VendorOrder> findByIdAndOrderIdForUpdate(@Param("id") Long id,
+                                                       @Param("orderId") Long orderId);
 
     List<VendorOrder> findByOrderId(Long orderId);
 
@@ -48,6 +55,17 @@ public interface VendorOrderRepository extends JpaRepository<VendorOrder, Long> 
      * where the row is in hand and the check has still to be made.
      */
     Optional<VendorOrder> findByIdAndVendorId(Long id, Long vendorId);
+
+    /** Immutable ownership/parent lookup used before the common Order-first lock chain. */
+    @Query("SELECT vo.order.id AS orderId, vo.vendor.id AS vendorId "
+         + "FROM VendorOrder vo WHERE vo.id = :id AND vo.vendor.id = :vendorId")
+    Optional<OwnedCommercialParent> findOwnedCommercialParent(@Param("id") Long id,
+                                                               @Param("vendorId") Long vendorId);
+
+    interface OwnedCommercialParent {
+        Long getOrderId();
+        Long getVendorId();
+    }
 
     /**
      * The fulfilment queue, oldest first — the order a seller should work in.

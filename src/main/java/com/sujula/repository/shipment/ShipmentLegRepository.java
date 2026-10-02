@@ -38,6 +38,11 @@ public interface ShipmentLegRepository extends JpaRepository<ShipmentLeg, Long> 
     /** The legs of one shipment, in travelling order. */
     List<ShipmentLeg> findByShipmentIdOrderBySequenceAsc(Long shipmentId);
 
+    /** Every leg, locked in journey order after its Shipment lock. */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT l FROM ShipmentLeg l WHERE l.shipment.id = :shipmentId ORDER BY l.sequence ASC")
+    List<ShipmentLeg> lockByShipmentIdOrderBySequenceAsc(@Param("shipmentId") Long shipmentId);
+
     /**
      * The leg a dispatcher is about to act on, locked.
      *

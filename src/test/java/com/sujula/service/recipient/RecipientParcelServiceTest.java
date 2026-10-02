@@ -306,10 +306,10 @@ class RecipientParcelServiceTest {
     void theCodeSurvivesBeingUsedBecauseSheMayChangeHerMindTwice() {
         String code = issueCode();
 
-        parcels.choosePickupPoint(shipment.getTrackingCode(),
-                new RecipientRequests.ChoosePickupPoint(code, counter.getId()));
-        // Burning it here would mean telephoning Madrid again between choosing
-        // a counter and asking for a different day.
+        parcels.authoriseSafeDrop(shipment.getTrackingCode(),
+                new RecipientRequests.AuthoriseSafeDrop(code, "with the pharmacy", null, null));
+        // Burning it here would mean telephoning Madrid again between leaving
+        // a safe-drop instruction and asking for a different day.
         assertNotNull(parcels.reschedule(shipment.getTrackingCode(), reschedule(code)));
 
         entityManager.flush();
@@ -321,22 +321,19 @@ class RecipientParcelServiceTest {
     // ── The instructions ─────────────────────────────────────────────────────
 
     @Test
-    void choosingACounterIsARecordWithTheCodeThatWasPresentedAgainstIt() {
+    void changingAnActiveHomeDeliveryToPickupFailsClosed() {
         String code = issueCode();
-        parcels.choosePickupPoint(shipment.getTrackingCode(),
-                new RecipientRequests.ChoosePickupPoint(code, counter.getId()));
+        BadRequestException refused = assertThrows(BadRequestException.class,
+                () -> parcels.choosePickupPoint(shipment.getTrackingCode(),
+                        new RecipientRequests.ChoosePickupPoint(code, counter.getId())));
         entityManager.flush();
         entityManager.refresh(shipment);
 
-        RecipientInstruction recorded = instructions.findInForceOfType(
-                shipment.getId(), RecipientInstructionType.CHOOSE_PICKUP_POINT).orElseThrow();
-        assertEquals(counter.getId(), recorded.getPickupPoint().getId());
-        assertNotNull(recorded.getVerifiedByCodeId(), "who said so, and what they held when they did");
-        assertNotNull(recorded.getVerifiedAt());
-
-        // And the derived summary agrees with the record, because it is a
-        // function of it.
-        assertEquals(counter.getId(), shipment.getRequestedPickupPoint().getId());
+        assertTrue(refused.getMessage().contains("not available yet"), refused.getMessage());
+        assertTrue(instructions.findInForceOfType(shipment.getId(),
+                RecipientInstructionType.CHOOSE_PICKUP_POINT).isEmpty());
+        assertNull(shipment.getRequestedPickupPoint());
+        assertFalse(parcels.parcel(shipment.getTrackingCode()).youCan().choosePickupPoint());
     }
 
     @Test
@@ -374,7 +371,7 @@ class RecipientParcelServiceTest {
         BadRequestException refused = assertThrows(BadRequestException.class,
                 () -> parcels.choosePickupPoint(shipment.getTrackingCode(),
                         new RecipientRequests.ChoosePickupPoint(code, madrid.getId())));
-        assertTrue(refused.getMessage().contains("going to GM"));
+        assertTrue(refused.getMessage().contains("not available yet"));
     }
 
     @Test
@@ -386,7 +383,7 @@ class RecipientParcelServiceTest {
         BadRequestException refused = assertThrows(BadRequestException.class,
                 () -> parcels.choosePickupPoint(shipment.getTrackingCode(),
                         new RecipientRequests.ChoosePickupPoint(code, counter.getId())));
-        assertTrue(refused.getMessage().contains("Choose another"));
+        assertTrue(refused.getMessage().contains("not available yet"));
     }
 
     @Test
@@ -459,19 +456,18 @@ class RecipientParcelServiceTest {
     }
 
     @Test
-    void sendingItToACounterTakesBackASafeDropBecauseACounterReleasesAgainstACode() {
+    void rejectedPickupRerouteDoesNotWithdrawAnExistingSafeDrop() {
         String code = issueCode();
         parcels.authoriseSafeDrop(shipment.getTrackingCode(),
                 new RecipientRequests.AuthoriseSafeDrop(code, "behind the shop", null, null));
-        parcels.choosePickupPoint(shipment.getTrackingCode(),
-                new RecipientRequests.ChoosePickupPoint(code, counter.getId()));
+        assertThrows(BadRequestException.class, () -> parcels.choosePickupPoint(
+                shipment.getTrackingCode(),
+                new RecipientRequests.ChoosePickupPoint(code, counter.getId())));
         entityManager.flush();
         entityManager.refresh(shipment);
 
-        // An authorisation nobody will ever read is worse than none: it is still
-        // on the record as permission.
-        assertFalse(shipment.isSafeDropAuthorised());
-        assertEquals(counter.getId(), shipment.getRequestedPickupPoint().getId());
+        assertTrue(shipment.isSafeDropAuthorised());
+        assertNull(shipment.getRequestedPickupPoint());
     }
 
     // ── When it is too late ──────────────────────────────────────────────────
@@ -525,13 +521,13 @@ class RecipientParcelServiceTest {
     @Test
     void rederivingTheDirectivesOverExistingRowsChangesNothing() {
         String code = issueCode();
-        parcels.choosePickupPoint(shipment.getTrackingCode(),
-                new RecipientRequests.ChoosePickupPoint(code, counter.getId()));
+        parcels.authoriseSafeDrop(shipment.getTrackingCode(),
+                new RecipientRequests.AuthoriseSafeDrop(code, "behind the shop", null, null));
         parcels.reschedule(shipment.getTrackingCode(), reschedule(code));
         entityManager.flush();
         entityManager.refresh(shipment);
 
-        Long before = shipment.getRequestedPickupPoint().getId();
+        String before = shipment.getSafeDropLocation();
         LocalDateTime windowBefore = shipment.getRequestedWindowFrom();
 
         directives.rederive(shipment);
@@ -540,7 +536,7 @@ class RecipientParcelServiceTest {
 
         // If this ever changes something, the summary had drifted and the
         // instructions were right.
-        assertEquals(before, shipment.getRequestedPickupPoint().getId());
+        assertEquals(before, shipment.getSafeDropLocation());
         assertEquals(windowBefore, shipment.getRequestedWindowFrom());
     }
 

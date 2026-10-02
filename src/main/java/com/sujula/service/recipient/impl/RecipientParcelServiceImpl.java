@@ -202,7 +202,8 @@ public class RecipientParcelServiceImpl implements RecipientParcelService {
                     "It is waiting for you at " + shipment.getHeldAtPickupPoint().getName()
                             + ". Bring the collection code.");
         }
-        return new RecipientResponses.Actions(true, true, true, null);
+        return new RecipientResponses.Actions(false, true, true,
+                "Changing an active home-delivery parcel to pickup is not available yet.");
     }
 
     // ── The code ─────────────────────────────────────────────────────────────
@@ -305,6 +306,12 @@ public class RecipientParcelServiceImpl implements RecipientParcelService {
     public RecipientResponses.InstructionRecorded choosePickupPoint(
             String trackingCode, RecipientRequests.ChoosePickupPoint request) {
         Shipment shipment = requireParcel(trackingCode);
+        if (!pickupRoutingEnabled()) {
+            throw new BadRequestException(
+                    "Changing an active home-delivery parcel to pickup is not available yet. "
+                            + "The pickup route and driver-to-counter handover code must be "
+                            + "implemented together before this choice can be accepted.");
+        }
         ParcelAccessCode code = requireCode(shipment, request.code());
 
         PickupPoint point = pickupPoints.findById(request.pickupPointId())
@@ -510,6 +517,11 @@ public class RecipientParcelServiceImpl implements RecipientParcelService {
     private static String burnedMessage() {
         return "That code has been entered wrongly too many times and no longer works. Ask for a "
                 + "new one — it takes a moment and the old one is dead either way.";
+    }
+
+    /** Pickup rerouting remains fail-closed until its route and handover code exist. */
+    private static boolean pickupRoutingEnabled() {
+        return false;
     }
 
     /** Records that a code did something, without killing it. */

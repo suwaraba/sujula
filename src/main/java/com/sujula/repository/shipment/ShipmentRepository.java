@@ -28,6 +28,21 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
 
     Optional<Shipment> findByVendorOrderId(Long vendorOrderId);
 
+    /** Immutable parent ids used before acquiring the common Order-first lock chain. */
+    @Query("SELECT s.vendorOrder.order.id AS orderId, s.vendorOrder.id AS vendorOrderId "
+         + "FROM Shipment s WHERE s.id = :id")
+    Optional<CommercialParent> findCommercialParent(@Param("id") Long id);
+
+    interface CommercialParent {
+        Long getOrderId();
+        Long getVendorOrderId();
+    }
+
+    /** Shipment lock acquired only after Order and VendorOrder have been locked. */
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM Shipment s WHERE s.vendorOrder.id = :vendorOrderId")
+    Optional<Shipment> lockByVendorOrderId(@Param("vendorOrderId") Long vendorOrderId);
+
     /**
      * The parcel a recipient's link names.
      *

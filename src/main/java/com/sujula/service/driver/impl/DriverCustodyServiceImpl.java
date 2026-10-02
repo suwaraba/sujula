@@ -20,9 +20,11 @@ import com.sujula.model.constant.CustodyEventType;
 import com.sujula.model.constant.HandoverCodeType;
 import com.sujula.model.constant.LegAssignmentStatus;
 import com.sujula.model.constant.ShipmentStatus;
+import com.sujula.model.constant.VendorOrderStatus;
 import com.sujula.model.delivery.Driver;
 import com.sujula.model.delivery.HandoverCode;
 import com.sujula.model.order.Order;
+import com.sujula.model.order.VendorOrder;
 import com.sujula.model.shipment.CustodyEvent;
 import com.sujula.model.shipment.Shipment;
 import com.sujula.model.shipment.ShipmentLeg;
@@ -31,11 +33,13 @@ import com.sujula.repository.delivery.HandoverCodeRepository;
 import com.sujula.repository.shipment.CustodyEventRepository;
 import com.sujula.repository.shipment.ShipmentLegRepository;
 import com.sujula.repository.shipment.ShipmentRepository;
+import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.service.EmailService;
 import com.sujula.service.driver.DriverCustodyService;
 import com.sujula.service.notification.SmsSender;
 import com.sujula.service.platform.FeatureFlags;
 import com.sujula.service.shipment.CustodyChain;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 import com.sujula.service.shipment.Geofence;
 
 import lombok.extern.slf4j.Slf4j;
@@ -81,6 +85,8 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
     private final HandoverCodeRepository codes;
     private final DriverRepository drivers;
     private final CustodyChain chain;
+    private final VendorOrderRepository vendorOrders;
+    private final HomeShipmentCoordinator shipmentCoordinator;
     private final EmailService email;
     private final SmsSender sms;
 
@@ -90,13 +96,17 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                                     CustodyEventRepository events, HandoverCodeRepository codes,
                                     DriverRepository drivers, CustodyChain chain,
                                     EmailService email, SmsSender sms,
-                                    com.sujula.service.platform.FeatureFlags flags) {
+                                    com.sujula.service.platform.FeatureFlags flags,
+                                    VendorOrderRepository vendorOrders,
+                                    HomeShipmentCoordinator shipmentCoordinator) {
         this.shipments = shipments;
         this.legs = legs;
         this.events = events;
         this.codes = codes;
         this.drivers = drivers;
         this.chain = chain;
+        this.vendorOrders = vendorOrders;
+        this.shipmentCoordinator = shipmentCoordinator;
         this.email = email;
         this.sms = sms;
         this.flags = flags;
@@ -380,7 +390,18 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
                                                      boolean againstDestination,
                                                      String success) {
         Driver driver = requireDriver(userId);
-        Shipment shipment = lockOwnShipment(shipmentId, driver);
+        HomeShipmentCoordinator.CollectionContext collection = null;
+        Shipment shipment;
+        if (type == CustodyEventType.COLLECTED) {
+            // Scope without a lock, then acquire Order -> VendorOrder -> Shipment.
+            // Never retain a Shipment lock while asking for the commercial parent.
+            requireOwnShipment(shipmentId, driver);
+            collection = shipmentCoordinator.lockForCollection(shipmentId);
+            shipment = collection.shipment();
+            requireOwnShipment(shipmentId, driver); // assignment may have changed while locking
+        } else {
+            shipment = lockOwnShipment(shipmentId, driver);
+        }
 
         Optional<CustodyEvent> already = replayed(userId, request.clientEventId(), shipmentId);
         if (already.isPresent()) {
@@ -394,6 +415,13 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
         }
         chain.requireOpen(shipment);
         ShipmentLeg leg = requireLockedActiveLeg(shipment, driver);
+
+        if (type == CustodyEventType.COLLECTED
+                && collection.slice().getStatus() != VendorOrderStatus.READY_FOR_PICKUP) {
+            throw new BadRequestException(
+                    "This seller order is " + collection.slice().getStatus()
+                            + ", so it cannot be collected as a ready parcel.");
+        }
 
         boolean safeDrop = type == CustodyEventType.RELEASED && isSafeDrop(shipment, request);
         if (!safeDrop && (request.cleanedCode() == null || request.cleanedCode().isBlank())) {
@@ -465,6 +493,13 @@ public class DriverCustodyServiceImpl implements DriverCustodyService {
         CustodyEvent event = chain.appendDriver(shipment, pending);
 
         advanceLeg(leg, type);
+
+        if (type == CustodyEventType.COLLECTED) {
+            VendorOrder slice = collection.slice();
+            slice.setStatus(VendorOrderStatus.SHIPPED);
+            slice.setCollectedAt(event.getOccurredAt());
+            vendorOrders.save(slice);
+        }
 
         if (Geofence.isImplausible(distance)) {
             // Recorded and flagged rather than refused: the parcel may genuinely

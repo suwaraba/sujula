@@ -18,6 +18,7 @@ import com.sujula.repository.PickupPointRepository;
 import com.sujula.repository.PaymentRepository;
 import com.sujula.repository.delivery.DeliveryRepository;
 import com.sujula.service.invoice.InvoiceService;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 import com.sujula.repository.delivery.DeliveryTrackingRepository;
 import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.OrderStatusHistoryRepository;
@@ -93,6 +94,7 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
      * is what turns a sale into something payable.
      */
     private final com.sujula.service.money.MoneyLedger moneyLedger;
+    private final HomeShipmentCoordinator shipmentCoordinator;
 
     public BuyerOrderServiceImpl(OrderRepository orders, PaymentRepository payments,
                                  VendorOrderRepository vendorOrders,
@@ -105,7 +107,8 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
                                  ReviewRepository reviews, ProductRepository products,
                                  UserRepository users, PickupPointRepository pickupPoints,
                                  InvoiceService invoices,
-                                 com.sujula.service.money.MoneyLedger moneyLedger) {
+                                 com.sujula.service.money.MoneyLedger moneyLedger,
+                                 HomeShipmentCoordinator shipmentCoordinator) {
         this.orders = orders;
         this.payments = payments;
         this.vendorOrders = vendorOrders;
@@ -121,6 +124,7 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
         this.pickupPoints = pickupPoints;
         this.invoices = invoices;
         this.moneyLedger = moneyLedger;
+        this.shipmentCoordinator = shipmentCoordinator;
     }
 
     // ── Reads ────────────────────────────────────────────────────────────────
@@ -290,6 +294,8 @@ public class BuyerOrderServiceImpl implements BuyerOrderService {
      * automatic refund is how you lose the goods and the money.
      */
     private void cancelSlice(Order order, VendorOrder slice, Long userId, String reason) {
+        slice = shipmentCoordinator.lockSlice(order.getId(), slice.getId());
+        shipmentCoordinator.cancelBeforeCollection(slice);
         slice.setStatus(VendorOrderStatus.CANCELLED);
         slice.setCancelledAt(LocalDateTime.now());
         vendorOrders.save(slice);

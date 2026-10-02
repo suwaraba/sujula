@@ -40,6 +40,7 @@ import com.sujula.repository.delivery.DriverRepository;
 import com.sujula.repository.delivery.HandoverCodeRepository;
 import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.VendorOrderRepository;
+import com.sujula.repository.money.VendorLedgerEntryRepository;
 import com.sujula.repository.shipment.CustodyEventRepository;
 import com.sujula.repository.shipment.ShipmentLegRepository;
 import com.sujula.repository.shipment.ShipmentRepository;
@@ -49,6 +50,7 @@ import com.sujula.service.EmailService;
 import com.sujula.service.driver.impl.DriverCustodyServiceImpl;
 import com.sujula.service.shipment.CustodyChain;
 import com.sujula.service.shipment.RecipientDirectives;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 
 import jakarta.persistence.EntityManager;
 
@@ -80,6 +82,7 @@ import static org.mockito.Mockito.when;
 // FeatureFlags is real rather than mocked: safe drop is behind a flag, and a
 // stub that always said "on" would pass whether or not the flag was ever read.
 @Import({DriverCustodyServiceImpl.class, CustodyChain.class, RecipientDirectives.class,
+         HomeShipmentCoordinator.class,
          com.sujula.service.platform.FeatureFlags.class})
 class DriverCustodyServiceTest {
 
@@ -90,6 +93,7 @@ class DriverCustodyServiceTest {
     @Autowired private HandoverCodeRepository codes;
     @Autowired private DriverRepository drivers;
     @Autowired private VendorOrderRepository vendorOrders;
+    @Autowired private VendorLedgerEntryRepository vendorLedger;
     @Autowired private OrderRepository orders;
     @Autowired private VendorRepository vendors;
     @Autowired private UserRepository users;
@@ -242,6 +246,7 @@ class DriverCustodyServiceTest {
     @Test
     void whileCarryingItTheDriverGetsWhatTheyNeedToFindTheDoor() {
         collectIt();
+        entityManager.refresh(shipment.getVendorOrder());
 
         DriverResponses.ShipmentDetail detail =
                 custody.shipment(driverUser.getId(), shipment.getId());
@@ -251,6 +256,7 @@ class DriverCustodyServiceTest {
         assertEquals("+2203100077", detail.destination().recipientPhone());
         assertEquals("12 Kairaba Avenue", detail.destination().street());
         assertTrue(detail.custodyActive());
+        assertEquals(VendorOrderStatus.SHIPPED, shipment.getVendorOrder().getStatus());
     }
 
     @Test
@@ -261,11 +267,19 @@ class DriverCustodyServiceTest {
                 handover("222222", DEST_LAT, DEST_LNG, "https://media.invalid/pod.jpg"));
         entityManager.flush();
         entityManager.refresh(shipment);
+        entityManager.refresh(shipment.getVendorOrder());
 
         DriverResponses.ShipmentDetail detail =
                 custody.shipment(driverUser.getId(), shipment.getId());
 
         assertEquals(ShipmentStatus.DELIVERED, detail.status());
+        assertEquals(VendorOrderStatus.SHIPPED, shipment.getVendorOrder().getStatus(),
+                "physical delivery must not bypass buyer receipt confirmation");
+        assertNull(shipment.getVendorOrder().getReceiptConfirmedAt());
+        assertNull(shipment.getVendorOrder().getEscrowReleasedAt());
+        assertTrue(vendorLedger.findByVendorOrderIdOrderByOccurredAtAsc(
+                shipment.getVendorOrder().getId()).isEmpty(),
+                "custody delivery must not post SALE or COMMISSION ledger entries");
         // The job is done. A driver who handed a parcel over an hour ago has no
         // reason to still hold somebody's front door.
         assertNull(detail.destination());
@@ -308,6 +322,29 @@ class DriverCustodyServiceTest {
                         handover("999999", ORIGIN_LAT, ORIGIN_LNG, null)));
         assertTrue(wrong.getMessage().contains("not right"), wrong.getMessage());
         assertEquals(1, events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipment.getId()).size());
+        entityManager.refresh(shipment.getVendorOrder());
+        assertEquals(VendorOrderStatus.READY_FOR_PICKUP,
+                shipment.getVendorOrder().getStatus());
+    }
+
+    @Test
+    void collectionAdvancesOnlyTheExactLinkedCommercialSlice() {
+        VendorOrder sibling = vendorOrders.save(VendorOrder.builder()
+                .order(shipment.getVendorOrder().getOrder())
+                .vendor(shipment.getVendorOrder().getVendor())
+                .status(VendorOrderStatus.PREPARING)
+                .nativeCurrency("GMD")
+                .subtotalNative(BigDecimal.TEN).totalNative(BigDecimal.TEN)
+                .subtotal(BigDecimal.TEN).total(BigDecimal.TEN)
+                .build());
+        entityManager.flush();
+
+        collectIt();
+        entityManager.refresh(sibling);
+        entityManager.refresh(shipment.getVendorOrder());
+
+        assertEquals(VendorOrderStatus.SHIPPED, shipment.getVendorOrder().getStatus());
+        assertEquals(VendorOrderStatus.PREPARING, sibling.getStatus());
     }
 
     @Test

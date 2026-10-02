@@ -1,6 +1,8 @@
 package com.sujula.service.driver;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
@@ -12,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -25,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.sujula.dto.request.driver.DriverRequests;
+import com.sujula.exceptions.BadRequestException;
 import com.sujula.model.constant.CustodyEventType;
 import com.sujula.model.constant.DriverStatus;
 import com.sujula.model.constant.HandoverCodeType;
@@ -55,12 +59,13 @@ import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.EmailService;
 import com.sujula.service.driver.impl.DriverCustodyServiceImpl;
 import com.sujula.service.shipment.CustodyChain;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 
 /** Real relational proof of shipment/code serialization (H2 in MySQL mode). */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
-@Import({DriverCustodyServiceImpl.class, CustodyChain.class,
+@Import({DriverCustodyServiceImpl.class, CustodyChain.class, HomeShipmentCoordinator.class,
         com.sujula.service.platform.FeatureFlags.class})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -82,6 +87,7 @@ class DriverCustodyConcurrencyIntegrationTest {
     @Autowired private VendorRepository vendors;
     @Autowired private UserRepository users;
     @Autowired private TransactionTemplate transactions;
+    @Autowired private HomeShipmentCoordinator shipmentCoordinator;
 
     @MockitoBean private EmailService email;
     @MockitoBean private com.sujula.service.notification.SmsSender sms;
@@ -152,6 +158,21 @@ class DriverCustodyConcurrencyIntegrationTest {
         });
     }
 
+    @AfterEach
+    void cleanUp() {
+        transactions.executeWithoutResult(ignored -> {
+            events.deleteAllInBatch();
+            codes.deleteAllInBatch();
+            legs.deleteAllInBatch();
+            shipments.deleteAllInBatch();
+            drivers.deleteAllInBatch();
+            vendorOrders.deleteAllInBatch();
+            orders.deleteAllInBatch();
+            vendors.deleteAllInBatch();
+            users.deleteAllInBatch();
+        });
+    }
+
     @Test
     void sameShipmentAndCodeCommitExactlyOneCollection() throws Exception {
         CountDownLatch ready = new CountDownLatch(2);
@@ -179,7 +200,8 @@ class DriverCustodyConcurrencyIntegrationTest {
                     .filter(event -> event.getType() == CustodyEventType.COLLECTED).count();
             ShipmentLeg leg = legs.findByShipmentIdOrderBySequenceAsc(shipmentId).getFirst();
             return new Snapshot(code.isUsed(), collected, shipment.getStatus(),
-                    leg.getAssignmentStatus());
+                    leg.getAssignmentStatus(), shipment.getVendorOrder().getStatus(),
+                    shipment.getCancelledAt() != null, code.getInvalidatedAt() != null);
         });
 
         assertEquals(1, succeeded.get());
@@ -188,6 +210,143 @@ class DriverCustodyConcurrencyIntegrationTest {
         assertEquals(1, result.collectedEvents());
         assertEquals(ShipmentStatus.OUT_FOR_DELIVERY, result.status());
         assertEquals(LegAssignmentStatus.IN_PROGRESS, result.legStatus());
+        assertEquals(VendorOrderStatus.SHIPPED, result.sliceStatus());
+    }
+
+    @Test
+    void cancellationBeforeCollectionStopsShipmentLegCodeAndFutureCollection() {
+        cancelCommercialSlice();
+
+        Snapshot result = snapshot();
+        assertEquals(VendorOrderStatus.CANCELLED, result.sliceStatus());
+        assertEquals(ShipmentStatus.CANCELLED, result.status());
+        assertEquals(LegAssignmentStatus.CANCELLED, result.legStatus());
+        assertTrue(result.cancelled());
+        assertTrue(result.codeInvalidated());
+        assertEquals(0, result.collectedEvents());
+
+        assertThrows(RuntimeException.class, () -> custody.collect(driverUserId, shipmentId,
+                new DriverRequests.Handover("111111", null,
+                        ORIGIN_LAT, ORIGIN_LNG, BigDecimal.TEN,
+                        null, null, null, null, "after-cancel")));
+        assertEquals(0, snapshot().collectedEvents());
+    }
+
+    @Test
+    void cancellationAfterCollectionFailsClosed() {
+        custody.collect(driverUserId, shipmentId,
+                new DriverRequests.Handover("111111", null,
+                        ORIGIN_LAT, ORIGIN_LNG, BigDecimal.TEN,
+                        null, null, null, null, "collected-before-cancel"));
+
+        assertThrows(BadRequestException.class, this::cancelCommercialSlice);
+        Snapshot result = snapshot();
+        assertEquals(VendorOrderStatus.SHIPPED, result.sliceStatus());
+        assertEquals(1, result.collectedEvents());
+        assertFalse(result.cancelled());
+    }
+
+    @Test
+    void cancellationRacingCollectionHasOneCoherentWinner() throws Exception {
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger collectionSucceeded = new AtomicInteger();
+        AtomicInteger cancellationSucceeded = new AtomicInteger();
+
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            List<java.util.concurrent.Future<?>> futures = List.of(
+                    pool.submit(() -> raceCollection(ready, start, collectionSucceeded)),
+                    pool.submit(() -> raceCancellation(ready, start, cancellationSucceeded)));
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            for (var future : futures) {
+                future.get(30, TimeUnit.SECONDS);
+            }
+        }
+
+        Snapshot result = snapshot();
+        assertEquals(1, collectionSucceeded.get() + cancellationSucceeded.get());
+        assertFalse(result.sliceStatus() == VendorOrderStatus.CANCELLED
+                        && result.collectedEvents() > 0,
+                "a cancelled commercial slice must never retain a successful stale collection");
+        if (collectionSucceeded.get() == 1) {
+            assertEquals(VendorOrderStatus.SHIPPED, result.sliceStatus());
+            assertEquals(1, result.collectedEvents());
+            assertFalse(result.cancelled());
+        } else {
+            assertEquals(VendorOrderStatus.CANCELLED, result.sliceStatus());
+            assertEquals(0, result.collectedEvents());
+            assertTrue(result.cancelled());
+            assertEquals(LegAssignmentStatus.CANCELLED, result.legStatus());
+            assertTrue(result.codeInvalidated());
+        }
+    }
+
+    private void cancelCommercialSlice() {
+        transactions.executeWithoutResult(ignored -> {
+            Shipment shipment = shipments.findById(shipmentId).orElseThrow();
+            Order order = orders.findByIdForUpdate(shipment.getVendorOrder().getOrder().getId())
+                    .orElseThrow();
+            VendorOrder slice = shipmentCoordinator.lockSlice(
+                    order.getId(), shipment.getVendorOrder().getId());
+            if (slice.getStatus() != VendorOrderStatus.READY_FOR_PICKUP) {
+                throw new BadRequestException(
+                        "Only a parcel waiting for collection can use pre-handover cancellation.");
+            }
+            shipmentCoordinator.cancelBeforeCollection(slice);
+            slice.setStatus(VendorOrderStatus.CANCELLED);
+            vendorOrders.save(slice);
+        });
+    }
+
+    private Snapshot snapshot() {
+        return transactions.execute(ignored -> {
+            HandoverCode code = codes.findById(codeId).orElseThrow();
+            Shipment shipment = shipments.findById(shipmentId).orElseThrow();
+            long collected = events.findByShipmentIdOrderByOccurredAtAscIdAsc(shipmentId).stream()
+                    .filter(event -> event.getType() == CustodyEventType.COLLECTED).count();
+            ShipmentLeg leg = legs.findByShipmentIdOrderBySequenceAsc(shipmentId).getFirst();
+            return new Snapshot(code.isUsed(), collected, shipment.getStatus(),
+                    leg.getAssignmentStatus(), shipment.getVendorOrder().getStatus(),
+                    shipment.getCancelledAt() != null, code.getInvalidatedAt() != null);
+        });
+    }
+
+    private void raceCollection(CountDownLatch ready, CountDownLatch start,
+                                AtomicInteger succeeded) {
+        ready.countDown();
+        try {
+            if (!start.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("concurrent start timed out");
+            }
+            custody.collect(driverUserId, shipmentId,
+                    new DriverRequests.Handover("111111", null,
+                            ORIGIN_LAT, ORIGIN_LNG, BigDecimal.TEN,
+                            null, null, null, null, "race-collection"));
+            succeeded.incrementAndGet();
+        } catch (RuntimeException refused) {
+            // The cancellation winner makes the leg and code non-actionable.
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(interrupted);
+        }
+    }
+
+    private void raceCancellation(CountDownLatch ready, CountDownLatch start,
+                                  AtomicInteger succeeded) {
+        ready.countDown();
+        try {
+            if (!start.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("concurrent start timed out");
+            }
+            cancelCommercialSlice();
+            succeeded.incrementAndGet();
+        } catch (RuntimeException refused) {
+            // The collection winner advances the slice and closes this path.
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(interrupted);
+        }
     }
 
     private void collectConcurrently(String eventId, CountDownLatch ready, CountDownLatch start,
@@ -221,6 +380,7 @@ class DriverCustodyConcurrencyIntegrationTest {
     }
 
     private record Snapshot(boolean codeUsed, long collectedEvents, ShipmentStatus status,
-                            LegAssignmentStatus legStatus) {
+                            LegAssignmentStatus legStatus, VendorOrderStatus sliceStatus,
+                            boolean cancelled, boolean codeInvalidated) {
     }
 }

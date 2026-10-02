@@ -40,6 +40,7 @@ import com.sujula.repository.shipment.ShipmentRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.service.buyerorder.impl.BuyerOrderServiceImpl;
 import com.sujula.service.invoice.InvoiceService;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -61,6 +62,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -100,6 +102,7 @@ class BuyerOrderServiceTest {
     private InvoiceService invoices;
     private com.sujula.service.money.MoneyLedger moneyLedger;
     private BuyerOrderServiceImpl service;
+    private HomeShipmentCoordinator shipmentCoordinator;
 
     @BeforeEach
     void setUp() {
@@ -118,10 +121,11 @@ class BuyerOrderServiceTest {
         pickupPoints = mock(PickupPointRepository.class);
         invoices = mock(InvoiceService.class);
         moneyLedger = mock(com.sujula.service.money.MoneyLedger.class);
+        shipmentCoordinator = mock(HomeShipmentCoordinator.class);
 
         service = new BuyerOrderServiceImpl(orders, payments, vendorOrders, refunds, history, deliveries,
                 tracking, shipments, custodyEvents, reviews, products, users, pickupPoints,
-                invoices, moneyLedger);
+                invoices, moneyLedger, shipmentCoordinator);
 
         when(orders.save(any(Order.class))).thenAnswer(call -> call.getArgument(0));
         when(vendorOrders.save(any(VendorOrder.class))).thenAnswer(call -> call.getArgument(0));
@@ -234,6 +238,12 @@ class BuyerOrderServiceTest {
         when(orders.findByIdAndCustomerIdForUpdate(ORDER, BUYER)).thenReturn(Optional.of(order));
         when(orders.findByIdAndCustomerIdForUpdate(ORDER, INTRUDER)).thenReturn(Optional.empty());
         when(payments.findByOrderId(ORDER)).thenReturn(Optional.of(payment));
+        when(shipmentCoordinator.lockSlice(eq(ORDER), anyLong())).thenAnswer(call -> {
+            Long sliceId = call.getArgument(1);
+            return order.getVendorOrders().stream()
+                    .filter(slice -> sliceId.equals(slice.getId()))
+                    .findFirst().orElseThrow();
+        });
     }
 
     private void deliveredLegacy(VendorOrder slice) {
@@ -319,6 +329,8 @@ class BuyerOrderServiceTest {
         // The order itself keeps going: one seller pulling out is not the end of it.
         assertEquals(OrderStatus.PROCESSING, result.status());
         assertEquals(List.of(SLICE_A), result.cancelledVendorOrderIds());
+        verify(shipmentCoordinator).cancelBeforeCollection(
+                eq(order.getVendorOrders().getFirst()));
     }
 
     @Test

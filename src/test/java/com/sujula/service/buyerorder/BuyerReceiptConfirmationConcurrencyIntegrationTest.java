@@ -63,6 +63,8 @@ import com.sujula.service.invoice.InvoiceService;
 import com.sujula.service.money.MoneyLedger;
 import com.sujula.service.reference.CurrencyCatalogue;
 import com.sujula.service.reference.ReferenceDataProperties;
+import com.sujula.service.shipment.CustodyChain;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 
 import jakarta.persistence.EntityManager;
 
@@ -71,6 +73,7 @@ import jakarta.persistence.EntityManager;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({BuyerOrderServiceImpl.class, DisputeServiceImpl.class, MoneyLedger.class,
+        CustodyChain.class, HomeShipmentCoordinator.class,
         BuyerReceiptConfirmationConcurrencyIntegrationTest.Money.class})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)

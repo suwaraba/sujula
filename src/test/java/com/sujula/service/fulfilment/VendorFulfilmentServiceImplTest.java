@@ -41,6 +41,7 @@ import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.fulfilment.impl.VendorFulfilmentServiceImpl;
 import com.sujula.service.inventory.StockLedger;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -80,6 +81,7 @@ class VendorFulfilmentServiceImplTest {
     private StockLedger ledger;
     private ParcelLabelRenderer labels;
     private PickupPointRepository pickupPoints;
+    private HomeShipmentCoordinator shipmentCoordinator;
 
     private VendorFulfilmentServiceImpl service;
 
@@ -103,10 +105,11 @@ class VendorFulfilmentServiceImplTest {
         ledger = mock(StockLedger.class);
         labels = mock(ParcelLabelRenderer.class);
         pickupPoints = mock(PickupPointRepository.class);
+        shipmentCoordinator = mock(HomeShipmentCoordinator.class);
 
         service = new VendorFulfilmentServiceImpl(vendorOrders, vendors, orders, refunds, users,
                 imeiUnits, handoverCodes, ledger, labels,
-                new FulfilmentView(imeiUnits, pickupPoints));
+                new FulfilmentView(imeiUnits, pickupPoints), shipmentCoordinator);
 
         vendor = Vendor.builder()
                 .id(VENDOR_ID)
@@ -195,7 +198,9 @@ class VendorFulfilmentServiceImplTest {
         for (OrderItem item : items) {
             item.setVendorOrder(vendorOrder);
         }
-        when(vendorOrders.findByIdAndVendorId(SLICE_ID, VENDOR_ID)).thenReturn(Optional.of(vendorOrder));
+        when(vendorOrders.findByIdAndVendorId(SLICE_ID, VENDOR_ID))
+                .thenReturn(Optional.of(vendorOrder));
+        when(shipmentCoordinator.lockOwnedSlice(SLICE_ID, VENDOR_ID)).thenReturn(vendorOrder);
         when(vendorOrders.findByOrderId(order.getId())).thenReturn(List.of(vendorOrder));
         return vendorOrder;
     }
@@ -270,6 +275,7 @@ class VendorFulfilmentServiceImplTest {
         assertEquals(VendorOrderStatus.CANCELLED, rejected.status());
         assertEquals("The last one was damaged in the stockroom", vendorOrder.getRejectionReason());
         assertNotNull(vendorOrder.getCancelledAt());
+        verify(shipmentCoordinator).cancelBeforeCollection(vendorOrder);
 
         // The goods go back on the shelf, through the ledger rather than around
         // it, and the movement says which order they came off.
@@ -418,6 +424,7 @@ class VendorFulfilmentServiceImplTest {
         assertEquals(vendorOrder, issued.get(0).getVendorOrder(),
                 "the code hangs off the vendor order, not a delivery");
         assertNull(issued.get(0).getDelivery());
+        verify(shipmentCoordinator).provisionHome(vendorOrder);
     }
 
     @Test
@@ -475,6 +482,7 @@ class VendorFulfilmentServiceImplTest {
                 "a lost response must not quietly replace the code the driver was told");
         assertEquals(1, issued.size());
         assertEquals(VendorOrderStatus.READY_FOR_PICKUP, vendorOrder.getStatus());
+        verify(shipmentCoordinator, times(2)).provisionHome(vendorOrder);
     }
 
     // ── The collection code ──────────────────────────────────────────────────

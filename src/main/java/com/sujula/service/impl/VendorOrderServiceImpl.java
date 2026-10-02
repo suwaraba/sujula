@@ -15,6 +15,7 @@ import com.sujula.model.user.Vendor;
 import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.VendorOrderService;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -60,6 +61,7 @@ public class VendorOrderServiceImpl implements VendorOrderService {
 
     private final VendorOrderRepository vendorOrderRepository;
     private final VendorRepository vendorRepository;
+    private final HomeShipmentCoordinator shipmentCoordinator;
 
     /**
      * Shared with the fulfilment endpoints.
@@ -99,8 +101,14 @@ public class VendorOrderServiceImpl implements VendorOrderService {
             throw new BadRequestException("A status is required");
         }
         Vendor vendor = requireVendor(vendorUserId);
-        VendorOrder vendorOrder = requireOwnSlice(vendorOrderId, vendor);
+        VendorOrder vendorOrder = shipmentCoordinator.lockOwnedSlice(vendorOrderId, vendor.getId());
         VendorOrderStatus current = vendorOrder.getStatus();
+
+        if (next == VendorOrderStatus.READY_FOR_PICKUP) {
+            throw new BadRequestException(
+                    "Mark this order ready through the dedicated fulfilment endpoint. That "
+                            + "creates its parcel, route and collection code together.");
+        }
 
         if (current == next) {
             // Setting the status it already has is how a double-tapped button
@@ -120,6 +128,7 @@ public class VendorOrderServiceImpl implements VendorOrderService {
 
         vendorOrder.setStatus(next);
         if (next == VendorOrderStatus.CANCELLED) {
+            shipmentCoordinator.cancelBeforeCollection(vendorOrder);
             vendorOrder.setCancelledAt(java.time.LocalDateTime.now());
         }
         VendorOrder saved = vendorOrderRepository.save(vendorOrder);

@@ -43,6 +43,7 @@ import com.sujula.service.fulfilment.ParcelLabelRenderer;
 import com.sujula.service.fulfilment.VendorFulfilmentService;
 import com.sujula.service.inventory.Imei;
 import com.sujula.service.inventory.StockLedger;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -101,6 +102,7 @@ public class VendorFulfilmentServiceImpl implements VendorFulfilmentService {
     private final HandoverCodeRepository handoverCodes;
     private final StockLedger ledger;
     private final ParcelLabelRenderer labels;
+    private final HomeShipmentCoordinator shipmentCoordinator;
 
     /**
      * Shared with the seller's order detail screen, so the button the screen
@@ -116,7 +118,8 @@ public class VendorFulfilmentServiceImpl implements VendorFulfilmentService {
                                        UserRepository users, ImeiUnitRepository imeiUnits,
                                        HandoverCodeRepository handoverCodes, StockLedger ledger,
                                        ParcelLabelRenderer labels,
-                                       com.sujula.service.fulfilment.FulfilmentView view) {
+                                       com.sujula.service.fulfilment.FulfilmentView view,
+                                       HomeShipmentCoordinator shipmentCoordinator) {
         this.vendorOrders = vendorOrders;
         this.vendors = vendors;
         this.orders = orders;
@@ -127,6 +130,7 @@ public class VendorFulfilmentServiceImpl implements VendorFulfilmentService {
         this.ledger = ledger;
         this.labels = labels;
         this.view = view;
+        this.shipmentCoordinator = shipmentCoordinator;
     }
 
     // ── Accept ───────────────────────────────────────────────────────────────
@@ -177,7 +181,7 @@ public class VendorFulfilmentServiceImpl implements VendorFulfilmentService {
         }
 
         Vendor vendor = requireVendor(vendorUserId);
-        VendorOrder slice = requireOwnSlice(vendorOrderId, vendor);
+        VendorOrder slice = shipmentCoordinator.lockOwnedSlice(vendorOrderId, vendor.getId());
 
         if (slice.getStatus() == VendorOrderStatus.CANCELLED) {
             return new FulfilmentResponses.Rejected(slice.getId(), orderNumber(slice),
@@ -192,6 +196,7 @@ public class VendorFulfilmentServiceImpl implements VendorFulfilmentService {
         }
 
         Order order = slice.getOrder();
+        shipmentCoordinator.cancelBeforeCollection(slice);
 
         slice.setStatus(VendorOrderStatus.CANCELLED);
         slice.setCancelledAt(LocalDateTime.now());
@@ -344,9 +349,10 @@ public class VendorFulfilmentServiceImpl implements VendorFulfilmentService {
     @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
     public FulfilmentResponses.Ready ready(Long vendorUserId, Long vendorOrderId) {
         Vendor vendor = requireVendor(vendorUserId);
-        VendorOrder slice = requireOwnSlice(vendorOrderId, vendor);
+        VendorOrder slice = shipmentCoordinator.lockOwnedSlice(vendorOrderId, vendor.getId());
 
         if (slice.getStatus() == VendorOrderStatus.READY_FOR_PICKUP) {
+            shipmentCoordinator.provisionHome(slice);
             HandoverCode live = handoverCodes.findLiveReleaseCode(slice.getId())
                     .orElseGet(() -> issueCode(slice, false));
             return new FulfilmentResponses.Ready(slice.getId(), orderNumber(slice), slice.getStatus(),
@@ -359,6 +365,7 @@ public class VendorFulfilmentServiceImpl implements VendorFulfilmentService {
         }
 
         requireHandsetsBound(slice);
+        shipmentCoordinator.provisionHome(slice);
 
         slice.setStatus(VendorOrderStatus.READY_FOR_PICKUP);
         slice.setReadyAt(LocalDateTime.now());

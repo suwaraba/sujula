@@ -46,6 +46,7 @@ import com.sujula.service.AuditService;
 import com.sujula.service.admin.impl.AdminDispatchServiceImpl;
 import com.sujula.service.security.StepUpVerifier;
 import com.sujula.service.shipment.CustodyChain;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 
 import jakarta.persistence.EntityManager;
 
@@ -71,7 +72,7 @@ import static org.mockito.Mockito.verify;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
-@Import({AdminDispatchServiceImpl.class, CustodyChain.class})
+@Import({AdminDispatchServiceImpl.class, CustodyChain.class, HomeShipmentCoordinator.class})
 class AdminDispatchServiceTest {
 
     @Autowired private AdminDispatchServiceImpl dispatch;

@@ -127,6 +127,14 @@ public interface HandoverCodeRepository extends JpaRepository<HandoverCode, Long
                                            @Param("codeType") HandoverCodeType codeType,
                                            @Param("now") LocalDateTime now);
 
+    /** Every still-actionable Shipment code, locked after Shipment and leg rows. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT h FROM HandoverCode h WHERE h.shipment.id = :shipmentId "
+         + "AND h.used = FALSE AND h.invalidatedAt IS NULL AND h.expiresAt > :now "
+         + "ORDER BY h.id ASC")
+    List<HandoverCode> lockAllLiveForShipment(@Param("shipmentId") Long shipmentId,
+                                              @Param("now") LocalDateTime now);
+
     /**
      * How many codes of a kind have been issued for a parcel lately.
      *

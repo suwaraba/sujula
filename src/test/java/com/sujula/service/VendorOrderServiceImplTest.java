@@ -14,6 +14,7 @@ import com.sujula.model.user.Vendor;
 import com.sujula.repository.order.VendorOrderRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.impl.VendorOrderServiceImpl;
+import com.sujula.service.shipment.HomeShipmentCoordinator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -42,6 +43,7 @@ class VendorOrderServiceImplTest {
     private VendorRepository vendorRepository;
     private com.sujula.service.fulfilment.FulfilmentView view;
     private VendorOrderServiceImpl service;
+    private HomeShipmentCoordinator shipmentCoordinator;
 
     private Vendor vendor;
     private Order order;
@@ -59,7 +61,9 @@ class VendorOrderServiceImplTest {
         com.sujula.repository.PickupPointRepository pickupPoints =
                 mock(com.sujula.repository.PickupPointRepository.class);
         view = new com.sujula.service.fulfilment.FulfilmentView(imeiUnits, pickupPoints);
-        service = new VendorOrderServiceImpl(vendorOrderRepository, vendorRepository, view);
+        shipmentCoordinator = mock(HomeShipmentCoordinator.class);
+        service = new VendorOrderServiceImpl(vendorOrderRepository, vendorRepository,
+                shipmentCoordinator, view);
 
         vendor = Vendor.builder()
                 .id(50L)
@@ -94,6 +98,11 @@ class VendorOrderServiceImplTest {
         order.setShippingLongitude(-16.6781);
 
         when(vendorOrderRepository.save(any(VendorOrder.class))).thenAnswer(i -> i.getArgument(0));
+        when(shipmentCoordinator.lockOwnedSlice(anyLong(), anyLong())).thenAnswer(call ->
+                vendorOrderRepository.findByIdAndVendorId(
+                        call.getArgument(0), call.getArgument(1))
+                        .orElseThrow(() -> new ResourceNotFoundException(
+                                "VendorOrder", (Long) call.getArgument(0))));
     }
 
     private VendorOrder slice(VendorOrderStatus status) {
@@ -237,7 +246,7 @@ class VendorOrderServiceImplTest {
     // ── Transitions ──────────────────────────────────────────────────────────
 
     @Test
-    void aVendorAcceptsThenPacksAndStopsThere() {
+    void genericStatusCanAcceptButCannotBypassCanonicalReady() {
         when(vendorOrderRepository.findByIdAndVendorId(11L, 50L))
                 .thenReturn(Optional.of(slice(VendorOrderStatus.PENDING)));
         assertEquals(VendorOrderStatus.PREPARING,
@@ -245,8 +254,9 @@ class VendorOrderServiceImplTest {
 
         when(vendorOrderRepository.findByIdAndVendorId(11L, 50L))
                 .thenReturn(Optional.of(slice(VendorOrderStatus.PREPARING)));
-        assertEquals(VendorOrderStatus.READY_FOR_PICKUP,
-                service.updateStatus(4L, 11L, VendorOrderStatus.READY_FOR_PICKUP).getStatus());
+        BadRequestException error = assertThrows(BadRequestException.class,
+                () -> service.updateStatus(4L, 11L, VendorOrderStatus.READY_FOR_PICKUP));
+        assertTrue(error.getMessage().contains("dedicated fulfilment endpoint"));
     }
 
     @Test
