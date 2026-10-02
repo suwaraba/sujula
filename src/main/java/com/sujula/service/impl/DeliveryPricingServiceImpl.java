@@ -19,6 +19,7 @@ import com.sujula.service.delivery.DeliveryDestination;
 import com.sujula.service.delivery.DeliveryItem;
 import com.sujula.service.delivery.DeliveryPricingProperties;
 import com.sujula.service.delivery.DeliveryQuote;
+import com.sujula.service.reference.CurrencyCatalogue;
 import com.sujula.dto.GeoAddress;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,17 +66,20 @@ public class DeliveryPricingServiceImpl implements DeliveryPricingService {
     private final GoogleMapsService googleMapsService;
     private final ProductRepository productRepository;
     private final PickupPointRepository pickupPointRepository;
+    private final CurrencyCatalogue currencies;
 
     public DeliveryPricingServiceImpl(DeliveryPricingProperties properties,
                                       ExchangeRateService exchangeRateService,
                                       GoogleMapsService googleMapsService,
                                       ProductRepository productRepository,
-                                      PickupPointRepository pickupPointRepository) {
+                                      PickupPointRepository pickupPointRepository,
+                                      CurrencyCatalogue currencies) {
         this.properties = properties;
         this.exchangeRateService = exchangeRateService;
         this.googleMapsService = googleMapsService;
         this.productRepository = productRepository;
         this.pickupPointRepository = pickupPointRepository;
+        this.currencies = currencies;
     }
 
     @Override
@@ -174,7 +178,7 @@ public class DeliveryPricingServiceImpl implements DeliveryPricingService {
                     pricingCurrency, target);
             return new DeliveryQuote(target, null, false, priced);
         }
-        return new DeliveryQuote(target, RateTable.round(total), true, priced);
+        return new DeliveryQuote(target, rates.roundTarget(total), true, priced);
     }
 
     /** Prices one product's leg in the rate card's own currency. */
@@ -206,8 +210,8 @@ public class DeliveryPricingServiceImpl implements DeliveryPricingService {
 
         // The arithmetic lives on the rate card, so the per-mode quote at
         // /delivery/quote and this per-product one cannot drift apart.
-        leg.cost = properties.priceLeg(distance.km, weightKg, scope, mode)
-                .setScale(RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+        leg.cost = currencies.round(properties.priceLeg(distance.km, weightKg, scope, mode),
+                properties.getCurrency());
         return leg;
     }
 
@@ -331,11 +335,13 @@ public class DeliveryPricingServiceImpl implements DeliveryPricingService {
 
     private RateTable ratesInto(String target, String pricingCurrency) {
         if (target.equals(pricingCurrency)) {
-            return new RateTable(target, Map.of());
+            return new RateTable(target, Map.of(), currencies.minorUnits(target),
+                    java.time.LocalDateTime.now());
         }
         Map<String, BigDecimal> rates =
                 exchangeRateService.getLatestRates(target, Set.of(pricingCurrency));
-        return new RateTable(target, rates);
+        return new RateTable(target, rates, currencies.minorUnits(target),
+                java.time.LocalDateTime.now());
     }
 
     // ── Working state ─────────────────────────────────────────────────────────

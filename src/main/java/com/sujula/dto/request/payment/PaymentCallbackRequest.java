@@ -32,8 +32,12 @@ public class PaymentCallbackRequest {
     @NotNull
     private PaymentStatus status;
 
-    /** Amount the provider says it took; checked against the amount due when present. */
+    /** Amount the provider says it took; required and checked exactly for a paid callback. */
     private BigDecimal amount;
+
+    /** Currency the provider says it took; required and checked exactly for a paid callback. */
+    @Size(max = 3)
+    private String currency;
 
     /** Provider's reason for a failure, passed on to the buyer. */
     @Size(max = 500)

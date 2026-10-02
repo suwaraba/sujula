@@ -19,6 +19,9 @@ import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.StockMovementReason;
 import com.sujula.model.constant.PartnerStatus;
 import com.sujula.model.constant.VendorOrderStatus;
+import com.sujula.model.order.CartQuote;
+import com.sujula.model.order.CartQuoteLine;
+import com.sujula.model.order.CartQuoteVendorSnapshot;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.OrderItem;
 import com.sujula.model.order.OrderStatusHistory;
@@ -282,6 +285,63 @@ public class OrderServiceImpl implements OrderService {
         User customer = requireUser(userId);
         Address address = requireOwnedAddress(shippingAddressId, userId);
         return createFromPricedCart(customer, address, CartOwner.user(userId), validatedCart, notes);
+    }
+
+    @Override
+    @Transactional
+    public Order createFromQuote(Long userId, Long shippingAddressId, String notes, CartQuote quote) {
+        if (quote == null) {
+            throw new BadRequestException("A persisted quote is required to create this order.");
+        }
+        if (!quote.belongsTo(userId) || quote.getCart() == null
+                || quote.getCart().getUser() == null
+                || !Objects.equals(quote.getCart().getUser().getId(), userId)) {
+            throw new ResourceNotFoundException("Quote", quote.getId());
+        }
+        if (!quote.isComplete() || quote.getDeliveryMode() != DeliveryMode.HOME_DELIVERY) {
+            throw new BadRequestException("This quote cannot be checked out. Request a new quote.");
+        }
+
+        User customer = requireUser(userId);
+        Address address = requireOwnedAddress(shippingAddressId, userId);
+        FrozenQuoteContract contract = requireFrozenQuoteContract(quote);
+        CheckoutResult result = buildFromFrozenQuote(quote, contract);
+
+        Order order = Order.builder()
+                .orderNumber(newOrderNumber())
+                .trackingCode(newTrackingCode())
+                .customer(customer)
+                .status(OrderStatus.PENDING)
+                .deliveryMode(quote.getDeliveryMode())
+                .pickupPointId(quote.getPickupPointId())
+                .subtotal(contract.subtotal())
+                .shippingCost(contract.shipping())
+                .taxAmount(contract.tax())
+                .discount(contract.discount())
+                .total(contract.total())
+                .currency(contract.displayCurrency())
+                // Coupon identity remains on the persisted quote. Do not attach
+                // a live Coupon row whose terms may have changed or which may
+                // have been deleted since the buyer accepted the quote.
+                .couponCode(contract.orderCouponCode())
+                .shippingFullName(address.getFullName())
+                .shippingPhone(address.getPhone())
+                .shippingStreet(address.getStreet())
+                .shippingApartment(address.getApartmentSuite())
+                .shippingCity(address.getCity())
+                .shippingState(address.getState())
+                .shippingPostalCode(address.getPostalCode())
+                .shippingCountry(address.getCountryCode())
+                .shippingAddress(address)
+                .shippingLatitude(address.getLatitude())
+                .shippingLongitude(address.getLongitude())
+                .notes(notes)
+                .build();
+
+        Order finalOrder = persistOrder(order, result);
+        cartService.clearCart(CartOwner.user(userId));
+        dispatchOrderCreationEvents(customer, finalOrder, result.vendorOrders);
+        return finalOrder;
     }
 
     /** Builds from exactly the cart response selected by the caller's transaction. */
@@ -620,6 +680,344 @@ public class OrderServiceImpl implements OrderService {
     // ─────────────────────────────────────────────────────────────────────────
     // Pricing — from an already-priced cart quote
     // ─────────────────────────────────────────────────────────────────────────
+
+    private FrozenQuoteContract requireFrozenQuoteContract(CartQuote quote) {
+        String displayCurrency = currencyCatalogue.require(quote.getDisplayCurrency());
+        BigDecimal subtotal = requireQuoteMoney(quote.getSubtotal(), displayCurrency, "quote subtotal");
+        BigDecimal discount = requireQuoteMoney(quote.getDiscount(), displayCurrency, "quote discount");
+        BigDecimal shipping = requireQuoteMoney(quote.getShipping(), displayCurrency, "quote shipping");
+        BigDecimal tax = requireQuoteMoney(quote.getTax(), displayCurrency, "quote tax");
+        BigDecimal total = requireQuoteMoney(quote.getTotal(), displayCurrency, "quote total");
+        requireCouponSnapshot(quote.getPlatformCouponId(), quote.getPlatformCouponCode(),
+                "platform coupon");
+
+        List<CartQuoteLine> quoteLines = quote.getLines();
+        List<CartQuoteVendorSnapshot> quoteSnapshots = quote.getVendorSnapshots();
+        if (quoteLines == null || quoteLines.isEmpty()
+                || quoteSnapshots == null || quoteSnapshots.isEmpty()) {
+            throw incompleteQuote("line or vendor snapshot evidence is missing");
+        }
+
+        Map<Long, List<CartQuoteLine>> linesByVendor = new LinkedHashMap<>();
+        for (CartQuoteLine line : quoteLines) {
+            requireQuoteLine(line, displayCurrency);
+            linesByVendor.computeIfAbsent(line.getVendorId(), ignored -> new ArrayList<>()).add(line);
+        }
+
+        Map<Long, CartQuoteVendorSnapshot> snapshotsByVendor = new LinkedHashMap<>();
+        for (CartQuoteVendorSnapshot snapshot : quoteSnapshots) {
+            if (snapshot == null || snapshot.getVendorId() == null
+                    || snapshotsByVendor.putIfAbsent(snapshot.getVendorId(), snapshot) != null) {
+                throw incompleteQuote("there must be exactly one vendor snapshot per vendor");
+            }
+        }
+        if (!snapshotsByVendor.keySet().equals(linesByVendor.keySet())) {
+            throw incompleteQuote("vendor snapshot coverage does not match the quoted lines");
+        }
+
+        List<FrozenVendorContract> vendors = new ArrayList<>();
+        BigDecimal lineSubtotal = currencyCatalogue.round(BigDecimal.ZERO, displayCurrency);
+        BigDecimal allocatedDiscount = currencyCatalogue.round(BigDecimal.ZERO, displayCurrency);
+        BigDecimal lineShipping = currencyCatalogue.round(BigDecimal.ZERO, displayCurrency);
+        BigDecimal platformDiscount = currencyCatalogue.round(BigDecimal.ZERO, displayCurrency);
+
+        for (Map.Entry<Long, List<CartQuoteLine>> entry : linesByVendor.entrySet()) {
+            Long vendorId = entry.getKey();
+            List<CartQuoteLine> lines = entry.getValue();
+            CartQuoteVendorSnapshot snapshot = snapshotsByVendor.get(vendorId);
+            requireCouponSnapshot(snapshot.getVendorCouponId(), snapshot.getVendorCouponCode(),
+                    "vendor " + vendorId + " coupon");
+
+            String nativeCurrency = currencyCatalogue.require(lines.get(0).getListingCurrency());
+            FxSnapshot firstFx = lines.get(0).getFx();
+            BigDecimal subtotalNative = currencyCatalogue.round(BigDecimal.ZERO, nativeCurrency);
+            BigDecimal subtotalDisplay = currencyCatalogue.round(BigDecimal.ZERO, displayCurrency);
+            BigDecimal shippingDisplay = currencyCatalogue.round(BigDecimal.ZERO, displayCurrency);
+
+            for (CartQuoteLine line : lines) {
+                String lineCurrency = currencyCatalogue.require(line.getListingCurrency());
+                if (!nativeCurrency.equals(lineCurrency) || !sameFxEvidence(firstFx, line.getFx())) {
+                    throw incompleteQuote("vendor " + vendorId
+                            + " has mixed native currency or FX evidence");
+                }
+                subtotalNative = currencyCatalogue.round(
+                        subtotalNative.add(line.getLineTotalNative()), nativeCurrency);
+                subtotalDisplay = currencyCatalogue.round(
+                        subtotalDisplay.add(line.getLineTotal()), displayCurrency);
+                shippingDisplay = currencyCatalogue.round(
+                        shippingDisplay.add(line.getDeliveryCost()), displayCurrency);
+            }
+
+            BigDecimal discountDisplay = requireQuoteMoney(
+                    snapshot.getDiscountDisplay(), displayCurrency,
+                    "vendor " + vendorId + " display discount");
+            BigDecimal discountNative = requireQuoteMoney(
+                    snapshot.getDiscountNative(), nativeCurrency,
+                    "vendor " + vendorId + " native discount");
+            BigDecimal platformShare = requireQuoteMoney(
+                    snapshot.getPlatformDiscountShareDisplay(), displayCurrency,
+                    "vendor " + vendorId + " platform discount share");
+            if (discountDisplay.compareTo(subtotalDisplay) > 0
+                    || discountNative.compareTo(subtotalNative) > 0
+                    || platformShare.compareTo(discountDisplay) > 0) {
+                throw incompleteQuote("vendor " + vendorId + " discount exceeds its frozen base");
+            }
+
+            FxSnapshot heldFx = FxSnapshot.held(nativeCurrency, displayCurrency,
+                    firstFx.getRate(), firstFx.getRateAt(), quote.getId());
+            vendors.add(new FrozenVendorContract(vendorId, nativeCurrency, heldFx, snapshot,
+                    List.copyOf(lines), subtotalNative, subtotalDisplay, shippingDisplay,
+                    discountNative, discountDisplay));
+
+            lineSubtotal = currencyCatalogue.round(lineSubtotal.add(subtotalDisplay), displayCurrency);
+            allocatedDiscount = currencyCatalogue.round(
+                    allocatedDiscount.add(discountDisplay), displayCurrency);
+            lineShipping = currencyCatalogue.round(lineShipping.add(shippingDisplay), displayCurrency);
+            platformDiscount = currencyCatalogue.round(
+                    platformDiscount.add(platformShare), displayCurrency);
+        }
+
+        if (lineSubtotal.compareTo(subtotal) != 0
+                || allocatedDiscount.compareTo(discount) != 0
+                || lineShipping.compareTo(shipping) != 0) {
+            throw incompleteQuote("parent totals do not reconcile with frozen vendor and line evidence");
+        }
+        BigDecimal calculatedTotal = currencyCatalogue.round(
+                subtotal.subtract(discount).add(shipping).add(tax), displayCurrency);
+        if (calculatedTotal.compareTo(total) != 0) {
+            throw incompleteQuote("the frozen quote total does not reconcile");
+        }
+        if (quote.getPlatformCouponId() == null && platformDiscount.signum() != 0) {
+            throw incompleteQuote("a platform discount allocation has no frozen coupon identity");
+        }
+
+        String orderCouponCode = quote.getPlatformCouponCode();
+        if (orderCouponCode == null || orderCouponCode.isBlank()) {
+            orderCouponCode = vendors.stream()
+                    .map(vendor -> vendor.snapshot().getVendorCouponCode())
+                    .filter(Objects::nonNull)
+                    .filter(code -> !code.isBlank())
+                    .findFirst()
+                    .orElse(null);
+        }
+        return new FrozenQuoteContract(displayCurrency, subtotal, discount, shipping, tax, total,
+                List.copyOf(vendors), orderCouponCode);
+    }
+
+    private void requireQuoteLine(CartQuoteLine line, String displayCurrency) {
+        if (line == null || line.getProductId() == null || line.getVendorId() == null
+                || line.getQuantity() <= 0 || !line.isDeliverable()) {
+            throw incompleteQuote("a quoted line has incomplete identity or availability evidence");
+        }
+        String nativeCurrency = currencyCatalogue.require(line.getListingCurrency());
+        requireQuoteMoney(line.getUnitPriceNative(), nativeCurrency, "native unit price");
+        requireQuoteMoney(line.getLineTotalNative(), nativeCurrency, "native line total");
+        requireQuoteMoney(line.getUnitPrice(), displayCurrency, "display unit price");
+        requireQuoteMoney(line.getLineTotal(), displayCurrency, "display line total");
+        requireQuoteMoney(line.getDeliveryCost(), displayCurrency, "line delivery cost");
+
+        FxSnapshot fx = line.getFx();
+        if (fx == null || !fx.isRecorded() || fx.getRate().signum() <= 0
+                || fx.getRateAt() == null || fx.getSource() == null
+                || fx.getNativeCurrency() == null || fx.getDisplayCurrency() == null
+                || !nativeCurrency.equalsIgnoreCase(fx.getNativeCurrency())
+                || !displayCurrency.equalsIgnoreCase(fx.getDisplayCurrency())) {
+            throw incompleteQuote("a quoted line has incomplete FX evidence");
+        }
+        boolean identity = nativeCurrency.equals(displayCurrency);
+        if (identity != fx.isIdentity()
+                || (identity && fx.getRate().compareTo(BigDecimal.ONE) != 0)) {
+            throw incompleteQuote("a quoted line has inconsistent FX evidence");
+        }
+    }
+
+    private BigDecimal requireQuoteMoney(BigDecimal amount, String currency, String label) {
+        if (amount == null || amount.signum() < 0) {
+            throw incompleteQuote(label + " is missing or negative");
+        }
+        BigDecimal rounded = currencyCatalogue.round(amount, currency);
+        if (rounded.compareTo(amount) != 0) {
+            throw incompleteQuote(label + " is not valid at " + currency + " precision");
+        }
+        return rounded;
+    }
+
+    private static void requireCouponSnapshot(Long couponId, String couponCode, String label) {
+        boolean hasId = couponId != null;
+        boolean hasCode = couponCode != null && !couponCode.isBlank();
+        if (hasId != hasCode) {
+            throw incompleteQuote(label + " identity is incomplete");
+        }
+    }
+
+    private static boolean sameFxEvidence(FxSnapshot left, FxSnapshot right) {
+        return left != null && right != null
+                && left.getRate() != null && right.getRate() != null
+                && left.getRate().compareTo(right.getRate()) == 0
+                && Objects.equals(left.getRateAt(), right.getRateAt())
+                && left.getSource() == right.getSource()
+                && equalsIgnoreCase(left.getNativeCurrency(), right.getNativeCurrency())
+                && equalsIgnoreCase(left.getDisplayCurrency(), right.getDisplayCurrency());
+    }
+
+    private static boolean equalsIgnoreCase(String left, String right) {
+        return left != null && right != null && left.equalsIgnoreCase(right);
+    }
+
+    private static BadRequestException incompleteQuote(String reason) {
+        return new BadRequestException("The saved quote is incomplete (" + reason
+                + "). Refresh the cart and request a new quote.");
+    }
+
+    private record FrozenVendorContract(
+            Long vendorId,
+            String nativeCurrency,
+            FxSnapshot fx,
+            CartQuoteVendorSnapshot snapshot,
+            List<CartQuoteLine> lines,
+            BigDecimal subtotalNative,
+            BigDecimal subtotalDisplay,
+            BigDecimal shippingDisplay,
+            BigDecimal discountNative,
+            BigDecimal discountDisplay) {
+    }
+
+    private record FrozenQuoteContract(
+            String displayCurrency,
+            BigDecimal subtotal,
+            BigDecimal discount,
+            BigDecimal shipping,
+            BigDecimal tax,
+            BigDecimal total,
+            List<FrozenVendorContract> vendors,
+            String orderCouponCode) {
+    }
+
+    private CheckoutResult buildFromFrozenQuote(CartQuote quote, FrozenQuoteContract contract) {
+        List<VendorOrder> vendorOrders = new ArrayList<>();
+        for (FrozenVendorContract frozen : contract.vendors()) {
+            List<OrderItem> items = new ArrayList<>();
+            Vendor vendor = null;
+            for (CartQuoteLine line : frozen.lines()) {
+                OrderItem item = lockAndBuildQuotedItem(line, contract.displayCurrency());
+                if (vendor == null) {
+                    vendor = item.getVendor();
+                }
+                items.add(item);
+            }
+
+            BigDecimal totalNative = currencyCatalogue.round(
+                    frozen.subtotalNative().subtract(frozen.discountNative()),
+                    frozen.nativeCurrency());
+            BigDecimal totalDisplay = currencyCatalogue.round(
+                    frozen.subtotalDisplay().subtract(frozen.discountDisplay()),
+                    contract.displayCurrency());
+            BigDecimal deliveryNative = frozenDeliveryNative(frozen);
+            BigDecimal commissionRate = vendor != null && vendor.getDefaultCommissionRate() != null
+                    ? vendor.getDefaultCommissionRate() : BigDecimal.ZERO;
+            BigDecimal commissionNative = currencyCatalogue.round(
+                    totalNative.multiply(commissionRate).movePointLeft(2),
+                    frozen.nativeCurrency());
+            BigDecimal payoutNative = currencyCatalogue.round(
+                    totalNative.subtract(commissionNative), frozen.nativeCurrency());
+
+            vendorOrders.add(VendorOrder.builder()
+                    .vendor(vendor)
+                    .status(VendorOrderStatus.PENDING)
+                    .nativeCurrency(frozen.nativeCurrency())
+                    .subtotalNative(frozen.subtotalNative())
+                    .discountNative(frozen.discountNative())
+                    .totalNative(totalNative)
+                    .subtotal(frozen.subtotalDisplay())
+                    .discount(frozen.discountDisplay())
+                    .total(totalDisplay)
+                    .commissionRate(commissionRate)
+                    .commissionNative(commissionNative)
+                    .deliveryNative(deliveryNative)
+                    .payoutNative(payoutNative)
+                    .fx(copyHeldFx(frozen.fx(), quote.getId()))
+                    .couponCode(frozen.snapshot().getVendorCouponCode())
+                    .items(items)
+                    .build());
+        }
+
+        CheckoutResult result = new CheckoutResult();
+        result.subtotal = contract.subtotal();
+        result.discount = contract.discount();
+        result.shipping = contract.shipping();
+        result.total = contract.total();
+        result.currency = contract.displayCurrency();
+        result.vendorOrders = vendorOrders;
+        return result;
+    }
+
+    private OrderItem lockAndBuildQuotedItem(CartQuoteLine line, String displayCurrency) {
+        Product product = productRepository.findByIdForUpdate(line.getProductId())
+                .orElseThrow(() -> new ResourceNotFoundException("Product", line.getProductId()));
+        if (!product.isActive()) {
+            throw new BadRequestException("Product is no longer available: " + product.getName());
+        }
+        Vendor vendor = product.getVendor();
+        if (vendor == null || !Objects.equals(vendor.getId(), line.getVendorId())) {
+            throw incompleteQuote("a product no longer belongs to its quoted vendor");
+        }
+        if (vendor.getStatus() == null || !vendor.getStatus().canTrade()) {
+            throw new BadRequestException(vendor.getStoreName() + " is not currently accepting orders");
+        }
+
+        ProductVariant variant = null;
+        if (line.getVariantId() != null) {
+            variant = variantRepository.findByIdForUpdate(line.getVariantId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "ProductVariant", line.getVariantId()));
+            if (variant.getProduct() == null
+                    || !Objects.equals(variant.getProduct().getId(), product.getId())) {
+                throw incompleteQuote("a variant does not belong to its quoted product");
+            }
+            if (!variant.isActive()) {
+                throw new BadRequestException(
+                        "Selected option for " + product.getName() + " is no longer available");
+            }
+        }
+
+        int available = availableStock(product, variant);
+        if (line.getQuantity() > available) {
+            throw new BadRequestException("Only " + available + " left of " + product.getName());
+        }
+        deductStock(product, variant, line.getQuantity());
+
+        return OrderItem.builder()
+                .product(product)
+                .variant(variant)
+                .vendor(vendor)
+                .quantity(line.getQuantity())
+                .unitPrice(currencyCatalogue.round(line.getUnitPriceNative(), line.getListingCurrency()))
+                .totalPrice(currencyCatalogue.round(line.getLineTotalNative(), line.getListingCurrency()))
+                .currency(currencyCatalogue.require(line.getListingCurrency()))
+                .unitPriceConverted(currencyCatalogue.round(line.getUnitPrice(), displayCurrency))
+                .totalPriceConverted(currencyCatalogue.round(line.getLineTotal(), displayCurrency))
+                .deliveryCost(currencyCatalogue.round(line.getDeliveryCost(), displayCurrency))
+                .productName(product.getName())
+                .productSku(product.getSku())
+                .variantSku(variant != null ? variant.getSku() : null)
+                .selectedOptions(variantLabel(variant))
+                .productImageUrl(primaryImageUrl(product))
+                .build();
+    }
+
+    private BigDecimal frozenDeliveryNative(FrozenVendorContract frozen) {
+        BigDecimal nativeDelivery = BigDecimal.ZERO;
+        for (CartQuoteLine line : frozen.lines()) {
+            nativeDelivery = nativeDelivery.add(line.getDeliveryCost()
+                    .divide(frozen.fx().getRate(), 12, RoundingMode.HALF_UP));
+        }
+        return currencyCatalogue.round(nativeDelivery, frozen.nativeCurrency());
+    }
+
+    private static FxSnapshot copyHeldFx(FxSnapshot fx, String quoteId) {
+        return FxSnapshot.held(fx.getNativeCurrency(), fx.getDisplayCurrency(),
+                fx.getRate(), fx.getRateAt(), quoteId);
+    }
 
     private void requireCheckoutable(CartResponse quote) {
         if (quote.getVendors() == null || quote.getVendors().isEmpty()) {

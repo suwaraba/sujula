@@ -203,12 +203,22 @@ public class StripePaymentGateway implements PaymentGateway {
     }
 
     BigDecimal toMinor(BigDecimal amount, String currency) {
-        int scale = currencies.minorUnits(currency);
-        return currencies.round(amount, currency).movePointRight(scale).setScale(0, RoundingMode.UNNECESSARY);
+        String canonicalCurrency = currencies.require(currency);
+        if (amount == null) {
+            throw new BadRequestException("A Stripe amount is required");
+        }
+        BigDecimal canonical = currencies.round(amount, canonicalCurrency);
+        if (canonical.compareTo(amount) != 0) {
+            throw new BadRequestException("Stripe amount " + amount + " " + canonicalCurrency
+                    + " is not expressible in that currency; the payment must be normalized first");
+        }
+        int scale = currencies.minorUnits(canonicalCurrency);
+        return canonical.movePointRight(scale).setScale(0, RoundingMode.UNNECESSARY);
     }
 
     BigDecimal fromMinor(long minor, String currency) {
-        return BigDecimal.valueOf(minor).movePointLeft(currencies.minorUnits(currency));
+        String canonicalCurrency = currencies.require(currency);
+        return BigDecimal.valueOf(minor).movePointLeft(currencies.minorUnits(canonicalCurrency));
     }
 
     private JsonNode post(String path, MultiValueMap<String, String> form, String idempotencyKey) {

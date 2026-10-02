@@ -56,16 +56,24 @@ class StripePaymentGatewayTest {
 
     @Test
     void eurosGoToStripeInCents() {
-        assertEquals(new BigDecimal("10800"), gateway.toMinor(new BigDecimal("108.00"), "EUR"));
-        assertEquals(new BigDecimal("108.00"), gateway.fromMinor(10800, "EUR"));
+        assertEquals(new BigDecimal("10864"), gateway.toMinor(new BigDecimal("108.64"), "EUR"));
+        assertEquals(new BigDecimal("108.64"), gateway.fromMinor(10864, "EUR"));
     }
 
     @Test
     void cfaHasNoMinorUnits() {
-        // Rounded to the currency's own scale first: 1250.50 CFA is not an
-        // amount that exists (C2).
-        assertEquals(new BigDecimal("1251"), gateway.toMinor(new BigDecimal("1250.50"), "XOF"));
+        assertEquals(new BigDecimal("1250"), gateway.toMinor(new BigDecimal("1250"), "XOF"));
         assertEquals(0, new BigDecimal("1250").compareTo(gateway.fromMinor(1250, "XOF")));
+    }
+
+    @Test
+    void stripeNeverRepairsANonCanonicalPaymentAmount() {
+        // The order/payment boundary must already have made XOF whole. Rounding
+        // here would let Stripe charge something other than Payment.amount.
+        assertThrows(BadRequestException.class,
+                () -> gateway.toMinor(new BigDecimal("1250.50"), "XOF"));
+        assertThrows(BadRequestException.class,
+                () -> gateway.toMinor(new BigDecimal("108.641"), "EUR"));
     }
 
     @Test
@@ -187,6 +195,22 @@ class StripePaymentGatewayTest {
     }
 
     @Test
+    void xofCheckoutSendsTheExactWholeFrancPaymentAmount() {
+        server.expect(once(), requestTo(API_BASE + "/v1/checkout/sessions"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().string(containsString("currency%5D=xof")))
+                .andExpect(content().string(containsString("unit_amount%5D=1251")))
+                .andRespond(withSuccess(
+                        "{\"id\":\"cs_XOF\",\"url\":\"https://checkout.stripe.test/cs_XOF\"}",
+                        APPLICATION_JSON));
+
+        gateway.createCheckout(payment(null, "XOF", new BigDecimal("1251")),
+                null, "sujula-pay-xof");
+
+        server.verify();
+    }
+
+    @Test
     void refundUsesTheDurableRefundRequestIdentityAsItsStripeIdempotencyKey() {
         server.expect(once(), requestTo(API_BASE + "/v1/refunds"))
                 .andExpect(method(HttpMethod.POST))
@@ -207,6 +231,10 @@ class StripePaymentGatewayTest {
     }
 
     private Payment payment(String transactionId) {
+        return payment(transactionId, "GMD", new BigDecimal("1200.00"));
+    }
+
+    private Payment payment(String transactionId, String currency, BigDecimal amount) {
         Order order = new Order();
         order.setOrderNumber("SJL-TEST0001");
         return Payment.builder()
@@ -214,8 +242,8 @@ class StripePaymentGatewayTest {
                 .reference("PAY-TEST00001")
                 .status(PaymentStatus.PENDING)
                 .method(PaymentMethod.CARD)
-                .amount(new BigDecimal("1200.00"))
-                .currency("GMD")
+                .amount(amount)
+                .currency(currency)
                 .transactionId(transactionId)
                 .build();
     }

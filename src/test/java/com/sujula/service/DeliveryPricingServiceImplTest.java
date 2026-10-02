@@ -12,6 +12,8 @@ import com.sujula.service.delivery.DeliveryItem;
 import com.sujula.service.delivery.DeliveryPricingProperties;
 import com.sujula.service.delivery.DeliveryQuote;
 import com.sujula.service.impl.DeliveryPricingServiceImpl;
+import com.sujula.service.reference.CurrencyCatalogue;
+import com.sujula.service.reference.ReferenceDataProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Page;
@@ -46,6 +48,7 @@ class DeliveryPricingServiceImplTest {
 
     private DeliveryPricingProperties properties;
     private DeliveryPricingServiceImpl service;
+    private CurrencyCatalogue currencies;
 
     @BeforeEach
     void setUp() {
@@ -58,7 +61,9 @@ class DeliveryPricingServiceImplTest {
         properties.setPerKg(new BigDecimal("20.00"));
         properties.setMinFee(new BigDecimal("50.00"));
         properties.setDefaultWeightKg(new BigDecimal("0.50"));
-        service = new DeliveryPricingServiceImpl(properties, new FixedRates(), null, null, null);
+        currencies = CurrencyCatalogue.of(new ReferenceDataProperties());
+        service = new DeliveryPricingServiceImpl(
+                properties, new FixedRates(), null, null, null, currencies);
     }
 
     @Test
@@ -176,6 +181,28 @@ class DeliveryPricingServiceImplTest {
     }
 
     @Test
+    void roundsDeliveryLegAndTotalToWholeXofBeforeReturningTheQuote() {
+        properties.setCurrency("XOF");
+        properties.setBaseFee(new BigDecimal("1250.50"));
+        properties.setMinFee(BigDecimal.ZERO);
+        properties.setIncludedKm(new BigDecimal("1000"));
+        properties.setIncludedKg(new BigDecimal("1000"));
+        properties.setPerKm(BigDecimal.ZERO);
+        properties.setPerKg(BigDecimal.ZERO);
+        service = new DeliveryPricingServiceImpl(
+                properties, new FixedRates(), null, null, null, currencies);
+
+        DeliveryQuote quote = service.quote(
+                List.of(DeliveryItem.of(product(10L,
+                        vendor(1L, ORIGIN_LAT, ORIGIN_LNG), 0.5, DeliveryScope.REGIIONAL), 1)),
+                destination(), DeliveryMode.HOME_DELIVERY, "XOF");
+
+        assertTrue(quote.complete());
+        assertEquals(new BigDecimal("1251"), quote.legs().get(0).cost());
+        assertEquals(new BigDecimal("1251"), quote.total());
+    }
+
+    @Test
     void reportsAnIncompleteQuoteWhenNoRateExists() {
         Vendor vendor = vendor(1L, ORIGIN_LAT, ORIGIN_LNG);
         DeliveryQuote quote = service.quote(
@@ -258,7 +285,8 @@ class DeliveryPricingServiceImplTest {
         when(maps.getCoordinates(anyString(), anyString()))
                 .thenReturn(new GeoAddress("14 Kairaba Avenue", DEST_LAT, DEST_LNG, "Gambia", "GM", "Serekunda"));
         DeliveryPricingServiceImpl geocoding =
-                new DeliveryPricingServiceImpl(properties, new FixedRates(), maps, null, null);
+                new DeliveryPricingServiceImpl(
+                        properties, new FixedRates(), maps, null, null, currencies);
 
         DeliveryDestination resolved = geocoding.resolveDestination(new DeliveryDestination(
                 null, null, "14 Kairaba Avenue", "Serekunda", null, null, "GM"));
@@ -275,7 +303,8 @@ class DeliveryPricingServiceImplTest {
     void keepsCoordinatesTheBuyerAlreadySupplied() {
         GoogleMapsService maps = mock(GoogleMapsService.class);
         DeliveryPricingServiceImpl geocoding =
-                new DeliveryPricingServiceImpl(properties, new FixedRates(), maps, null, null);
+                new DeliveryPricingServiceImpl(
+                        properties, new FixedRates(), maps, null, null, currencies);
 
         DeliveryDestination resolved = geocoding.resolveDestination(destination());
 
@@ -291,7 +320,8 @@ class DeliveryPricingServiceImplTest {
         when(maps.getCoordinates(anyString(), anyString()))
                 .thenThrow(new IllegalStateException("geocoder unreachable"));
         DeliveryPricingServiceImpl geocoding =
-                new DeliveryPricingServiceImpl(properties, new FixedRates(), maps, null, null);
+                new DeliveryPricingServiceImpl(
+                        properties, new FixedRates(), maps, null, null, currencies);
 
         DeliveryDestination resolved = geocoding.resolveDestination(new DeliveryDestination(
                 null, null, "14 Kairaba Avenue", "Serekunda", null, null, "GM"));

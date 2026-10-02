@@ -13,8 +13,11 @@ import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.constant.UserRole;
 import com.sujula.model.delivery.DeliveryContext;
 import com.sujula.model.idempotency.IdempotencyRecord;
+import com.sujula.model.money.FxSnapshot;
 import com.sujula.model.order.Cart;
 import com.sujula.model.order.CartQuote;
+import com.sujula.model.order.CartQuoteLine;
+import com.sujula.model.order.CartQuoteVendorSnapshot;
 import com.sujula.model.order.Order;
 import com.sujula.model.user.User;
 import com.sujula.repository.idempotency.IdempotencyRecordRepository;
@@ -184,7 +187,7 @@ class CheckoutQuoteConcurrencyIntegrationTest {
                 .displayCurrency("GMD")
                 .deliveryContextId(CONTEXT_ID)
                 .build());
-        quote = quotes.saveAndFlush(CartQuote.builder()
+        quote = CartQuote.builder()
                 .id("quote-" + UUID.randomUUID())
                 .cart(sourceCart)
                 .user(buyer)
@@ -200,11 +203,34 @@ class CheckoutQuoteConcurrencyIntegrationTest {
                 .complete(true)
                 .createdAt(LocalDateTime.now())
                 .expiresAt(LocalDateTime.now().plusMinutes(15))
-                .build());
+                .build();
+        quote.setLines(List.of(CartQuoteLine.builder()
+                .quote(quote)
+                .productId(101L)
+                .vendorId(501L)
+                .quantity(1)
+                .listingCurrency("GMD")
+                .unitPriceNative(BigDecimal.TEN)
+                .lineTotalNative(BigDecimal.TEN)
+                .unitPrice(BigDecimal.TEN)
+                .lineTotal(BigDecimal.TEN)
+                .deliveryCost(BigDecimal.ZERO)
+                .deliverable(true)
+                .fx(FxSnapshot.identity("GMD", LocalDateTime.now()))
+                .build()));
+        quote.setVendorSnapshots(List.of(CartQuoteVendorSnapshot.builder()
+                .quote(quote)
+                .vendorId(501L)
+                .discountDisplay(BigDecimal.ZERO)
+                .discountNative(BigDecimal.ZERO)
+                .platformDiscountShareDisplay(BigDecimal.ZERO)
+                .build()));
+        quote = quotes.saveAndFlush(quote);
 
         DeliveryContext context = new DeliveryContext();
         context.setId(CONTEXT_ID);
         context.setMode(DeliveryMode.HOME_DELIVERY);
+        context.setAddressId(77L);
         when(deliveryContexts.require(CONTEXT_ID, buyer.getId())).thenReturn(context);
     }
 
@@ -224,7 +250,7 @@ class CheckoutQuoteConcurrencyIntegrationTest {
         CountDownLatch winnerEnteredOrderCreation = new CountDownLatch(1);
         CountDownLatch releaseWinner = new CountDownLatch(1);
 
-        when(orderService.createFromValidatedCart(anyLong(), anyLong(), any(), any()))
+        when(orderService.createFromQuote(anyLong(), anyLong(), any(), any()))
                 .thenAnswer(call -> {
                     int sequence = orderCreations.incrementAndGet();
                     winnerEnteredOrderCreation.countDown();
@@ -315,6 +341,7 @@ class CheckoutQuoteConcurrencyIntegrationTest {
                 .totalsComplete(true)
                 .deliverable(true)
                 .vendors(List.of(CartResponse.VendorGroup.builder()
+                        .vendorId(501L)
                         .items(List.of(CartResponse.CartItemResponse.builder()
                                 .productId(101L)
                                 .variantId(null)

@@ -196,6 +196,15 @@ public class WebhookProcessor {
             applyFailure(event, payment, body);
             return;
         }
+
+        BigDecimal amount = decimal(body, "amount", "amountPaid", "amount_paid", "value");
+        String currency = text(body, "currency", "currencyCode", "currency_code");
+        String mismatch = exactProviderPaymentFailure(payment, amount, currency);
+        if (mismatch != null) {
+            finish(event, WebhookStatus.FAILED, payment.getReference(), mismatch);
+            return;
+        }
+
         Decision decision = ProviderPaymentTransitionPolicy.decide(
                 payment.getStatus(), PaymentStatus.PAID);
         if (decision == Decision.NO_OP) {
@@ -211,28 +220,6 @@ public class WebhookProcessor {
             return;
         }
 
-        BigDecimal amount = decimal(body, "amount", "amountPaid", "amount_paid", "value");
-        String currency = text(body, "currency", "currencyCode", "currency_code");
-
-        if (amount != null && payment.getAmount() != null
-                && amount.compareTo(payment.getAmount()) != 0) {
-            // An event that says a 108 EUR order was paid 1 EUR is a bug or an
-            // attack, and crediting it is the same mistake either way.
-            finish(event, WebhookStatus.FAILED, payment.getReference(), String.format(
-                    "The event says %s and the payment is for %s. Not marking it paid — a "
-                            + "provider cannot decide an order cost something else.",
-                    amount, payment.getAmount()));
-            return;
-        }
-        if (currency != null && payment.getCurrency() != null
-                && !currency.equalsIgnoreCase(payment.getCurrency())) {
-            finish(event, WebhookStatus.FAILED, payment.getReference(), String.format(
-                    "The event is in %s and the payment is in %s. Currencies are not "
-                            + "interchangeable here and nothing has been credited.",
-                    currency, payment.getCurrency()));
-            return;
-        }
-
         if (providerId != null && payment.getTransactionId() == null) {
             payment.setTransactionId(providerId);
         }
@@ -241,6 +228,64 @@ public class WebhookProcessor {
 
         finish(event, WebhookStatus.PROCESSED, payment.getReference(),
                 "Applied the canonical paid settlement at the payment's amount and currency.");
+    }
+
+    /**
+     * A success event must prove the exact stored contract. No absent values,
+     * cross-currency equality, provider-side rounding or one-minor-unit
+     * tolerance can create a paid transition.
+     */
+    private String exactProviderPaymentFailure(Payment payment, BigDecimal amount,
+                                               String reportedCurrency) {
+        String storedCurrency = payment.getCurrency();
+        if (!currencies.isSupported(storedCurrency)) {
+            return "The stored payment currency is missing or unsupported; nothing has been credited.";
+        }
+        String expectedCurrency = currencies.require(storedCurrency);
+        BigDecimal expected = payment.getAmount();
+        if (expected == null) {
+            return "The stored payment amount is missing; nothing has been credited.";
+        }
+        BigDecimal canonicalExpected = currencies.round(expected, expectedCurrency);
+        if (canonicalExpected.compareTo(expected) != 0) {
+            return String.format(
+                    "The stored payment amount %s is not expressible in %s; nothing has been credited.",
+                    expected, expectedCurrency);
+        }
+
+        if (reportedCurrency == null || reportedCurrency.isBlank()) {
+            return "The success event has no currency; nothing has been credited.";
+        }
+        if (!currencies.isSupported(reportedCurrency)) {
+            return "The event currency " + reportedCurrency
+                    + " is unsupported; nothing has been credited.";
+        }
+        String actualCurrency = currencies.require(reportedCurrency);
+        if (!actualCurrency.equals(expectedCurrency)) {
+            return String.format(
+                    "The event is in %s and the payment is in %s. Currencies are not "
+                            + "interchangeable here and nothing has been credited.",
+                    actualCurrency, expectedCurrency);
+        }
+
+        if (amount == null) {
+            return "The success event has no valid amount; nothing has been credited.";
+        }
+        BigDecimal canonicalAmount = currencies.round(amount, actualCurrency);
+        if (canonicalAmount.compareTo(amount) != 0) {
+            return String.format(
+                    "The event amount %s is not expressible in %s; nothing has been credited.",
+                    amount, actualCurrency);
+        }
+        if (canonicalAmount.compareTo(canonicalExpected) != 0) {
+            // An event even one minor unit away from the contract is a bug or
+            // an attack, and crediting it is the same mistake either way.
+            return String.format(
+                    "The event says %s and the payment is for %s. Not marking it paid — a "
+                            + "provider cannot decide an order cost something else.",
+                    canonicalAmount, canonicalExpected);
+        }
+        return null;
     }
 
     private void applyFailure(WebhookEvent event, Payment payment, JsonNode body) {

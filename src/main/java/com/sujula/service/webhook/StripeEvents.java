@@ -80,8 +80,9 @@ final class StripeEvents {
             flat.put("currency", currency);
         }
         JsonNode minor = firstNumber(object, "amount_total", "amount_received", "amount");
-        if (minor != null && !currency.isBlank() && currencies.isSupported(currency)) {
-            BigDecimal amount = BigDecimal.valueOf(minor.asLong())
+        if (minor != null && minor.isIntegralNumber()
+                && !currency.isBlank() && currencies.isSupported(currency)) {
+            BigDecimal amount = new BigDecimal(minor.asString())
                     .movePointLeft(currencies.minorUnits(currency));
             flat.put("amount", amount.toPlainString());
         }

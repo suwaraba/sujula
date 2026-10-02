@@ -28,10 +28,13 @@ import com.sujula.service.payment.PaymentGateway;
 import com.sujula.service.payment.PaymentOperation;
 import com.sujula.service.payment.PaymentProperties;
 import com.sujula.service.payment.PaymentSettlementService;
+import com.sujula.service.reference.CurrencyCatalogue;
+import com.sujula.service.reference.ReferenceDataProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InOrder;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.access.AccessDeniedException;
@@ -76,6 +79,7 @@ class PaymentServiceImplTest {
     private VendorOrderRepository vendorOrderRepository;
     private UserRepository userRepository;
     private PaymentProperties properties;
+    private CurrencyCatalogue currencies;
     private PaymentServiceImpl service;
 
     private Order order;
@@ -104,6 +108,7 @@ class PaymentServiceImplTest {
         properties.getBankTransfer().setBankName("Trust Bank");
         properties.getBankTransfer().setAccountName("Sujula Ltd");
         properties.getBankTransfer().setAccountNumber("0123456789");
+        currencies = CurrencyCatalogue.of(new ReferenceDataProperties());
 
         ObjectProvider<PaymentGateway> noGateways = mock(ObjectProvider.class);
         when(noGateways.stream()).thenAnswer(invocation -> java.util.stream.Stream.empty());
@@ -113,7 +118,7 @@ class PaymentServiceImplTest {
         service = new PaymentServiceImpl(paymentRepository, orderRepository,
                 vendorOrderRepository, userRepository, vendorRepository,
                 notificationService, mock(AuditService.class),
-                properties, noGateways, settlements);
+                properties, noGateways, settlements, currencies);
 
         order = new Order();
         order.setId(7L);
@@ -168,7 +173,8 @@ class PaymentServiceImplTest {
                 orderRepository, statusHistoryRepository, email, notifications);
         return new PaymentServiceImpl(paymentRepository, orderRepository,
                 mock(VendorOrderRepository.class), userRepository, mock(VendorRepository.class),
-                notifications, mock(AuditService.class), properties, gateways, settlements);
+                notifications, mock(AuditService.class), properties, gateways, settlements,
+                currencies);
     }
 
     @Test
@@ -243,6 +249,42 @@ class PaymentServiceImplTest {
         // The order carries the flag, so nothing has to join to payments to read it.
         assertEquals(PaymentStatus.PENDING, order.getPaymentStatus());
         assertEquals(PaymentMethod.BANK_TRANSFER, order.getPaymentMethod());
+    }
+
+    @Test
+    void xofPaymentAmountIsCanonicalBeforeItIsPersisted() {
+        order.setCurrency("XOF");
+        order.setTotal(new BigDecimal("1251.00"));
+
+        PaymentResponse payment = service.initiate(7L, null,
+                InitiatePaymentRequest.builder().method(PaymentMethod.BANK_TRANSFER).build(), OPERATION);
+
+        assertEquals(new BigDecimal("1251"), payment.getAmount());
+        assertEquals(0, payment.getAmount().scale());
+        assertEquals("XOF", payment.getCurrency());
+    }
+
+    @Test
+    void paymentCreationDoesNotSilentlyRoundAFractionalXofOrderTotal() {
+        order.setCurrency("XOF");
+        order.setTotal(new BigDecimal("1250.50"));
+
+        assertThrows(BadRequestException.class, () -> service.initiate(7L, null,
+                InitiatePaymentRequest.builder().method(PaymentMethod.BANK_TRANSFER).build(), OPERATION));
+
+        verify(paymentRepository, never()).save(any(Payment.class));
+    }
+
+    @Test
+    void twoDecimalPaymentKeepsItsExactCents() {
+        order.setCurrency("EUR");
+        order.setTotal(new BigDecimal("1200.37"));
+
+        PaymentResponse payment = service.initiate(7L, null,
+                InitiatePaymentRequest.builder().method(PaymentMethod.BANK_TRANSFER).build(), OPERATION);
+
+        assertEquals(new BigDecimal("1200.37"), payment.getAmount());
+        assertEquals("EUR", payment.getCurrency());
     }
 
     @Test
@@ -559,7 +601,8 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(paid));
 
         PaymentResponse payment = service.handleCallback(PaymentCallbackRequest.builder()
-                .transactionId("pi_abc").status(PaymentStatus.PAID).build());
+                .transactionId("pi_abc").status(PaymentStatus.PAID)
+                .amount(new BigDecimal("1200.00")).currency("GMD").build());
 
         assertEquals(PaymentStatus.PAID, payment.getStatus());
         verify(statusHistoryRepository, never()).save(any(OrderStatusHistory.class));
@@ -573,7 +616,93 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending));
 
         assertThrows(BadRequestException.class, () -> service.handleCallback(PaymentCallbackRequest.builder()
-                .transactionId("pi_abc").status(PaymentStatus.PAID).amount(new BigDecimal("1.00")).build()));
+                .transactionId("pi_abc").status(PaymentStatus.PAID)
+                .amount(new BigDecimal("1.00")).currency("GMD").build()));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"1199.99", "1200.01"})
+    void aCallbackOneMinorUnitEitherSideIsRejected(String providerAmount) {
+        Payment pending = pending(PaymentMethod.CARD);
+        pending.setTransactionId("pi_one_minor");
+        when(paymentRepository.findOrderIdByTransactionId("pi_one_minor"))
+                .thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending));
+
+        assertThrows(BadRequestException.class, () -> service.handleCallback(
+                PaymentCallbackRequest.builder()
+                        .transactionId("pi_one_minor").status(PaymentStatus.PAID)
+                        .amount(new BigDecimal(providerAmount)).currency("GMD").build()));
+
+        assertEquals(PaymentStatus.PENDING, pending.getStatus());
+    }
+
+    @Test
+    void aPaidCallbackRequiresBothAmountAndCurrency() {
+        Payment pending = pending(PaymentMethod.CARD);
+        pending.setTransactionId("pi_missing_money");
+        when(paymentRepository.findOrderIdByTransactionId("pi_missing_money"))
+                .thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending));
+
+        assertThrows(BadRequestException.class, () -> service.handleCallback(
+                PaymentCallbackRequest.builder()
+                        .transactionId("pi_missing_money").status(PaymentStatus.PAID)
+                        .currency("GMD").build()));
+        assertThrows(BadRequestException.class, () -> service.handleCallback(
+                PaymentCallbackRequest.builder()
+                        .transactionId("pi_missing_money").status(PaymentStatus.PAID)
+                        .amount(new BigDecimal("1200.00")).build()));
+    }
+
+    @Test
+    void aPaidCallbackRequiresTheExactStoredCurrency() {
+        Payment pending = pending(PaymentMethod.CARD);
+        pending.setTransactionId("pi_wrong_currency");
+        when(paymentRepository.findOrderIdByTransactionId("pi_wrong_currency"))
+                .thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending));
+
+        assertThrows(BadRequestException.class, () -> service.handleCallback(
+                PaymentCallbackRequest.builder()
+                        .transactionId("pi_wrong_currency").status(PaymentStatus.PAID)
+                        .amount(new BigDecimal("1200.00")).currency("EUR").build()));
+    }
+
+    @Test
+    void anExactWholeFrancXofCallbackIsAccepted() {
+        order.setCurrency("XOF");
+        order.setTotal(new BigDecimal("1251"));
+        Payment pending = pending(PaymentMethod.CARD);
+        pending.setAmount(new BigDecimal("1251"));
+        pending.setCurrency("XOF");
+        pending.setTransactionId("pi_xof");
+        when(paymentRepository.findOrderIdByTransactionId("pi_xof")).thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(pending));
+
+        PaymentResponse response = service.handleCallback(PaymentCallbackRequest.builder()
+                .transactionId("pi_xof").status(PaymentStatus.PAID)
+                .amount(new BigDecimal("1251")).currency("xof").build());
+
+        assertEquals(PaymentStatus.PAID, response.getStatus());
+        assertEquals(new BigDecimal("1251"), response.getAmount());
+    }
+
+    @Test
+    void evenADuplicatePaidCallbackMustCarryTheExactAmount() {
+        Payment paid = pending(PaymentMethod.CARD);
+        paid.setStatus(PaymentStatus.PAID);
+        paid.setTransactionId("pi_duplicate_mismatch");
+        when(paymentRepository.findOrderIdByTransactionId("pi_duplicate_mismatch"))
+                .thenReturn(Optional.of(7L));
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(paid));
+
+        assertThrows(BadRequestException.class, () -> service.handleCallback(
+                PaymentCallbackRequest.builder()
+                        .transactionId("pi_duplicate_mismatch").status(PaymentStatus.PAID)
+                        .amount(new BigDecimal("1200.01")).currency("GMD").build()));
+
+        verify(statusHistoryRepository, never()).save(any(OrderStatusHistory.class));
     }
 
     @Test
@@ -585,7 +714,7 @@ class PaymentServiceImplTest {
 
         PaymentResponse response = service.handleCallback(PaymentCallbackRequest.builder()
                 .transactionId("pi_paid").status(PaymentStatus.PAID)
-                .amount(new BigDecimal("1200.00")).build());
+                .amount(new BigDecimal("1200.00")).currency("GMD").build());
 
         assertEquals(PaymentStatus.PAID, response.getStatus());
         assertEquals(PaymentStatus.PAID, order.getPaymentStatus());
@@ -624,7 +753,8 @@ class PaymentServiceImplTest {
         when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(terminal));
 
         PaymentResponse response = service.handleCallback(PaymentCallbackRequest.builder()
-                .transactionId("pi_terminal").status(PaymentStatus.PAID).build());
+                .transactionId("pi_terminal").status(PaymentStatus.PAID)
+                .amount(new BigDecimal("1200.00")).currency("GMD").build());
 
         assertEquals(current, response.getStatus());
         verify(statusHistoryRepository, never()).save(any(OrderStatusHistory.class));

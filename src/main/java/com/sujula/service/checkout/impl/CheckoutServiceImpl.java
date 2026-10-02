@@ -11,6 +11,8 @@ import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.delivery.DeliveryContext;
 import com.sujula.model.order.CartQuote;
+import com.sujula.model.order.CartQuoteLine;
+import com.sujula.model.order.CartQuoteVendorSnapshot;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.VendorOrder;
 import com.sujula.repository.order.CartQuoteRepository;
@@ -29,25 +31,23 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Checkout: validate, reserve, create, intend.
  *
- * <p><strong>What the quote guarantees, and what it does not.</strong> The quote
- * is the figure the buyer agreed to. Order creation re-prices the cart through
- * the same path every other order uses — there is one order assembly in this
- * application and a second one here would eventually disagree with it — and the
- * result is then reconciled against the quote before anything is charged.
+ * <p><strong>The persisted quote is the monetary contract.</strong> Checkout
+ * validates that the cart still contains the same products, variants and
+ * quantities, then constructs the order from the quote's frozen lines, vendor
+ * discount snapshots, delivery shares and FX evidence. Live catalogue prices,
+ * exchange rates, delivery pricing and coupon state are not monetary inputs.
  *
- * <p>If the two differ, the order is rejected and the transaction rolls back.
- * That means a buyer is never charged a figure they did not agree to, which is
- * the property that matters. It does <em>not</em> yet mean they are charged the
- * quoted figure when the market moves underneath them: today they are asked to
- * re-quote. Honouring the frozen rate through assembly is the next step, and the
- * frozen lines are already on the quote for it — but a reconciliation that
- * refuses is safe, whereas a freeze that is half-applied is not.
+ * <p>The resulting order must match the quote exactly. There is no one-minor-unit
+ * reconciliation allowance: any difference means the transaction rolls back
+ * before payment is initiated and the buyer must request a new quote.
  */
 @Slf4j
 @Service
@@ -80,21 +80,21 @@ public class CheckoutServiceImpl implements CheckoutService {
         CartQuote quote = requireUsableQuote(request.quoteId(), userId);
         CartResponse cart = carts.getCartForCheckout(userId, sourceCartId(quote));
         requireSameCartStructure(quote, cart);
-        requireBoundDelivery(quote, cart, userId);
 
         if (request.addressId() == null) {
             throw new BadRequestException(
                     "An address is needed: the delivery context says where the parcel goes, and "
                             + "this says who to hand it to and on what street.");
         }
+        requireBoundDelivery(quote, cart, userId, request.addressId());
 
         // Reserve and create. The existing path locks each product row before
         // decrementing, so two shoppers racing for the last unit cannot both
         // succeed.
-        Order order = orderService.createFromValidatedCart(userId, request.addressId(),
-                request.notes(), cart);
+        Order order = orderService.createFromQuote(userId, request.addressId(),
+                request.notes(), quote);
 
-        reconcile(order, quote);
+        requireExactOrderContract(order, quote);
 
         quote.setConsumedAt(LocalDateTime.now());
         quote.setConsumedOrderId(order.getId());
@@ -109,22 +109,21 @@ public class CheckoutServiceImpl implements CheckoutService {
         return toPlaced(order, payment);
     }
 
-    /**
-     * The buyer must never be charged a figure they did not agree to.
-     *
-     * <p>Compared to the currency's own smallest unit rather than to zero: a
-     * conversion and a re-conversion can legitimately differ by one butut, and
-     * failing a checkout over rounding residue would be its own bug. In CFA,
-     * which has no minor unit, the tolerance is a whole franc — which is
-     * correct, because a franc is the smallest amount that exists there.
-     */
-    private void reconcile(Order order, CartQuote quote) {
-        BigDecimal tolerance = currencies.smallestUnit(quote.getDisplayCurrency());
-        BigDecimal difference = order.getTotal().subtract(quote.getTotal()).abs();
+    /** The quote and resulting order must match exactly, with no repricing tolerance. */
+    private void requireExactOrderContract(Order order, CartQuote quote) {
+        String currency = currencies.require(quote.getDisplayCurrency());
+        BigDecimal quotedTotal = currencies.round(quote.getTotal(), currency);
 
-        if (difference.compareTo(tolerance) > 0) {
+        if (quote.getTotal() == null || quotedTotal.compareTo(quote.getTotal()) != 0) {
+            throw new BadRequestException(
+                    "This quote uses invalid currency precision. Refresh the cart and request a new quote.");
+        }
+        if (order == null || order.getTotal() == null
+                || order.getTotal().compareTo(quotedTotal) != 0
+                || !currency.equalsIgnoreCase(order.getCurrency())) {
             log.warn("[Checkout] Quote {} priced {} {} but the order came to {} — refusing",
-                    quote.getId(), quote.getTotal(), quote.getDisplayCurrency(), order.getTotal());
+                    quote.getId(), quote.getTotal(), quote.getDisplayCurrency(),
+                    order == null ? null : order.getTotal());
             throw new BadRequestException(
                     "The price changed while you were checking out. Nothing has been charged — "
                             + "please review the basket and try again.");
@@ -209,7 +208,41 @@ public class CheckoutServiceImpl implements CheckoutService {
                     "That quote has already been used for order " + quote.getConsumedOrderId()
                             + ". Ask for a new one.");
         }
+        requireCompleteSnapshotCoverage(quote);
         return quote;
+    }
+
+    /** Initializes the lazy contract collections while the quote row is locked. */
+    private static void requireCompleteSnapshotCoverage(CartQuote quote) {
+        List<CartQuoteLine> lines = quote.getLines();
+        List<CartQuoteVendorSnapshot> snapshots = quote.getVendorSnapshots();
+        if (lines == null || lines.isEmpty() || snapshots == null || snapshots.isEmpty()) {
+            throw requoteForIncompleteContract();
+        }
+
+        Set<Long> lineVendors = new HashSet<>();
+        for (CartQuoteLine line : lines) {
+            if (line == null || line.getVendorId() == null) {
+                throw requoteForIncompleteContract();
+            }
+            lineVendors.add(line.getVendorId());
+        }
+
+        Set<Long> snapshotVendors = new HashSet<>();
+        for (CartQuoteVendorSnapshot snapshot : snapshots) {
+            if (snapshot == null || snapshot.getVendorId() == null
+                    || !snapshotVendors.add(snapshot.getVendorId())) {
+                throw requoteForIncompleteContract();
+            }
+        }
+        if (!snapshotVendors.equals(lineVendors)) {
+            throw requoteForIncompleteContract();
+        }
+    }
+
+    private static BadRequestException requoteForIncompleteContract() {
+        return new BadRequestException(
+                "This quote predates the complete checkout contract. Refresh the cart and request a new quote.");
     }
 
     /** The exact cart that was quoted, never an account's later replacement cart. */
@@ -232,7 +265,8 @@ public class CheckoutServiceImpl implements CheckoutService {
     }
 
     /** Refuse a price that was calculated for another delivery destination or mode. */
-    private void requireBoundDelivery(CartQuote quote, CartResponse cart, Long userId) {
+    private void requireBoundDelivery(CartQuote quote, CartResponse cart, Long userId,
+                                      Long shippingAddressId) {
         if (quote.getDeliveryContextId() == null || quote.getDeliveryContextId().isBlank()
                 || !Objects.equals(quote.getDeliveryContextId(), cart.getDeliveryContextId())) {
             throw new BadRequestException(
@@ -240,6 +274,11 @@ public class CheckoutServiceImpl implements CheckoutService {
         }
 
         DeliveryContext context = deliveryContexts.require(quote.getDeliveryContextId(), userId);
+        if (context.getAddressId() != null
+                && !Objects.equals(context.getAddressId(), shippingAddressId)) {
+            throw new BadRequestException(
+                    "The selected address is not the address this quote was priced for. Request a new quote.");
+        }
         if (quote.getDeliveryMode() != context.getMode()
                 || !Objects.equals(quote.getPickupPointId(), context.getPickupPointId())) {
             throw new BadRequestException(

@@ -53,6 +53,19 @@ class StripeEventsTest {
     }
 
     @Test
+    void aNonIntegralStripeMinorAmountIsNeverSilentlyTruncated() {
+        JsonNode malformed = mapper.readTree("""
+                {"data":{"object":{"id":"cs_test_1","currency":"eur",
+                  "amount_total":10864.5,"payment_status":"paid",
+                  "metadata":{"reference":"PAY-1"}}}}
+                """);
+
+        JsonNode flat = StripeEvents.flatten(malformed, mapper, currencies);
+
+        assertFalse(flat.has("amount"));
+    }
+
+    @Test
     void aCompletedCheckoutStillWaitingForFundsDoesNotCount() {
         assertTrue(StripeEvents.awaitingFunds("checkout.session.completed",
                 completed("eur", 10800, "unpaid")));

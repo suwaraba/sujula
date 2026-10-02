@@ -32,6 +32,7 @@ import com.sujula.service.payment.PaymentOperation;
 import com.sujula.service.payment.PaymentSettlementService;
 import com.sujula.service.payment.ProviderPaymentTransitionPolicy;
 import com.sujula.service.payment.ProviderPaymentTransitionPolicy.Decision;
+import com.sujula.service.reference.CurrencyCatalogue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -42,7 +43,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -87,6 +87,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentProperties properties;
     private final ObjectProvider<PaymentGateway> gateways;
     private final PaymentSettlementService settlements;
+    private final CurrencyCatalogue currencies;
 
     public PaymentServiceImpl(PaymentRepository paymentRepository,
                               OrderRepository orderRepository,
@@ -97,7 +98,8 @@ public class PaymentServiceImpl implements PaymentService {
                               AuditService auditService,
                               PaymentProperties properties,
                               ObjectProvider<PaymentGateway> gateways,
-                              PaymentSettlementService settlements) {
+                              PaymentSettlementService settlements,
+                              CurrencyCatalogue currencies) {
         this.paymentRepository = paymentRepository;
         this.orderRepository = orderRepository;
         this.vendorOrderRepository = vendorOrderRepository;
@@ -108,6 +110,7 @@ public class PaymentServiceImpl implements PaymentService {
         this.properties = properties;
         this.gateways = gateways;
         this.settlements = settlements;
+        this.currencies = currencies;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -361,8 +364,9 @@ public class PaymentServiceImpl implements PaymentService {
      * holding a total that an admin edit may since have changed.
      */
     private void repriceFromOrder(Payment payment, Order order) {
-        payment.setAmount(order.getTotal());
-        payment.setCurrency(order.getCurrency());
+        String currency = currencies.require(order.getCurrency());
+        payment.setAmount(requireCanonicalAmount(order.getTotal(), currency, "Order total"));
+        payment.setCurrency(currency);
     }
 
     /** True when an already-opened leg can still be handed back to the buyer as-is. */
@@ -480,6 +484,10 @@ public class PaymentServiceImpl implements PaymentService {
             payment.setGatewayResponse(callback.getRawPayload());
         }
 
+        if (callback.getStatus() == PaymentStatus.PAID) {
+            requireExactProviderPayment(payment, callback.getAmount(), callback.getCurrency());
+        }
+
         Decision decision = ProviderPaymentTransitionPolicy.decide(
                 payment.getStatus(), callback.getStatus());
         if (decision == Decision.NO_OP) {
@@ -504,7 +512,6 @@ public class PaymentServiceImpl implements PaymentService {
 
         switch (callback.getStatus()) {
             case PAID -> {
-                requireMatchingAmount(payment, callback.getAmount());
                 settle(payment, null, callback.getTransactionId(), null);
             }
             case AUTHORIZED -> {
@@ -786,6 +793,51 @@ public class PaymentServiceImpl implements PaymentService {
 
     private Optional<PaymentGateway> gatewayFor(PaymentMethod method) {
         return gateways.stream().filter(g -> g.supports(method)).findFirst();
+    }
+
+    /**
+     * Returns the currency-canonical representation of an amount, but never
+     * changes its value. A payment is a copy of the order contract; silently
+     * rounding a malformed order total here would make the two disagree.
+     */
+    private BigDecimal requireCanonicalAmount(BigDecimal amount, String currency, String label) {
+        if (amount == null) {
+            throw new BadRequestException(label + " is required");
+        }
+        BigDecimal canonical = currencies.round(amount, currency);
+        if (canonical.compareTo(amount) != 0) {
+            throw new BadRequestException(label + " " + amount + " " + currency
+                    + " is not expressible in that currency; its smallest unit is "
+                    + currencies.smallestUnit(currency));
+        }
+        return canonical;
+    }
+
+    /**
+     * A provider success is evidence for one exact contractual amount. Missing
+     * values, another currency, fractions below that currency's minor unit,
+     * underpayment and overpayment all fail closed.
+     */
+    private void requireExactProviderPayment(Payment payment, BigDecimal received,
+                                             String receivedCurrency) {
+        String expectedCurrency = currencies.require(payment.getCurrency());
+        BigDecimal expected = requireCanonicalAmount(
+                payment.getAmount(), expectedCurrency, "Stored payment amount");
+
+        if (receivedCurrency == null || receivedCurrency.isBlank()) {
+            throw new BadRequestException("A paid callback must include its currency");
+        }
+        String actualCurrency = currencies.require(receivedCurrency);
+        if (!expectedCurrency.equals(actualCurrency)) {
+            throw new BadRequestException("The provider reported " + actualCurrency
+                    + " but the payment is in " + expectedCurrency);
+        }
+
+        BigDecimal actual = requireCanonicalAmount(received, actualCurrency, "Provider amount");
+        if (actual.compareTo(expected) != 0) {
+            throw new BadRequestException("The provider reported " + actual + " " + actualCurrency
+                    + " but the payment is for exactly " + expected + " " + expectedCurrency);
+        }
     }
 
     /**

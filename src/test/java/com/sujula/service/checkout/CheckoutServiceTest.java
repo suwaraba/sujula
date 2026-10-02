@@ -11,8 +11,11 @@ import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentMethod;
 import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.delivery.DeliveryContext;
+import com.sujula.model.money.FxSnapshot;
 import com.sujula.model.order.Cart;
 import com.sujula.model.order.CartQuote;
+import com.sujula.model.order.CartQuoteLine;
+import com.sujula.model.order.CartQuoteVendorSnapshot;
 import com.sujula.model.order.Order;
 import com.sujula.model.user.User;
 import com.sujula.repository.order.CartQuoteRepository;
@@ -133,6 +136,27 @@ class CheckoutServiceTest {
                 .createdAt(LocalDateTime.now())
                 .expiresAt(LocalDateTime.now().plusMinutes(15))
                 .build();
+        quote.setLines(List.of(CartQuoteLine.builder()
+                .quote(quote)
+                .productId(100L)
+                .vendorId(501L)
+                .quantity(1)
+                .listingCurrency(currency)
+                .unitPriceNative(new BigDecimal(total))
+                .lineTotalNative(new BigDecimal(total))
+                .unitPrice(new BigDecimal(total))
+                .lineTotal(new BigDecimal(total))
+                .deliveryCost(BigDecimal.ZERO)
+                .deliverable(true)
+                .fx(FxSnapshot.identity(currency, LocalDateTime.now()))
+                .build()));
+        quote.setVendorSnapshots(List.of(CartQuoteVendorSnapshot.builder()
+                .quote(quote)
+                .vendorId(501L)
+                .discountDisplay(BigDecimal.ZERO)
+                .discountNative(BigDecimal.ZERO)
+                .platformDiscountShareDisplay(BigDecimal.ZERO)
+                .build()));
         when(quotes.findByIdForUpdate(id)).thenReturn(Optional.of(quote));
         if (ownerId != null) {
             when(carts.getCartForCheckout(ownerId, 1L)).thenReturn(priced);
@@ -151,6 +175,7 @@ class CheckoutServiceTest {
                 .totalsComplete(true)
                 .deliverable(true)
                 .vendors(List.of(CartResponse.VendorGroup.builder()
+                        .vendorId(501L)
                         .items(List.of(CartResponse.CartItemResponse.builder()
                                 .productId(productId)
                                 .variantId(variantId)
@@ -179,7 +204,7 @@ class CheckoutServiceTest {
         order.setTotal(new BigDecimal(total));
         order.setCustomer(buyer(BUYER));
         order.setVendorOrders(List.of());
-        when(orderService.createFromValidatedCart(anyLong(), anyLong(), any(), any())).thenReturn(order);
+        when(orderService.createFromQuote(anyLong(), anyLong(), any(), any())).thenReturn(order);
         when(orders.findById(42L)).thenReturn(Optional.of(order));
         return order;
     }
@@ -233,30 +258,22 @@ class CheckoutServiceTest {
         verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
-    /**
-     * A conversion and a re-conversion can legitimately differ by one butut.
-     * Failing checkout over rounding residue would be its own bug.
-     */
+    /** Even one butut differs from the persisted contract and must fail closed. */
     @Test
-    void roundingResidueIsToleratedInATwoPlaceCurrency() {
+    void oneMinorUnitDifferenceIsRejectedInATwoPlaceCurrency() {
         quote("q1", BUYER, "GBP", "129.73");
         order("129.74", "GBP");
 
-        assertNotNull(checkout.checkout(BUYER, request("q1")));
+        assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
     }
 
-    /** In CFA the smallest amount that exists is a whole franc, so that is the tolerance. */
+    /** Even one whole CFA franc differs from the persisted contract. */
     @Test
-    void theToleranceIsTheCurrencysOwnSmallestUnit() {
+    void oneWholeFrancDifferenceIsRejectedForXof() {
         quote("q1", BUYER, "XOF", "13050");
         order("13051", "XOF");
 
-        assertNotNull(checkout.checkout(BUYER, request("q1")),
-                "one franc is the smallest amount CFA can express");
-
-        quote("q2", BUYER, "XOF", "13050");
-        order("13055", "XOF");
-        assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q2")));
+        assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
     }
 
     // ── What a quote has to be ───────────────────────────────────────────────
@@ -280,7 +297,7 @@ class CheckoutServiceTest {
                 assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
 
         assertTrue(refused.getMessage().contains("already been used"));
-        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
     }
 
     /**
@@ -293,7 +310,7 @@ class CheckoutServiceTest {
         held.setComplete(false);
 
         assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
-        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
     }
 
     @Test
@@ -310,7 +327,20 @@ class CheckoutServiceTest {
 
         assertThrows(BadRequestException.class,
                 () -> checkout.checkout(BUYER, request("guest-quote")));
-        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
+    }
+
+    @Test
+    void aLegacyQuoteWithoutVendorSnapshotsFailsClosed() {
+        CartQuote held = quote("legacy", BUYER, "GBP", "129.73");
+        held.setVendorSnapshots(List.of());
+
+        BadRequestException refused = assertThrows(BadRequestException.class,
+                () -> checkout.checkout(BUYER, request("legacy")));
+
+        assertTrue(refused.getMessage().contains("request a new quote"));
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
+        verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -320,7 +350,7 @@ class CheckoutServiceTest {
                 .thenReturn(cart(1L, "GBP", "delivery-1", 200L, null, 1));
 
         assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
-        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
         verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
@@ -331,7 +361,7 @@ class CheckoutServiceTest {
                 .thenReturn(cart(1L, "GBP", "delivery-1", 100L, null, 2));
 
         assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
-        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
         verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
@@ -342,7 +372,7 @@ class CheckoutServiceTest {
                 .thenReturn(cart(2L, "GBP", "delivery-1", 100L, null, 1));
 
         assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
-        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
     }
 
     @Test
@@ -352,7 +382,20 @@ class CheckoutServiceTest {
                 .thenReturn(cart(1L, "GBP", "delivery-2", 100L, null, 1));
 
         assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
-        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
+    }
+
+    @Test
+    void aDifferentSavedAddressFromTheQuotedContextIsRejected() {
+        quote("q1", BUYER, "GBP", "129.73");
+        DeliveryContext context = delivery("delivery-1", DeliveryMode.HOME_DELIVERY, null);
+        context.setAddressId(71L);
+        when(deliveryContexts.require("delivery-1", BUYER)).thenReturn(context);
+
+        assertThrows(BadRequestException.class,
+                () -> checkout.checkout(BUYER, request("q1")));
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
+        verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -364,7 +407,7 @@ class CheckoutServiceTest {
                 .thenReturn(delivery("delivery-1", DeliveryMode.PICKUP_POINT, 9L));
 
         assertThrows(BadRequestException.class, () -> checkout.checkout(BUYER, request("q1")));
-        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
         verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
@@ -383,7 +426,7 @@ class CheckoutServiceTest {
 
         assertThrows(ResourceNotFoundException.class, () -> checkout.checkout(BUYER, request("gone")));
 
-        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
         verify(payments, never()).initiate(anyLong(), any(), any(), any());
     }
 
@@ -398,7 +441,7 @@ class CheckoutServiceTest {
                 new CheckoutRequests.RetryPayment(PaymentMethod.BANK_TRANSFER));
 
         assertNotNull(intent);
-        verify(orderService, never()).createFromValidatedCart(anyLong(), anyLong(), any(), any());
+        verify(orderService, never()).createFromQuote(anyLong(), anyLong(), any(), any());
     }
 
     @Test

@@ -109,6 +109,19 @@ public class CartQuote {
     private BigDecimal total;
 
     /**
+     * The platform coupon accepted by this quote, if any.
+     *
+     * <p>These are scalar snapshots rather than a relationship to {@code Coupon}:
+     * checkout must be able to explain and honour the quoted contract after the
+     * live coupon has changed or been removed.
+     */
+    @Column(name = "platform_coupon_id")
+    private Long platformCouponId;
+
+    @Column(name = "platform_coupon_code", length = 50)
+    private String platformCouponCode;
+
+    /**
      * Whether every figure could be converted.
      *
      * <p>False when a rate was missing for some vendor's currency. Such a quote
@@ -124,6 +137,12 @@ public class CartQuote {
                fetch = FetchType.LAZY)
     @Builder.Default
     private List<CartQuoteLine> lines = new ArrayList<>();
+
+    /** The frozen discount allocation for each vendor represented by the quote. */
+    @OneToMany(mappedBy = "quote", cascade = CascadeType.ALL, orphanRemoval = true,
+               fetch = FetchType.LAZY)
+    @Builder.Default
+    private List<CartQuoteVendorSnapshot> vendorSnapshots = new ArrayList<>();
 
     @Column(updatable = false, nullable = false)
     private LocalDateTime createdAt;

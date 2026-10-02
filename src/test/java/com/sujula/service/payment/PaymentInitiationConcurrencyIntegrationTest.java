@@ -15,6 +15,8 @@ import com.sujula.service.EmailService;
 import com.sujula.service.NotificationService;
 import com.sujula.service.PaymentService;
 import com.sujula.service.impl.PaymentServiceImpl;
+import com.sujula.service.reference.CurrencyCatalogue;
+import com.sujula.service.reference.ReferenceDataProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,6 +57,9 @@ class PaymentInitiationConcurrencyIntegrationTest {
         @Bean EmailService emailService() { return mock(EmailService.class); }
         @Bean NotificationService notificationService() { return mock(NotificationService.class); }
         @Bean AuditService auditService() { return mock(AuditService.class); }
+        @Bean CurrencyCatalogue currencyCatalogue() {
+            return CurrencyCatalogue.of(new ReferenceDataProperties());
+        }
     }
 
     static final class BlockingGateway implements PaymentGateway {

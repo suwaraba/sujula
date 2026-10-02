@@ -11,6 +11,7 @@ import com.sujula.dto.response.order.OrderAdminDto;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.OrderStatusHistory;
+import com.sujula.model.order.CartQuote;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -53,6 +54,12 @@ public interface OrderService {
      */
     Order createFromValidatedCart(Long userId, Long shippingAddressId, String notes,
                                   CartResponse validatedCart);
+
+    /**
+     * Creates an order from the persisted monetary contract held by a cart quote.
+     * Live catalogue data is consulted only for identity, availability and stock.
+     */
+    Order createFromQuote(Long userId, Long shippingAddressId, String notes, CartQuote quote);
 
     /** Places an order without an account, from the guest's cart or an explicit item list. */
     Order createGuestOrder(GuestCheckoutRequest request);

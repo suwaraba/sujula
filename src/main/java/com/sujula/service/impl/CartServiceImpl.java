@@ -37,6 +37,7 @@ import com.sujula.service.delivery.DeliveryQuote;
 import com.sujula.service.DeliveryPricingService;
 import com.sujula.service.cart.RateTable;
 import com.sujula.service.delivery.DeliveryContextService;
+import com.sujula.service.reference.CurrencyCatalogue;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,6 +99,7 @@ public class CartServiceImpl implements CartService {
     private final CartProvisioner cartProvisioner;
     private final DeliveryPricingService deliveryPricingService;
     private final DeliveryContextService deliveryContexts;
+    private final CurrencyCatalogue currencies;
 
     @Value("${sujula.cart.guest-ttl-days:7}")
     private int guestTtlDays;
@@ -136,10 +138,32 @@ public class CartServiceImpl implements CartService {
             throw new ResourceNotFoundException("Cart", cartId);
         }
 
-        // Keep the cart's current display currency. Its currency is part of the
-        // quote fingerprint, so forcing the old quote currency here would hide
-        // a cart mutation that must require a new quote.
-        return present(cart, cart.getDisplayCurrency());
+        // Checkout needs only structural evidence here. Calling present(cart)
+        // would re-read live prices, FX, coupons and delivery rates after the
+        // persisted quote had already frozen those figures.
+        hydrate(cart);
+        Map<Long, List<CartItem>> byVendor = cart.getItems().stream()
+                .filter(item -> item.getVendor() != null)
+                .collect(Collectors.groupingBy(item -> item.getVendor().getId(),
+                        LinkedHashMap::new, Collectors.toList()));
+        List<VendorGroup> groups = byVendor.entrySet().stream()
+                .map(entry -> VendorGroup.builder()
+                        .vendorId(entry.getKey())
+                        .items(entry.getValue().stream()
+                                .map(item -> CartItemResponse.builder()
+                                        .productId(item.getProduct().getId())
+                                        .variantId(item.variantIdOrNull())
+                                        .quantity(item.getQuantity())
+                                        .build())
+                                .toList())
+                        .build())
+                .toList();
+        return CartResponse.builder()
+                .cartId(cart.getId())
+                .displayCurrency(cart.getDisplayCurrency())
+                .deliveryContextId(cart.getDeliveryContextId())
+                .vendors(groups)
+                .build();
     }
 
     // ── Mutations ─────────────────────────────────────────────────────────────
@@ -563,7 +587,7 @@ public class CartServiceImpl implements CartService {
         if (price == null) {
             throw new BadRequestException("No price is set for " + safeName(product));
         }
-        return price.setScale(RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+        return currencies.round(price, listingCurrency(product));
     }
 
     /**
@@ -616,7 +640,7 @@ public class CartServiceImpl implements CartService {
                 // Re-price against the live listing
                 BigDecimal current = variant != null ? variant.getEffectivePrice() : product.getPrice();
                 if (current != null) {
-                    current = current.setScale(RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+                    current = currencies.round(current, listingCurrency(product));
                     if (item.getUnitPrice() == null || current.compareTo(item.getUnitPrice()) != 0) {
                         BigDecimal previous = item.getUnitPrice();
                         item.setUnitPrice(current);
@@ -773,8 +797,8 @@ public class CartServiceImpl implements CartService {
         BigDecimal discount;
         switch (coupon.getType()) {
             case PERCENTAGE -> {
-                discount = base.multiply(coupon.getValue())
-                        .divide(HUNDRED, RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+                discount = rates.roundTarget(base.multiply(coupon.getValue())
+                        .divide(HUNDRED, 12, RoundingMode.HALF_UP));
                 BigDecimal cap = rates.convert(coupon.getMaximumDiscountAmount(), couponCurrency(coupon));
                 if (cap != null) {
                     discount = discount.min(cap);
@@ -790,7 +814,7 @@ public class CartServiceImpl implements CartService {
             default -> discount = BigDecimal.ZERO;
         }
 
-        return discount.max(BigDecimal.ZERO).min(base);
+        return rates.roundTarget(discount.max(BigDecimal.ZERO).min(base));
     }
 
     // ── Currency ──────────────────────────────────────────────────────────────
@@ -817,20 +841,20 @@ public class CartServiceImpl implements CartService {
      * currencies plus any applied coupon's currency.
      */
     private RateTable buildRateTable(Cart cart, String target, Coupon extraCoupon) {
-        Set<String> currencies = new HashSet<>();
-        cart.getItems().forEach(i -> currencies.add(
+        Set<String> sourceCurrencies = new HashSet<>();
+        cart.getItems().forEach(i -> sourceCurrencies.add(
                 i.getUnitPriceCurrency() != null ? i.getUnitPriceCurrency().toUpperCase() : defaultCurrency));
-        cart.getAppliedCoupons().forEach(cc -> currencies.add(couponCurrency(cc.getCoupon())));
+        cart.getAppliedCoupons().forEach(cc -> sourceCurrencies.add(couponCurrency(cc.getCoupon())));
         if (extraCoupon != null) {
-            currencies.add(couponCurrency(extraCoupon));
+            sourceCurrencies.add(couponCurrency(extraCoupon));
         }
-        currencies.remove(target); // identity rate, no lookup needed
+        sourceCurrencies.remove(target); // identity rate, no lookup needed
 
-        Map<String, BigDecimal> rates = currencies.isEmpty()
+        Map<String, BigDecimal> rates = sourceCurrencies.isEmpty()
                 ? Map.of()
-                : exchangeRateService.getLatestRates(target, currencies);
+                : exchangeRateService.getLatestRates(target, sourceCurrencies);
 
-        return new RateTable(target, rates);
+        return new RateTable(target, rates, currencies.minorUnits(target), LocalDateTime.now());
     }
 
     // ── Response assembly ─────────────────────────────────────────────────────
@@ -857,10 +881,10 @@ public class CartServiceImpl implements CartService {
 
         boolean totalsComplete = groups.stream().allMatch(VendorGroup::isConvertible);
 
-        BigDecimal subtotal = sum(groups, VendorGroup::getSubtotal);
-        BigDecimal discount = sum(groups, VendorGroup::getDiscount);
-        BigDecimal shipping = sum(groups, group ->
-                group.getShipping() == null ? BigDecimal.ZERO : group.getShipping());
+        BigDecimal subtotal = currencies.round(sum(groups, VendorGroup::getSubtotal), currency);
+        BigDecimal discount = currencies.round(sum(groups, VendorGroup::getDiscount), currency);
+        BigDecimal shipping = currencies.round(sum(groups, group ->
+                group.getShipping() == null ? BigDecimal.ZERO : group.getShipping()), currency);
         boolean deliverable = groups.stream()
                 .allMatch(group -> group.getDeliverable() == null || group.getDeliverable());
 
@@ -879,7 +903,7 @@ public class CartServiceImpl implements CartService {
                 .subtotal(subtotal)
                 .discount(discount)
                 .shipping(shipping)
-                .total(subtotal.subtract(discount).add(shipping))
+                .total(currencies.round(subtotal.subtract(discount).add(shipping), currency))
                 .deliveryContextId(cart.getDeliveryContextId())
                 .deliverable(cart.getDeliveryContextId() == null ? null : deliverable)
                 .itemCount(cart.getItems().stream().mapToInt(CartItem::getQuantity).sum())
@@ -1055,10 +1079,11 @@ public class CartServiceImpl implements CartService {
                 BigDecimal lineNative = item.nativeLineTotal();
                 BigDecimal lineConverted = rates.convert(lineNative, item.getUnitPriceCurrency());
 
-                subtotalNative = subtotalNative.add(lineNative);
+                subtotalNative = currencies.round(subtotalNative.add(lineNative),
+                        item.getUnitPriceCurrency());
                 if (lineConverted != null) {
                     // Sum the rounded line totals so the displayed figures add up exactly
-                    subtotal = subtotal.add(lineConverted);
+                    subtotal = rates.roundTarget(subtotal.add(lineConverted));
                 }
 
                 itemResponses.add(CartItemResponse.builder()
@@ -1124,7 +1149,13 @@ public class CartServiceImpl implements CartService {
      * gets reduced by.
      */
     private void applyDiscounts(Cart cart, List<VendorGroup> groups, RateTable rates) {
-        List<VendorGroup> priced = groups.stream().filter(VendorGroup::isConvertible).toList();
+        // Allocation order must not depend on Hibernate's collection order. The
+        // highest vendor id is therefore the deterministic remainder absorber.
+        List<VendorGroup> priced = groups.stream()
+                .filter(VendorGroup::isConvertible)
+                .sorted(Comparator.comparing(
+                        VendorGroup::getVendorId, Comparator.nullsLast(Long::compareTo)))
+                .toList();
 
         // Pass 1 — vendor-funded coupons
         Map<Long, BigDecimal> afterVendor = new LinkedHashMap<>();
@@ -1132,8 +1163,11 @@ public class CartServiceImpl implements CartService {
             BigDecimal vendorDiscount = cart.vendorCoupon(group.getVendorId())
                     .map(cc -> couponDiscount(cc.getCoupon(), group.getSubtotal(), rates))
                     .orElse(BigDecimal.ZERO);
+            vendorDiscount = rates.roundTarget(vendorDiscount);
             group.setDiscount(vendorDiscount);
-            afterVendor.put(group.getVendorId(), group.getSubtotal().subtract(vendorDiscount));
+            group.setPlatformDiscountShare(rates.roundTarget(BigDecimal.ZERO));
+            afterVendor.put(group.getVendorId(),
+                    rates.roundTarget(group.getSubtotal().subtract(vendorDiscount)));
         }
 
         // Pass 2 — platform-funded coupon, prorated
@@ -1144,22 +1178,33 @@ public class CartServiceImpl implements CartService {
                 .orElse(BigDecimal.ZERO);
 
         if (platformDiscount.signum() > 0 && platformBase.signum() > 0) {
-            BigDecimal allocated = BigDecimal.ZERO;
-            for (int i = 0; i < priced.size(); i++) {
-                VendorGroup group = priced.get(i);
+            List<VendorGroup> eligible = priced.stream()
+                    .filter(group -> afterVendor.get(group.getVendorId()).signum() > 0)
+                    .toList();
+            BigDecimal remaining = platformDiscount;
+            for (int i = 0; i < eligible.size(); i++) {
+                VendorGroup group = eligible.get(i);
+                BigDecimal capacity = afterVendor.get(group.getVendorId());
                 BigDecimal share;
-                if (i == priced.size() - 1) {
-                    // Last group absorbs the rounding remainder so the parts sum exactly
-                    share = platformDiscount.subtract(allocated);
+                if (i == eligible.size() - 1) {
+                    // The highest vendor id absorbs the final rounding residue.
+                    share = remaining;
                 } else {
-                    share = platformDiscount
-                            .multiply(afterVendor.get(group.getVendorId()))
-                            .divide(platformBase, RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
-                    allocated = allocated.add(share);
+                    share = rates.roundTarget(platformDiscount
+                            .multiply(capacity)
+                            .divide(platformBase, 12, RoundingMode.HALF_UP));
                 }
-                share = share.max(BigDecimal.ZERO).min(afterVendor.get(group.getVendorId()));
+                // Rounding an early proportional share upwards must never make
+                // the total allocation exceed the accepted platform discount.
+                share = share.max(BigDecimal.ZERO).min(capacity).min(remaining);
+                share = rates.roundTarget(share);
+                remaining = rates.roundTarget(remaining.subtract(share));
                 group.setPlatformDiscountShare(share);
-                group.setDiscount(group.getDiscount().add(share));
+                group.setDiscount(rates.roundTarget(group.getDiscount().add(share)));
+            }
+            if (remaining.signum() != 0) {
+                throw new IllegalStateException("Platform discount allocation did not reconcile: "
+                        + remaining + " " + rates.target() + " remains");
             }
         }
 
@@ -1170,13 +1215,22 @@ public class CartServiceImpl implements CartService {
                 group.setTotal(null);
                 continue;
             }
-            group.setTotal(group.getSubtotal().subtract(group.getDiscount()));
+            group.setTotal(rates.roundTarget(group.getSubtotal().subtract(group.getDiscount())));
 
-            // Native figures are only meaningful when no conversion took place
-            if (group.getNativeCurrency() != null
-                    && group.getNativeCurrency().equalsIgnoreCase(rates.target())) {
-                group.setDiscountNative(group.getDiscount());
-                group.setTotalNative(group.getTotal());
+            if (group.getNativeCurrency() != null) {
+                BigDecimal nativeDiscount;
+                if (group.getNativeCurrency().equalsIgnoreCase(rates.target())) {
+                    nativeDiscount = currencies.round(group.getDiscount(), group.getNativeCurrency());
+                } else {
+                    BigDecimal rate = rates.rateFor(group.getNativeCurrency());
+                    nativeDiscount = rate == null || rate.signum() <= 0 ? null
+                            : currencies.round(group.getDiscount().divide(rate, 12, RoundingMode.HALF_UP),
+                                    group.getNativeCurrency());
+                }
+                group.setDiscountNative(nativeDiscount);
+                group.setTotalNative(nativeDiscount == null || group.getSubtotalNative() == null ? null
+                        : currencies.round(group.getSubtotalNative().subtract(nativeDiscount),
+                                group.getNativeCurrency()));
             }
         }
     }

@@ -7,6 +7,8 @@ import java.time.LocalDateTime;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -298,6 +300,87 @@ class WebhookIntakeTest {
         assertTrue(stored.getOutcome().contains("cannot decide an order cost something else"));
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"108.63", "108.65"})
+    void aProviderOneMinorUnitEitherSideCannotSettleThePayment(String providerAmount) {
+        WebhookIntake.Accepted accepted = post(
+                "{\"id\":\"evt_minor_" + providerAmount.replace('.', '_')
+                        + "\",\"type\":\"payment.succeeded\","
+                        + "\"reference\":\"PAY-HOOK-0001\",\"amount\":\""
+                        + providerAmount + "\",\"currency\":\"EUR\"}");
+        entityManager.flush();
+
+        processor.runOne(accepted.eventRowId());
+        entityManager.flush();
+
+        assertEquals(PaymentStatus.PENDING,
+                payments.findById(payment.getId()).orElseThrow().getStatus());
+        assertEquals(WebhookStatus.FAILED,
+                events.findById(accepted.eventRowId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void aSuccessWebhookRequiresBothAmountAndCurrency() {
+        WebhookIntake.Accepted missingAmount = post(
+                "{\"id\":\"evt_missing_amount\",\"type\":\"payment.succeeded\","
+                        + "\"reference\":\"PAY-HOOK-0001\",\"currency\":\"EUR\"}");
+        entityManager.flush();
+        processor.runOne(missingAmount.eventRowId());
+        entityManager.flush();
+
+        assertEquals(WebhookStatus.FAILED,
+                events.findById(missingAmount.eventRowId()).orElseThrow().getStatus());
+
+        WebhookIntake.Accepted missingCurrency = post(
+                "{\"id\":\"evt_missing_currency\",\"type\":\"payment.succeeded\","
+                        + "\"reference\":\"PAY-HOOK-0001\",\"amount\":\"108.64\"}");
+        entityManager.flush();
+        processor.runOne(missingCurrency.eventRowId());
+        entityManager.flush();
+
+        assertEquals(PaymentStatus.PENDING,
+                payments.findById(payment.getId()).orElseThrow().getStatus());
+        assertEquals(WebhookStatus.FAILED,
+                events.findById(missingCurrency.eventRowId()).orElseThrow().getStatus());
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {10863, 10865})
+    void aStripeSuccessOneMinorUnitEitherSideIsRejected(long stripeMinorAmount) {
+        WebhookEvent event = stripe("evt_stripe_minor_" + stripeMinorAmount,
+                "checkout.session.completed", "paid", "eur", stripeMinorAmount);
+
+        processor.runOne(event.getId());
+        entityManager.flush();
+
+        assertEquals(PaymentStatus.PENDING,
+                payments.findById(payment.getId()).orElseThrow().getStatus());
+        assertEquals(WebhookStatus.FAILED,
+                events.findById(event.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void anExactWholeFrancStripeWebhookSettlesXofWithoutRescaling() {
+        payment.setAmount(new BigDecimal("1251"));
+        payment.setCurrency("XOF");
+        payment.getOrder().setSubtotal(new BigDecimal("1251"));
+        payment.getOrder().setTotal(new BigDecimal("1251"));
+        payment.getOrder().setCurrency("XOF");
+        orders.save(payment.getOrder());
+        payments.save(payment);
+        entityManager.flush();
+
+        WebhookEvent event = stripe("evt_stripe_xof", "checkout.session.completed",
+                "paid", "xof", 1251);
+        processor.runOne(event.getId());
+        entityManager.flush();
+
+        assertEquals(PaymentStatus.PAID,
+                payments.findById(payment.getId()).orElseThrow().getStatus());
+        assertEquals(WebhookStatus.PROCESSED,
+                events.findById(event.getId()).orElseThrow().getStatus());
+    }
+
     @Test
     void aCurrencyThatDoesNotMatchIsRefusedBecauseCurrenciesAreNotInterchangeable() {
         WebhookIntake.Accepted accepted = post(
@@ -340,7 +423,8 @@ class WebhookIntakeTest {
     void aFailureArrivingAfterASuccessDoesNotUnpayTheOrder() {
         WebhookIntake.Accepted paid = post(
                 "{\"id\":\"evt_204\",\"type\":\"payment.succeeded\","
-                        + "\"reference\":\"PAY-HOOK-0001\"}");
+                        + "\"reference\":\"PAY-HOOK-0001\",\"amount\":\"108.64\","
+                        + "\"currency\":\"EUR\"}");
         entityManager.flush();
         processor.runOne(paid.eventRowId());
         entityManager.flush();
@@ -415,13 +499,19 @@ class WebhookIntakeTest {
     }
 
     private WebhookEvent stripe(String eventId, String type, String paymentStatus) {
+        return stripe(eventId, type, paymentStatus, "eur", 10864);
+    }
+
+    private WebhookEvent stripe(String eventId, String type, String paymentStatus,
+                                String currency, long amountTotal) {
         return events.saveAndFlush(WebhookEvent.builder()
                 .kind(WebhookKind.PSP).provider("stripe").eventId(eventId).eventType(type)
                 .status(WebhookStatus.RECEIVED).signatureValid(true)
                 .receivedAt(LocalDateTime.now())
                 .payload("{\"id\":\"" + eventId + "\",\"type\":\"" + type
                         + "\",\"data\":{\"object\":{\"id\":\"cs_" + eventId
-                        + "\",\"currency\":\"eur\",\"amount_total\":10864,"
+                        + "\",\"currency\":\"" + currency + "\",\"amount_total\":"
+                        + amountTotal + ","
                         + "\"payment_status\":\"" + paymentStatus
                         + "\",\"metadata\":{\"reference\":\"PAY-HOOK-0001\"}}}}")
                 .build());
