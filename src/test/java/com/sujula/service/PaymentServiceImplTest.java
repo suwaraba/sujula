@@ -7,15 +7,25 @@ import com.sujula.dto.request.payment.RefundPaymentRequest;
 import com.sujula.dto.response.payment.PaymentMethodOption;
 import com.sujula.dto.response.payment.PaymentResponse;
 import com.sujula.exceptions.BadRequestException;
+import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.constant.DeliveryMode;
+import com.sujula.model.constant.DriverStatus;
+import com.sujula.model.constant.LegAssignmentStatus;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentMethod;
 import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.OrderStatusHistory;
 import com.sujula.model.order.Payment;
+import com.sujula.model.order.VendorOrder;
+import com.sujula.model.delivery.Driver;
+import com.sujula.model.delivery.PickupPoint;
+import com.sujula.model.shipment.Shipment;
+import com.sujula.model.shipment.ShipmentLeg;
 import com.sujula.repository.PaymentRepository;
+import com.sujula.repository.delivery.DriverRepository;
 import com.sujula.repository.order.OrderRepository;
+import com.sujula.repository.shipment.ShipmentRepository;
 import com.sujula.model.constant.UserRole;
 import com.sujula.model.user.User;
 import com.sujula.model.user.Vendor;
@@ -78,11 +88,15 @@ class PaymentServiceImplTest {
     private OrderStatusHistoryRepository statusHistoryRepository;
     private VendorOrderRepository vendorOrderRepository;
     private UserRepository userRepository;
+    private VendorRepository vendorRepository;
+    private DriverRepository driverRepository;
+    private ShipmentRepository shipmentRepository;
     private PaymentProperties properties;
     private CurrencyCatalogue currencies;
     private PaymentServiceImpl service;
 
     private Order order;
+    private VendorOrder vendorSlice;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -92,7 +106,18 @@ class PaymentServiceImplTest {
         statusHistoryRepository = mock(OrderStatusHistoryRepository.class);
         vendorOrderRepository = mock(VendorOrderRepository.class);
         userRepository = mock(UserRepository.class);
-        VendorRepository vendorRepository = mock(VendorRepository.class);
+        vendorRepository = mock(VendorRepository.class);
+        driverRepository = mock(DriverRepository.class);
+        shipmentRepository = mock(ShipmentRepository.class);
+
+        order = new Order();
+        order.setId(7L);
+        order.setOrderNumber("SJL-TEST0001");
+        order.setStatus(OrderStatus.PENDING);
+        order.setPaymentStatus(PaymentStatus.PENDING);
+        order.setDeliveryMode(DeliveryMode.HOME_DELIVERY);
+        order.setCurrency("GMD");
+        order.setTotal(new BigDecimal("1200.00"));
 
         // Collectors: an admin, a driver, and a vendor who owns part of order 7.
         when(userRepository.findById(1L)).thenReturn(Optional.of(staff(1L, UserRole.ADMIN)));
@@ -100,7 +125,8 @@ class PaymentServiceImplTest {
         when(userRepository.findById(3L)).thenReturn(Optional.of(staff(3L, UserRole.VENDOR)));
         Vendor vendorProfile = Vendor.builder().id(50L).storeName("Kombo").build();
         when(vendorRepository.findByUserId(3L)).thenReturn(Optional.of(vendorProfile));
-        when(vendorOrderRepository.existsByOrderIdAndVendorId(7L, 50L)).thenReturn(true);
+        vendorSlice = VendorOrder.builder().id(70L).order(order).vendor(vendorProfile).build();
+        when(vendorOrderRepository.findByOrderId(7L)).thenReturn(List.of(vendorSlice));
         EmailService emailService = mock(EmailService.class);
         NotificationService notificationService = mock(NotificationService.class);
 
@@ -116,18 +142,10 @@ class PaymentServiceImplTest {
         PaymentSettlementService settlements = new PaymentSettlementService(
                 orderRepository, statusHistoryRepository, emailService, notificationService);
         service = new PaymentServiceImpl(paymentRepository, orderRepository,
-                vendorOrderRepository, userRepository, vendorRepository,
+                vendorOrderRepository, userRepository, vendorRepository, driverRepository,
+                shipmentRepository,
                 notificationService, mock(AuditService.class),
                 properties, noGateways, settlements, currencies);
-
-        order = new Order();
-        order.setId(7L);
-        order.setOrderNumber("SJL-TEST0001");
-        order.setStatus(OrderStatus.PENDING);
-        order.setPaymentStatus(PaymentStatus.PENDING);
-        order.setDeliveryMode(DeliveryMode.HOME_DELIVERY);
-        order.setCurrency("GMD");
-        order.setTotal(new BigDecimal("1200.00"));
 
         when(orderRepository.findById(7L)).thenReturn(Optional.of(order));
         when(orderRepository.findByIdForPaymentUpdate(7L)).thenReturn(Optional.of(order));
@@ -173,6 +191,7 @@ class PaymentServiceImplTest {
                 orderRepository, statusHistoryRepository, email, notifications);
         return new PaymentServiceImpl(paymentRepository, orderRepository,
                 mock(VendorOrderRepository.class), userRepository, mock(VendorRepository.class),
+                mock(DriverRepository.class), mock(ShipmentRepository.class),
                 notifications, mock(AuditService.class), properties, gateways, settlements,
                 currencies);
     }
@@ -779,6 +798,203 @@ class PaymentServiceImplTest {
     // ── Who may take the money ───────────────────────────────────────────────
 
     @Test
+    void currentDriverForEveryParcelCanCollectPayOnDelivery() {
+        Driver driver = driver(20L, 2L);
+        when(driverRepository.findByUserId(2L)).thenReturn(Optional.of(driver));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L))
+                .thenReturn(List.of(shipment(700L, activeLeg(701L, driver, null))));
+        when(paymentRepository.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pending(PaymentMethod.PAY_ON_DELIVERY)));
+
+        PaymentResponse response = service.collectInPerson(7L, null, 2L);
+
+        assertEquals(PaymentStatus.PAID, response.getStatus());
+        assertEquals(PaymentStatus.PAID, order.getPaymentStatus());
+    }
+
+    @Test
+    void driverRoleWithoutTheCurrentAssignmentCannotCollectAndMutatesNothing() {
+        User otherUser = staff(5L, UserRole.DELIVERY);
+        Driver other = Driver.builder().id(21L).user(otherUser).status(DriverStatus.ACTIVE).build();
+        Driver assigned = driver(20L, 2L);
+        when(userRepository.findById(5L)).thenReturn(Optional.of(otherUser));
+        when(driverRepository.findByUserId(5L)).thenReturn(Optional.of(other));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L))
+                .thenReturn(List.of(shipment(700L, activeLeg(701L, assigned, null))));
+        Payment payment = pending(PaymentMethod.PAY_ON_DELIVERY);
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(payment));
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.collectInPerson(7L, null, 5L));
+
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+        assertEquals(PaymentStatus.PENDING, order.getPaymentStatus());
+        verify(paymentRepository, never()).save(any(Payment.class));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    void suspendedDriverCannotCollectEvenWhileTheOldLegStillNamesThem() {
+        Driver suspended = driver(20L, 2L);
+        suspended.setStatus(DriverStatus.SUSPENDED);
+        when(driverRepository.findByUserId(2L)).thenReturn(Optional.of(suspended));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L))
+                .thenReturn(List.of(shipment(700L, activeLeg(701L, suspended, null))));
+        Payment payment = pending(PaymentMethod.PAY_ON_DELIVERY);
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(payment));
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.collectInPerson(7L, null, 2L));
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+    }
+
+    @Test
+    void previousDriverCannotCollectAfterReassignment() {
+        Driver previous = driver(20L, 2L);
+        User currentUser = staff(5L, UserRole.DELIVERY);
+        Driver current = Driver.builder().id(21L).user(currentUser).status(DriverStatus.ACTIVE).build();
+        when(driverRepository.findByUserId(2L)).thenReturn(Optional.of(previous));
+        ShipmentLeg obsolete = activeLeg(701L, previous, null);
+        obsolete.setAssignmentStatus(LegAssignmentStatus.CANCELLED);
+        Shipment parcel = shipment(700L, obsolete, activeLeg(702L, current, null));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L)).thenReturn(List.of(parcel));
+        Payment payment = pending(PaymentMethod.PAY_ON_DELIVERY);
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(payment));
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.collectInPerson(7L, null, 2L));
+
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+        assertEquals(PaymentStatus.PENDING, order.getPaymentStatus());
+    }
+
+    @Test
+    void currentDriverAfterReassignmentCanCollect() {
+        User currentUser = staff(5L, UserRole.DELIVERY);
+        Driver current = Driver.builder().id(21L).user(currentUser).status(DriverStatus.ACTIVE).build();
+        when(userRepository.findById(5L)).thenReturn(Optional.of(currentUser));
+        when(driverRepository.findByUserId(5L)).thenReturn(Optional.of(current));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L))
+                .thenReturn(List.of(shipment(700L, activeLeg(702L, current, null))));
+        when(paymentRepository.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pending(PaymentMethod.PAY_ON_DELIVERY)));
+
+        assertEquals(PaymentStatus.PAID, service.collectInPerson(7L, null, 5L).getStatus());
+    }
+
+    @Test
+    void assignmentToOneParcelCannotCollectAnotherOrdersPayment() {
+        Driver collector = driver(20L, 2L);
+        Driver assignedToTarget = Driver.builder().id(21L).status(DriverStatus.ACTIVE).build();
+        when(driverRepository.findByUserId(2L)).thenReturn(Optional.of(collector));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L))
+                .thenReturn(List.of(shipment(700L, activeLeg(701L, assignedToTarget, null))));
+        Payment payment = pending(PaymentMethod.PAY_ON_DELIVERY);
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(payment));
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.collectInPerson(7L, null, 2L));
+
+        verify(shipmentRepository).lockByOrderIdForPaymentCollection(7L);
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+    }
+
+    @Test
+    void driverMustOwnEveryParcelCoveredByTheParentPayment() {
+        Driver collector = driver(20L, 2L);
+        Driver other = Driver.builder().id(21L).status(DriverStatus.ACTIVE).build();
+        when(driverRepository.findByUserId(2L)).thenReturn(Optional.of(collector));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L)).thenReturn(List.of(
+                shipment(700L, activeLeg(701L, collector, null)),
+                shipment(710L, activeLeg(711L, other, null))));
+        Payment payment = pending(PaymentMethod.PAY_ON_DELIVERY);
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(payment));
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.collectInPerson(7L, null, 2L));
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+    }
+
+    @Test
+    void operatorHoldingEveryParcelCanCollectPayAtPickup() {
+        User operator = staff(4L, UserRole.PICKUP_OPERATOR);
+        PickupPoint point = PickupPoint.builder().id(40L).operatorUser(operator).build();
+        Shipment parcel = shipment(700L);
+        parcel.setHeldAtPickupPoint(point);
+        when(userRepository.findById(4L)).thenReturn(Optional.of(operator));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L)).thenReturn(List.of(parcel));
+        when(paymentRepository.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pending(PaymentMethod.PAY_AT_PICKUP)));
+
+        assertEquals(PaymentStatus.PAID, service.collectInPerson(7L, null, 4L).getStatus());
+    }
+
+    @Test
+    void operatorAtAnotherPointCannotCollectAndMutatesNothing() {
+        User operatorA = staff(4L, UserRole.PICKUP_OPERATOR);
+        User operatorB = staff(6L, UserRole.PICKUP_OPERATOR);
+        PickupPoint pointA = PickupPoint.builder().id(40L).operatorUser(operatorA).build();
+        Shipment parcel = shipment(700L);
+        parcel.setHeldAtPickupPoint(pointA);
+        when(userRepository.findById(6L)).thenReturn(Optional.of(operatorB));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L)).thenReturn(List.of(parcel));
+        Payment payment = pending(PaymentMethod.PAY_AT_PICKUP);
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(payment));
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.collectInPerson(7L, null, 6L));
+
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+        assertEquals(PaymentStatus.PENDING, order.getPaymentStatus());
+        verify(paymentRepository, never()).save(any(Payment.class));
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    void removedPickupOperatorCannotCollectForThePoint() {
+        User formerOperator = staff(4L, UserRole.PICKUP_OPERATOR);
+        PickupPoint point = PickupPoint.builder().id(40L).operatorUser(null).build();
+        Shipment parcel = shipment(700L);
+        parcel.setHeldAtPickupPoint(point);
+        when(userRepository.findById(4L)).thenReturn(Optional.of(formerOperator));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L)).thenReturn(List.of(parcel));
+        Payment payment = pending(PaymentMethod.PAY_AT_PICKUP);
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(payment));
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.collectInPerson(7L, null, 4L));
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+    }
+
+    @Test
+    void operatorCannotCollectForAParcelCurrentlyRoutedToAnotherPoint() {
+        User operatorA = staff(4L, UserRole.PICKUP_OPERATOR);
+        User operatorB = staff(6L, UserRole.PICKUP_OPERATOR);
+        PickupPoint pointA = PickupPoint.builder().id(40L).operatorUser(operatorA).build();
+        when(userRepository.findById(6L)).thenReturn(Optional.of(operatorB));
+        when(shipmentRepository.lockByOrderIdForPaymentCollection(7L)).thenReturn(List.of(
+                shipment(700L, activeLeg(701L, driver(20L, 2L), pointA))));
+        Payment payment = pending(PaymentMethod.PAY_AT_PICKUP);
+        when(paymentRepository.findByOrderIdForUpdate(7L)).thenReturn(Optional.of(payment));
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.collectInPerson(7L, null, 6L));
+        assertEquals(PaymentStatus.PENDING, payment.getStatus());
+    }
+
+    @Test
+    void pickupRoleCannotCollectPayOnDeliveryEvenForARoutedParcel() {
+        User operator = staff(4L, UserRole.PICKUP_OPERATOR);
+        when(userRepository.findById(4L)).thenReturn(Optional.of(operator));
+        when(paymentRepository.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pending(PaymentMethod.PAY_ON_DELIVERY)));
+
+        assertThrows(AccessDeniedException.class,
+                () -> service.collectInPerson(7L, null, 4L));
+        verify(shipmentRepository, never()).lockByOrderIdForPaymentCollection(anyLong());
+    }
+
+    @Test
     void aDriverCannotSettleACounterSale() {
         order.setDeliveryMode(DeliveryMode.VENDOR_PICKUP);
         when(paymentRepository.findByOrderIdForUpdate(7L))
@@ -792,11 +1008,14 @@ class PaymentServiceImplTest {
         order.setDeliveryMode(DeliveryMode.VENDOR_PICKUP);
         when(paymentRepository.findByOrderIdForUpdate(7L))
                 .thenReturn(Optional.of(pending(PaymentMethod.CASH_IN_STORE)));
-        when(vendorOrderRepository.existsByOrderIdAndVendorId(7L, 50L)).thenReturn(false);
+        when(vendorOrderRepository.findByOrderId(7L)).thenReturn(List.of(
+                VendorOrder.builder().id(71L).order(order)
+                        .vendor(Vendor.builder().id(51L).storeName("Other").build()).build()));
 
         // Without this check any seller could settle any order in the platform —
         // and read the buyer's total on the way out.
-        assertThrows(AccessDeniedException.class, () -> service.collectInPerson(7L, null, 3L));
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.collectInPerson(7L, null, 3L));
     }
 
     @Test
@@ -806,6 +1025,20 @@ class PaymentServiceImplTest {
                 .thenReturn(Optional.of(pending(PaymentMethod.CASH_IN_STORE)));
 
         assertEquals(PaymentStatus.PAID, service.collectInPerson(7L, null, 3L).getStatus());
+    }
+
+    @Test
+    void oneVendorCannotSettleAParentCounterPaymentContainingAnotherVendorsSlice() {
+        order.setDeliveryMode(DeliveryMode.VENDOR_PICKUP);
+        when(paymentRepository.findByOrderIdForUpdate(7L))
+                .thenReturn(Optional.of(pending(PaymentMethod.CASH_IN_STORE)));
+        when(vendorOrderRepository.findByOrderId(7L)).thenReturn(List.of(vendorSlice,
+                VendorOrder.builder().id(71L).order(order)
+                        .vendor(Vendor.builder().id(51L).storeName("Other").build()).build()));
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.collectInPerson(7L, null, 3L));
+        assertEquals(PaymentStatus.PENDING, order.getPaymentStatus());
     }
 
     @Test
@@ -893,6 +1126,37 @@ class PaymentServiceImplTest {
         user.setLastName("Staff");
         user.setRole(role);
         return user;
+    }
+
+    private static Driver driver(Long driverId, Long userId) {
+        return Driver.builder()
+                .id(driverId)
+                .user(staff(userId, UserRole.DELIVERY))
+                .status(DriverStatus.ACTIVE)
+                .build();
+    }
+
+    private static ShipmentLeg activeLeg(Long legId, Driver driver, PickupPoint destination) {
+        return ShipmentLeg.builder()
+                .id(legId)
+                .driver(driver)
+                .destinationPickupPoint(destination)
+                .assignmentStatus(LegAssignmentStatus.ACCEPTED)
+                .build();
+    }
+
+    private Shipment shipment(Long shipmentId, ShipmentLeg... legs) {
+        Shipment shipment = Shipment.builder()
+                .id(shipmentId)
+                .reference("SHP-" + shipmentId)
+                .vendorOrder(vendorSlice)
+                .legs(new ArrayList<>())
+                .build();
+        for (ShipmentLeg leg : legs) {
+            leg.setShipment(shipment);
+            shipment.getLegs().add(leg);
+        }
+        return shipment;
     }
 
     private Payment pending(PaymentMethod method) {

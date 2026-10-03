@@ -125,6 +125,18 @@ public interface ShipmentRepository extends JpaRepository<Shipment, Long> {
          + "ORDER BY s.id ASC")
     List<Shipment> findByOrderId(@Param("orderId") Long orderId);
 
+    /**
+     * The parcels whose assignment authorises an in-person payment collection.
+     *
+     * <p>The payment row is locked first, then these parcels in id order. Dispatch
+     * takes the parcel lock before changing a leg, so the collector cannot be
+     * authorised from an assignment that is reassigned before settlement.
+     */
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM Shipment s WHERE s.vendorOrder.order.id = :orderId "
+         + "ORDER BY s.id ASC")
+    List<Shipment> lockByOrderIdForPaymentCollection(@Param("orderId") Long orderId);
+
     // ── What is on a counter ─────────────────────────────────────────────────
 
     /**

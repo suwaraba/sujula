@@ -10,16 +10,23 @@ import com.sujula.exceptions.BadRequestException;
 import com.sujula.exceptions.ResourceNotFoundException;
 import com.sujula.model.constant.AuditAction;
 import com.sujula.model.constant.DeliveryMode;
+import com.sujula.model.constant.LegAssignmentStatus;
 import com.sujula.model.constant.OrderStatus;
 import com.sujula.model.constant.PaymentMethod;
 import com.sujula.model.constant.PaymentStatus;
 import com.sujula.model.constant.UserRole;
 import com.sujula.model.order.Order;
 import com.sujula.model.order.Payment;
+import com.sujula.model.delivery.Driver;
+import com.sujula.model.delivery.PickupPoint;
+import com.sujula.model.shipment.Shipment;
+import com.sujula.model.shipment.ShipmentLeg;
 import com.sujula.model.user.User;
 import com.sujula.repository.PaymentRepository;
 import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.VendorOrderRepository;
+import com.sujula.repository.delivery.DriverRepository;
+import com.sujula.repository.shipment.ShipmentRepository;
 import com.sujula.repository.user.UserRepository;
 import com.sujula.repository.user.VendorRepository;
 import com.sujula.service.AuditService;
@@ -82,6 +89,8 @@ public class PaymentServiceImpl implements PaymentService {
     private final VendorOrderRepository vendorOrderRepository;
     private final UserRepository userRepository;
     private final VendorRepository vendorRepository;
+    private final DriverRepository driverRepository;
+    private final ShipmentRepository shipmentRepository;
     private final NotificationService notificationService;
     private final AuditService auditService;
     private final PaymentProperties properties;
@@ -94,6 +103,8 @@ public class PaymentServiceImpl implements PaymentService {
                               VendorOrderRepository vendorOrderRepository,
                               UserRepository userRepository,
                               VendorRepository vendorRepository,
+                              DriverRepository driverRepository,
+                              ShipmentRepository shipmentRepository,
                               NotificationService notificationService,
                               AuditService auditService,
                               PaymentProperties properties,
@@ -105,6 +116,8 @@ public class PaymentServiceImpl implements PaymentService {
         this.vendorOrderRepository = vendorOrderRepository;
         this.userRepository = userRepository;
         this.vendorRepository = vendorRepository;
+        this.driverRepository = driverRepository;
+        this.shipmentRepository = shipmentRepository;
         this.notificationService = notificationService;
         this.auditService = auditService;
         this.properties = properties;
@@ -742,9 +755,9 @@ public class PaymentServiceImpl implements PaymentService {
      * order in the platform, and read its total on the way out. A vendor must
      * additionally have something in the order.
      *
-     * <p>Driver and operator entitlement stops at the method: tying a collection
-     * to the specific delivery or pickup point assigned to it needs the delivery
-     * module, which does not exist yet.
+     * <p>Operational roles are not authority by themselves. The payment's order
+     * is resolved to its locked parcels and every parcel must currently belong
+     * to the authenticated driver or pickup operator before settlement starts.
      */
     private void requireEntitledCollector(Payment payment, Long orderId, Long collectorUserId) {
         if (collectorUserId == null) {
@@ -768,16 +781,76 @@ public class PaymentServiceImpl implements PaymentService {
                 Long vendorId = vendorRepository.findByUserId(collectorUserId)
                         .orElseThrow(() -> new AccessDeniedException("No vendor profile for this account"))
                         .getId();
-                if (!vendorOrderRepository.existsByOrderIdAndVendorId(orderId, vendorId)) {
-                    throw new AccessDeniedException("This order has nothing from your store");
+                var slices = vendorOrderRepository.findByOrderId(orderId);
+                if (slices.isEmpty() || slices.stream().anyMatch(slice -> slice.getVendor() == null
+                        || !vendorId.equals(slice.getVendor().getId()))) {
+                    throw collectionNotFound(orderId);
                 }
             }
-            case DELIVERY -> requireMethod(method, PaymentMethod.PAY_ON_DELIVERY,
-                    "A driver can only take payment on delivery");
-            case PICKUP_OPERATOR -> requireMethod(method, PaymentMethod.PAY_AT_PICKUP,
-                    "A pickup point can only take payment for a collection it is handling");
+            case DELIVERY -> {
+                requireMethod(method, PaymentMethod.PAY_ON_DELIVERY,
+                        "A driver can only take payment on delivery");
+                requireCurrentDriver(orderId, collectorUserId);
+            }
+            case PICKUP_OPERATOR -> {
+                requireMethod(method, PaymentMethod.PAY_AT_PICKUP,
+                        "A pickup point can only take payment for a collection it is handling");
+                requireCurrentPickupOperator(orderId, collectorUserId);
+            }
             default -> throw new AccessDeniedException("This account cannot take payments");
         }
+    }
+
+    private void requireCurrentDriver(Long orderId, Long collectorUserId) {
+        Driver driver = driverRepository.findByUserId(collectorUserId)
+                .filter(Driver::canCarry)
+                .orElseThrow(() -> collectionNotFound(orderId));
+        List<Shipment> shipments = lockedShipments(orderId);
+        if (shipments.stream().anyMatch(shipment -> shipment.getLegs().stream()
+                .noneMatch(leg -> isActive(leg)
+                        && leg.getDriver() != null
+                        && driver.getId().equals(leg.getDriver().getId())))) {
+            throw collectionNotFound(orderId);
+        }
+    }
+
+    private void requireCurrentPickupOperator(Long orderId, Long collectorUserId) {
+        List<Shipment> shipments = lockedShipments(orderId);
+        if (shipments.stream().anyMatch(shipment -> !isHandledByOperator(shipment, collectorUserId))) {
+            throw collectionNotFound(orderId);
+        }
+    }
+
+    private List<Shipment> lockedShipments(Long orderId) {
+        List<Shipment> shipments = shipmentRepository.lockByOrderIdForPaymentCollection(orderId);
+        if (shipments.isEmpty()) {
+            throw collectionNotFound(orderId);
+        }
+        return shipments;
+    }
+
+    private static boolean isHandledByOperator(Shipment shipment, Long operatorUserId) {
+        PickupPoint heldAt = shipment.getHeldAtPickupPoint();
+        if (heldAt != null) {
+            return heldAt.getOperatorUser() != null
+                    && operatorUserId.equals(heldAt.getOperatorUser().getId());
+        }
+        return shipment.getLegs().stream()
+                .filter(PaymentServiceImpl::isActive)
+                .map(ShipmentLeg::getDestinationPickupPoint)
+                .filter(java.util.Objects::nonNull)
+                .map(PickupPoint::getOperatorUser)
+                .filter(java.util.Objects::nonNull)
+                .anyMatch(user -> operatorUserId.equals(user.getId()));
+    }
+
+    private static boolean isActive(ShipmentLeg leg) {
+        return leg.getAssignmentStatus() == LegAssignmentStatus.ACCEPTED
+                || leg.getAssignmentStatus() == LegAssignmentStatus.IN_PROGRESS;
+    }
+
+    private static ResourceNotFoundException collectionNotFound(Long orderId) {
+        return new ResourceNotFoundException("Collectable order", orderId);
     }
 
     private void requireMethod(PaymentMethod actual, PaymentMethod required, String message) {
