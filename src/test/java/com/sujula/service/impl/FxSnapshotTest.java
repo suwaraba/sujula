@@ -6,6 +6,7 @@ import com.sujula.model.order.OrderItem;
 import com.sujula.model.order.VendorOrder;
 import com.sujula.model.user.Vendor;
 import com.sujula.service.cart.RateTable;
+import com.sujula.service.ExchangeRateService;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -58,6 +59,7 @@ class FxSnapshotTest {
                 .totalNative(new BigDecimal("800.00"))
                 .subtotal(new BigDecimal("10.00"))
                 .total(new BigDecimal("10.00"))
+                .commissionRate(new BigDecimal("10.00"))
                 .items(List.of(line()))
                 .build();
     }
@@ -82,6 +84,23 @@ class FxSnapshotTest {
         assertEquals(0, new BigDecimal("0.0125").compareTo(fx.getRate()));
         assertEquals(TAKEN_AT, fx.getRateAt(), "when the rate was published, not when we wrote it");
         assertEquals(FxSource.PUBLISHED_RATE, fx.getSource());
+    }
+
+    @Test
+    void persistedRateKeepsItsOwnPublicationDateInsteadOfTheQuoteTime() {
+        LocalDateTime publishedAt = LocalDateTime.of(2026, 8, 14, 0, 0);
+        LocalDateTime quoteTime = LocalDateTime.of(2026, 9, 12, 9, 0);
+        RateTable rates = RateTable.fromPublishedRates("GBP", Map.of(
+                        "GMD", new ExchangeRateService.PublishedRate(
+                                new BigDecimal("0.0125"), publishedAt)),
+                2, quoteTime);
+        VendorOrder slice = slice("GMD");
+
+        OrderServiceImpl.freezeVendorSettlement(List.of(slice), rates);
+
+        assertEquals(publishedAt, slice.getFx().getRateAt());
+        assertEquals(FxSource.PUBLISHED_RATE, slice.getFx().getSource());
+        assertEquals(0, new BigDecimal("0.0125").compareTo(slice.getFx().getRate()));
     }
 
     /**

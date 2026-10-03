@@ -27,6 +27,7 @@ import com.sujula.model.order.OrderItem;
 import com.sujula.model.order.OrderStatusHistory;
 import com.sujula.model.order.VendorOrder;
 import com.sujula.model.money.FxSnapshot;
+import com.sujula.model.admin.CommissionRate;
 import com.sujula.model.products.Coupon;
 import com.sujula.model.products.CouponUsage;
 import com.sujula.model.products.Product;
@@ -36,6 +37,7 @@ import com.sujula.model.delivery.PickupPoint;
 import com.sujula.model.user.User;
 import com.sujula.model.user.Vendor;
 import com.sujula.repository.AddressRepository;
+import com.sujula.repository.admin.CommissionRateRepository;
 import com.sujula.repository.PickupPointRepository;
 import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.OrderStatusHistoryRepository;
@@ -133,6 +135,7 @@ public class OrderServiceImpl implements OrderService {
     private final EmailService emailService;
     private final NotificationService notificationService;
     private final CurrencyCatalogue currencyCatalogue;
+    private final CommissionRateRepository commissionRates;
 
     /** Fallback when a vendor or coupon has no currency recorded. */
     @Value("${sujula.cart.default-currency:GMD}")
@@ -305,7 +308,7 @@ public class OrderServiceImpl implements OrderService {
         User customer = requireUser(userId);
         Address address = requireOwnedAddress(shippingAddressId, userId);
         FrozenQuoteContract contract = requireFrozenQuoteContract(quote);
-        CheckoutResult result = buildFromFrozenQuote(quote, contract);
+        CheckoutResult result = buildFromFrozenQuote(quote, contract, LocalDateTime.now());
 
         Order order = Order.builder()
                 .orderNumber(newOrderNumber())
@@ -893,7 +896,8 @@ public class OrderServiceImpl implements OrderService {
             String orderCouponCode) {
     }
 
-    private CheckoutResult buildFromFrozenQuote(CartQuote quote, FrozenQuoteContract contract) {
+    private CheckoutResult buildFromFrozenQuote(CartQuote quote, FrozenQuoteContract contract,
+                                                LocalDateTime placementAt) {
         List<VendorOrder> vendorOrders = new ArrayList<>();
         for (FrozenVendorContract frozen : contract.vendors()) {
             List<OrderItem> items = new ArrayList<>();
@@ -913,8 +917,7 @@ public class OrderServiceImpl implements OrderService {
                     frozen.subtotalDisplay().subtract(frozen.discountDisplay()),
                     contract.displayCurrency());
             BigDecimal deliveryNative = frozenDeliveryNative(frozen);
-            BigDecimal commissionRate = vendor != null && vendor.getDefaultCommissionRate() != null
-                    ? vendor.getDefaultCommissionRate() : BigDecimal.ZERO;
+            BigDecimal commissionRate = commissionRateFor(vendor, placementAt);
             BigDecimal commissionNative = currencyCatalogue.round(
                     totalNative.multiply(commissionRate).movePointLeft(2),
                     frozen.nativeCurrency());
@@ -948,6 +951,7 @@ public class OrderServiceImpl implements OrderService {
         result.total = contract.total();
         result.currency = contract.displayCurrency();
         result.vendorOrders = vendorOrders;
+        result.placementAt = placementAt;
         return result;
     }
 
@@ -1039,7 +1043,7 @@ public class OrderServiceImpl implements OrderService {
         Coupon platformCoupon = findCouponByCode(quote.getPlatformCouponCode());
         List<VendorOrder> vendorOrders = new ArrayList<>();
 
-        LocalDateTime pricedAt = LocalDateTime.now();
+        LocalDateTime placementAt = LocalDateTime.now();
 
         for (CartResponse.VendorGroup group : quote.getVendors()) {
             Vendor vendor = vendorRepository.findById(group.getVendorId())
@@ -1071,7 +1075,7 @@ public class OrderServiceImpl implements OrderService {
                     // its own amounts were not converted at is worse than one
                     // recording nothing at all.
                     .fx(snapshotOf(group.getNativeCurrency(), quote.getDisplayCurrency(),
-                                   exchangeRate, pricedAt))
+                                   exchangeRate, placementAt, group.getExchangeRateAt()))
                     .nativeCurrency(group.getNativeCurrency())
                     .subtotalNative(subtotalNative)
                     .discountNative(discountNative)
@@ -1121,6 +1125,7 @@ public class OrderServiceImpl implements OrderService {
         result.currency = quote.getDisplayCurrency();
         result.platformCoupon = platformCoupon;
         result.vendorOrders = vendorOrders;
+        result.placementAt = placementAt;
         return result;
     }
 
@@ -1188,6 +1193,7 @@ public class OrderServiceImpl implements OrderService {
             throw new BadRequestException("No items to order");
         }
         String target = requireCurrencyCode(displayCurrency);
+        LocalDateTime placementAt = LocalDateTime.now();
 
         record Resolved(Product product, ProductVariant variant, Vendor vendor,
                          String nativeCurrency, BigDecimal unitPriceNative, int quantity) {}
@@ -1233,14 +1239,14 @@ public class OrderServiceImpl implements OrderService {
             currencies.add(couponCurrency(coupon));
         }
         currencies.remove(target);
-        Map<String, BigDecimal> rates = currencies.isEmpty()
-                ? Map.of() : exchangeRateService.getLatestRates(target, currencies);
-        // Built with the moment it was read and the target currency's real
-        // scale. The first is frozen onto every vendor slice so a converted
-        // figure stays explicable once the table has moved; the second stops a
-        // CFA total coming out with centimes on it.
-        RateTable rateTable = new RateTable(target, rates,
-                currencyCatalogue.minorUnits(target), LocalDateTime.now());
+        Map<String, ExchangeRateService.PublishedRate> rates = currencies.isEmpty()
+                ? Map.of() : exchangeRateService.getLatestPublishedRates(target, currencies);
+        // Built with each persisted rate's business date and the target
+        // currency's real scale. The first is frozen onto every vendor slice so
+        // a converted figure stays explicable once the table has moved; the
+        // second stops a CFA total coming out with centimes on it.
+        RateTable rateTable = RateTable.fromPublishedRates(target, rates,
+                currencyCatalogue.minorUnits(target), placementAt);
 
         Map<Long, List<Resolved>> byVendor = resolved.stream()
                 .collect(Collectors.groupingBy(r -> r.vendor().getId(), LinkedHashMap::new, Collectors.toList()));
@@ -1368,6 +1374,7 @@ public class OrderServiceImpl implements OrderService {
         result.rateTable = rateTable;
         result.platformCoupon = platformCoupon;
         result.vendorOrders = vendorOrders;
+        result.placementAt = placementAt;
         return result;
     }
 
@@ -1483,7 +1490,7 @@ public class OrderServiceImpl implements OrderService {
         result.shipping = shipping;
         result.total = result.total.add(shipping);
 
-        freezeVendorSettlement(result.vendorOrders, result.rateTable);
+        freezeVendorSettlementAt(result.vendorOrders, result.rateTable, result.placementAt);
     }
 
     /**
@@ -1511,6 +1518,22 @@ public class OrderServiceImpl implements OrderService {
      *                  a rate nobody actually converted at.
      */
     static void freezeVendorSettlement(List<VendorOrder> vendorOrders, RateTable rateTable) {
+        freezeVendorSettlement(vendorOrders, rateTable,
+                CurrencyCatalogue.of(new com.sujula.service.reference.ReferenceDataProperties()));
+    }
+
+    private void freezeVendorSettlementAt(List<VendorOrder> vendorOrders,
+                                          RateTable rateTable,
+                                          LocalDateTime placementAt) {
+        for (VendorOrder vendorOrder : vendorOrders) {
+            vendorOrder.setCommissionRate(
+                    commissionRateFor(vendorOrder.getVendor(), placementAt));
+        }
+        freezeVendorSettlement(vendorOrders, rateTable, currencyCatalogue);
+    }
+
+    static void freezeVendorSettlement(List<VendorOrder> vendorOrders, RateTable rateTable,
+                                       CurrencyCatalogue currencies) {
         for (VendorOrder vendorOrder : vendorOrders) {
             recordFxSnapshot(vendorOrder, rateTable);
             BigDecimal deliveryDisplay = vendorOrder.getItems().stream()
@@ -1523,9 +1546,10 @@ public class OrderServiceImpl implements OrderService {
             BigDecimal subtotalDisplay = vendorOrder.getSubtotal();
 
             if (subtotalNative != null && subtotalDisplay != null && subtotalDisplay.signum() > 0) {
-                vendorOrder.setDeliveryNative(deliveryDisplay
+                vendorOrder.setDeliveryNative(currencies.round(deliveryDisplay
                         .multiply(subtotalNative)
-                        .divide(subtotalDisplay, RateTable.MONEY_SCALE, RoundingMode.HALF_UP));
+                        .divide(subtotalDisplay, 12, RoundingMode.HALF_UP),
+                        vendorOrder.getNativeCurrency()));
             }
 
             // Null when this vendor's lines spanned more than one listing currency,
@@ -1535,20 +1559,36 @@ public class OrderServiceImpl implements OrderService {
                 continue;
             }
 
-            Vendor vendor = vendorOrder.getVendor();
-            BigDecimal rate = vendor != null && vendor.getDefaultCommissionRate() != null
-                    ? vendor.getDefaultCommissionRate()
-                    : BigDecimal.ZERO;
-            BigDecimal commission = totalNative
-                    .multiply(rate)
-                    .divide(HUNDRED, RateTable.MONEY_SCALE, RoundingMode.HALF_UP);
+            BigDecimal rate = vendorOrder.getCommissionRate();
+            if (rate == null) {
+                throw new IllegalStateException("Vendor order commission was not resolved at placement");
+            }
+            BigDecimal commission = currencies.round(
+                    totalNative.multiply(rate).movePointLeft(2),
+                    vendorOrder.getNativeCurrency());
 
             vendorOrder.setCommissionRate(rate);
             vendorOrder.setCommissionNative(commission);
             // Delivery is deliberately not added: the platform arranges it and
             // keeps it. The vendor is paid for the goods.
-            vendorOrder.setPayoutNative(totalNative.subtract(commission));
+            vendorOrder.setPayoutNative(currencies.round(
+                    totalNative.subtract(commission), vendorOrder.getNativeCurrency()));
         }
+    }
+
+    BigDecimal commissionRateFor(Vendor vendor, LocalDateTime placementAt) {
+        if (vendor == null || vendor.getId() == null) {
+            return BigDecimal.ZERO;
+        }
+        List<CommissionRate> applicable = commissionRates.findApplicable(vendor.getId(), placementAt);
+        if (!applicable.isEmpty()) {
+            return applicable.get(0).getRate();
+        }
+        // Existing installations may predate the effective-dated table. The
+        // vendor column remains the compatibility fallback only when no
+        // CommissionRate row applies; it never overrides an applicable row.
+        return vendor.getDefaultCommissionRate() != null
+                ? vendor.getDefaultCommissionRate() : BigDecimal.ZERO;
     }
 
     /**
@@ -1573,19 +1613,23 @@ public class OrderServiceImpl implements OrderService {
      * worth sharing is what a snapshot means, not how the rate was obtained.
      */
     private static FxSnapshot snapshotOf(String nativeCurrency, String displayCurrency,
-                                         BigDecimal rate, LocalDateTime pricedAt) {
+                                         BigDecimal rate, LocalDateTime identityAt,
+                                         LocalDateTime publishedAt) {
         if (nativeCurrency == null || displayCurrency == null) {
             return null;
         }
         if (nativeCurrency.equalsIgnoreCase(displayCurrency)) {
-            return FxSnapshot.identity(nativeCurrency, pricedAt);
+            return FxSnapshot.identity(nativeCurrency, identityAt);
         }
         if (rate == null || rate.signum() <= 0) {
             // Priced across currencies with no usable rate. Recording nothing is
             // honest; recording a zero or a one would read as evidence.
             return null;
         }
-        return FxSnapshot.published(nativeCurrency, displayCurrency, rate, pricedAt);
+        if (publishedAt == null) {
+            throw new IllegalStateException("A persisted FX rate must carry its publication date");
+        }
+        return FxSnapshot.published(nativeCurrency, displayCurrency, rate, publishedAt);
     }
 
     private static void recordFxSnapshot(VendorOrder vendorOrder, RateTable rateTable) {
@@ -1607,8 +1651,12 @@ public class OrderServiceImpl implements OrderService {
         if (rate == null) {
             return;   // priced without a rate; the order will have failed already
         }
+        LocalDateTime publishedAt = rateTable.rateAtFor(nativeCurrency);
+        if (publishedAt == null) {
+            throw new IllegalStateException("A persisted FX rate must carry its publication date");
+        }
         vendorOrder.setFx(FxSnapshot.published(
-                nativeCurrency, rateTable.target(), rate, takenAt));
+                nativeCurrency, rateTable.target(), rate, publishedAt));
     }
 
     /**
@@ -1666,6 +1714,7 @@ public class OrderServiceImpl implements OrderService {
          * own amounts were not converted at is worse than one recording nothing.
          */
         RateTable rateTable;
+        LocalDateTime placementAt;
     }
 
     private Order persistOrder(Order order, CheckoutResult result) {

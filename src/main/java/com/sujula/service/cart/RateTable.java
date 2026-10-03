@@ -4,7 +4,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
+
+import com.sujula.service.ExchangeRateService;
 
 /**
  * Immutable snapshot of the exchange rates needed to price one read.
@@ -18,10 +21,11 @@ import java.util.Map;
  * <p>Two things it carries that a bare map does not, and both are required
  * rather than convenient.
  *
- * <p><strong>When the rates were taken.</strong> A converted figure that does
- * not record its rate and the moment of it cannot be explained afterwards — the
- * table has moved by the next morning. Anything that stores a converted amount
- * stores this alongside it.
+ * <p><strong>When each rate was published.</strong> A converted figure that does
+ * not record its rate and its persisted business date cannot be explained
+ * afterwards — the table has moved by the next morning. Anything that stores a
+ * converted amount stores this alongside it. {@code takenAt} remains only for
+ * identity conversions and legacy in-memory tables.
  *
  * <p><strong>The target's real scale.</strong> Rounding every conversion to two
  * places is right for dalasi and sterling and wrong for CFA, which has no minor
@@ -43,6 +47,7 @@ public final class RateTable {
 
     private final String target;
     private final Map<String, BigDecimal> rates;
+    private final Map<String, LocalDateTime> publishedAt;
     private final int scale;
     private final LocalDateTime takenAt;
 
@@ -55,6 +60,32 @@ public final class RateTable {
     public RateTable(String target, Map<String, BigDecimal> rates, int scale, LocalDateTime takenAt) {
         this.target = target;
         this.rates = Collections.unmodifiableMap(rates);
+        Map<String, LocalDateTime> provenance = new HashMap<>();
+        rates.keySet().forEach(currency -> provenance.put(currency, takenAt));
+        this.publishedAt = Collections.unmodifiableMap(provenance);
+        this.scale = scale;
+        this.takenAt = takenAt;
+    }
+
+    /** Builds a table from persisted rates without replacing their dates with read time. */
+    public static RateTable fromPublishedRates(
+            String target, Map<String, ExchangeRateService.PublishedRate> publishedRates,
+            int scale, LocalDateTime identityAt) {
+        Map<String, BigDecimal> rates = new HashMap<>();
+        Map<String, LocalDateTime> provenance = new HashMap<>();
+        publishedRates.forEach((currency, published) -> {
+            rates.put(currency, published.rate());
+            provenance.put(currency, published.rateAt());
+        });
+        return new RateTable(target, rates, provenance, scale, identityAt);
+    }
+
+    private RateTable(String target, Map<String, BigDecimal> rates,
+                      Map<String, LocalDateTime> publishedAt,
+                      int scale, LocalDateTime takenAt) {
+        this.target = target;
+        this.rates = Collections.unmodifiableMap(rates);
+        this.publishedAt = Collections.unmodifiableMap(publishedAt);
         this.scale = scale;
         this.takenAt = takenAt;
     }
@@ -91,6 +122,14 @@ public final class RateTable {
         String c = currency.toUpperCase();
         if (c.equals(target)) return BigDecimal.ONE;
         return rates.get(c);
+    }
+
+    /** Publication/effective time of the selected persisted rate. */
+    public LocalDateTime rateAtFor(String currency) {
+        if (currency == null) return null;
+        String c = currency.toUpperCase();
+        if (c.equals(target)) return takenAt;
+        return publishedAt.get(c);
     }
 
     public boolean canConvert(String currency) {

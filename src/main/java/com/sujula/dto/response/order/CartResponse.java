@@ -150,6 +150,9 @@ public class CartResponse {
          */
         private BigDecimal exchangeRate;
 
+        /** Business publication/effective time of {@link #exchangeRate}. */
+        private LocalDateTime exchangeRateAt;
+
         /** False when no rate was available; the converted amounts are then null. */
         private boolean convertible;
 

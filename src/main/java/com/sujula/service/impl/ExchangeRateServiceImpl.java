@@ -111,4 +111,18 @@ public class ExchangeRateServiceImpl implements ExchangeRateService {
                 .stream()
                 .collect(Collectors.toMap(ExchangeRate::getFromCurrency, ExchangeRate::getRate));
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, PublishedRate> getLatestPublishedRates(
+            String targetCurrency, Collection<String> fromCurrencies) {
+        if (fromCurrencies == null || fromCurrencies.isEmpty()) {
+            return Map.of();
+        }
+        return exchangeRateRepository.findLatestRates(targetCurrency.toUpperCase(), fromCurrencies)
+                .stream()
+                .collect(Collectors.toMap(
+                        ExchangeRate::getFromCurrency,
+                        rate -> new PublishedRate(rate.getRate(), rate.getRateDate().atStartOfDay())));
+    }
 }

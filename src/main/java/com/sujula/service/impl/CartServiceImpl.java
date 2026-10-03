@@ -850,11 +850,12 @@ public class CartServiceImpl implements CartService {
         }
         sourceCurrencies.remove(target); // identity rate, no lookup needed
 
-        Map<String, BigDecimal> rates = sourceCurrencies.isEmpty()
+        Map<String, ExchangeRateService.PublishedRate> rates = sourceCurrencies.isEmpty()
                 ? Map.of()
-                : exchangeRateService.getLatestRates(target, sourceCurrencies);
+                : exchangeRateService.getLatestPublishedRates(target, sourceCurrencies);
 
-        return new RateTable(target, rates, currencies.minorUnits(target), LocalDateTime.now());
+        return RateTable.fromPublishedRates(
+                target, rates, currencies.minorUnits(target), LocalDateTime.now());
     }
 
     // ── Response assembly ─────────────────────────────────────────────────────
@@ -1129,6 +1130,7 @@ public class CartServiceImpl implements CartService {
                     .logoUrl(vendor.getLogoUrl())
                     .nativeCurrency(nativeCurrency)
                     .exchangeRate(singleCurrency ? rates.rateFor(nativeCurrency) : null)
+                    .exchangeRateAt(singleCurrency ? rates.rateAtFor(nativeCurrency) : null)
                     .convertible(convertible)
                     .items(itemResponses)
                     .subtotalNative(singleCurrency ? subtotalNative : null)

@@ -1,6 +1,7 @@
 package com.sujula.service.impl;
 
 import com.sujula.model.Address;
+import com.sujula.model.admin.CommissionRate;
 import com.sujula.model.constant.DeliveryMode;
 import com.sujula.model.constant.FxSource;
 import com.sujula.model.constant.PartnerStatus;
@@ -16,6 +17,7 @@ import com.sujula.model.user.User;
 import com.sujula.model.user.Vendor;
 import com.sujula.repository.AddressRepository;
 import com.sujula.repository.PickupPointRepository;
+import com.sujula.repository.admin.CommissionRateRepository;
 import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.OrderStatusHistoryRepository;
 import com.sujula.repository.order.VendorOrderRepository;
@@ -44,6 +46,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -69,6 +72,7 @@ class OrderServiceFrozenQuoteTest {
     private final DeliveryPricingService delivery = mock(DeliveryPricingService.class);
     private final EmailService email = mock(EmailService.class);
     private final NotificationService notifications = mock(NotificationService.class);
+    private final CommissionRateRepository commissionRates = mock(CommissionRateRepository.class);
 
     private OrderServiceImpl service;
     private User customer;
@@ -81,7 +85,7 @@ class OrderServiceFrozenQuoteTest {
         service = new OrderServiceImpl(orders, vendorOrders, statusHistory, products, variants,
                 stock, users, vendors, addresses, pickupPoints, coupons, couponUsages,
                 exchangeRates, carts, delivery, email, notifications,
-                CurrencyCatalogue.of(new ReferenceDataProperties()));
+                CurrencyCatalogue.of(new ReferenceDataProperties()), commissionRates);
 
         customer = User.builder().id(7L).email("buyer@example.test").build();
         address = Address.builder().id(9L).user(customer).label("Home")
@@ -153,8 +157,10 @@ class OrderServiceFrozenQuoteTest {
         assertEquals(FxSource.HELD_QUOTE, gmd.getFx().getSource());
         assertEquals("held-order-test", gmd.getFx().getQuoteId());
         assertMoney("0.02000000", gmd.getFx().getRate());
+        assertEquals(LocalDateTime.of(2026, 9, 30, 12, 0), gmd.getFx().getRateAt());
         assertEquals(FxSource.HELD_QUOTE, xof.getFx().getSource());
         assertMoney("0.01000000", xof.getFx().getRate());
+        assertEquals(LocalDateTime.of(2026, 9, 30, 12, 0), xof.getFx().getRateAt());
 
         assertMoney("1000.00", gmd.getItems().get(0).getUnitPrice());
         assertMoney("20.00", gmd.getItems().get(0).getUnitPriceConverted());
@@ -168,6 +174,48 @@ class OrderServiceFrozenQuoteTest {
         verify(carts).clearCart(any());
         verify(coupons, never()).findById(any());
         verifyNoInteractions(exchangeRates, delivery, couponUsages);
+    }
+
+    @Test
+    void effectiveRatesOverrideStaleVendorCachesAndRoundIndependentlyByCurrency() {
+        gmdProduct.getVendor().applyDefaultCommissionRate(new BigDecimal("99.00"));
+        xofProduct.getVendor().applyDefaultCommissionRate(new BigDecimal("99.00"));
+        when(commissionRates.findApplicable(eq(11L), any())).thenReturn(List.of(
+                CommissionRate.builder().vendor(gmdProduct.getVendor())
+                        .rate(new BigDecimal("12.35"))
+                        .effectiveFrom(LocalDateTime.now().minusDays(1)).build()));
+        when(commissionRates.findApplicable(eq(22L), any())).thenReturn(List.of(
+                CommissionRate.builder().vendor(xofProduct.getVendor())
+                        .rate(new BigDecimal("7.49"))
+                        .effectiveFrom(LocalDateTime.now().minusDays(1)).build()));
+
+        Order order = service.createFromQuote(7L, 9L, null, frozenQuote());
+
+        VendorOrder gmd = slice(order, 11L);
+        assertMoney("12.35", gmd.getCommissionRate());
+        assertMoney("111.15", gmd.getCommissionNative());
+        assertMoney("788.85", gmd.getPayoutNative());
+
+        VendorOrder xof = slice(order, 22L);
+        assertMoney("7.49", xof.getCommissionRate());
+        assertMoney("90", xof.getCommissionNative());
+        assertMoney("1110", xof.getPayoutNative());
+    }
+
+    @Test
+    void scheduledCommissionTakesEffectAtItsBoundaryAndNotBefore() {
+        LocalDateTime boundary = LocalDateTime.of(2026, 10, 10, 0, 0);
+        CommissionRate current = CommissionRate.builder().vendor(gmdProduct.getVendor())
+                .rate(new BigDecimal("8.00"))
+                .effectiveFrom(boundary.minusMonths(1)).effectiveUntil(boundary).build();
+        CommissionRate scheduled = CommissionRate.builder().vendor(gmdProduct.getVendor())
+                .rate(new BigDecimal("13.00")).effectiveFrom(boundary).build();
+        LocalDateTime before = boundary.minusNanos(1);
+        when(commissionRates.findApplicable(11L, before)).thenReturn(List.of(current));
+        when(commissionRates.findApplicable(11L, boundary)).thenReturn(List.of(scheduled));
+
+        assertMoney("8.00", service.commissionRateFor(gmdProduct.getVendor(), before));
+        assertMoney("13.00", service.commissionRateFor(gmdProduct.getVendor(), boundary));
     }
 
     @Test

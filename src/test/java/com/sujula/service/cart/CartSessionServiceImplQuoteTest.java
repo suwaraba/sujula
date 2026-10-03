@@ -27,6 +27,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -114,6 +115,10 @@ class CartSessionServiceImplQuoteTest {
         assertEquals(amount("0.02"), vendorBSnapshot.getPlatformDiscountShareDisplay());
         assertEquals(vendorCoupon.getId(), vendorBSnapshot.getVendorCouponId());
         assertEquals(vendorCoupon.getCode(), vendorBSnapshot.getVendorCouponCode());
+        assertEquals(LocalDateTime.of(2026, 9, 1, 0, 0),
+                saved.getLines().stream()
+                        .filter(line -> "GMD".equals(line.getListingCurrency()))
+                        .findFirst().orElseThrow().getFx().getRateAt());
         assertEquals(amount("33.30"), response.total());
     }
 
@@ -207,6 +212,7 @@ class CartSessionServiceImplQuoteTest {
                 .storeName("Vendor " + vendorId)
                 .nativeCurrency(nativeCurrency)
                 .exchangeRate(amount(rate))
+                .exchangeRateAt(LocalDateTime.of(2026, 9, 1, 0, 0))
                 .convertible(true)
                 .items(List.of(line))
                 .subtotalNative(amount(line.getLineTotalNative().toPlainString()))

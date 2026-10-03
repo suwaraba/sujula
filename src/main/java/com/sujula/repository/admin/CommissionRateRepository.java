@@ -29,7 +29,8 @@ public interface CommissionRateRepository extends JpaRepository<CommissionRate, 
          + "AND c.category IS NULL "
          + "AND c.effectiveFrom <= :at "
          + "AND (c.effectiveUntil IS NULL OR c.effectiveUntil > :at) "
-         + "ORDER BY CASE WHEN c.vendor IS NULL THEN 1 ELSE 0 END, c.effectiveFrom DESC")
+         + "ORDER BY CASE WHEN c.vendor IS NULL THEN 1 ELSE 0 END, "
+         + "c.effectiveFrom DESC, c.id DESC")
     List<CommissionRate> findApplicable(@Param("vendorId") Long vendorId,
                                         @Param("at") LocalDateTime at);
 

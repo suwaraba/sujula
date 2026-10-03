@@ -8,6 +8,7 @@ import com.sujula.model.order.Order;
 import com.sujula.model.order.OrderItem;
 import com.sujula.repository.AddressRepository;
 import com.sujula.repository.PickupPointRepository;
+import com.sujula.repository.admin.CommissionRateRepository;
 import com.sujula.repository.order.OrderRepository;
 import com.sujula.repository.order.OrderStatusHistoryRepository;
 import com.sujula.repository.order.VendorOrderRepository;
@@ -62,7 +63,8 @@ class OrderServiceImplGuestLookupTest {
                 mock(DeliveryPricingService.class),
                 mock(EmailService.class),
                 mock(NotificationService.class),
-                mock(CurrencyCatalogue.class));
+                mock(CurrencyCatalogue.class),
+                mock(CommissionRateRepository.class));
     }
 
     @Test

@@ -607,7 +607,8 @@ public class MoneyLedger {
         if (slice.getNativeCurrency() != null && !slice.getNativeCurrency().isBlank()) {
             return slice.getNativeCurrency();
         }
-        return slice.getVendor().getSettlementCurrency();
+        throw new IllegalStateException("Vendor order " + orderNumber(slice)
+                + " has no frozen native currency; refusing to mutate historical money");
     }
 
     private static String orderNumber(VendorOrder slice) {

@@ -413,7 +413,8 @@ public class CartSessionServiceImpl implements CartSessionService {
                 ? FxSnapshot.identity(listing, pricedAt)
                 : (group.getExchangeRate() == null ? null
                    : FxSnapshot.published(listing, displayCurrency,
-                                          group.getExchangeRate(), pricedAt));
+                                          group.getExchangeRate(),
+                                          requireRateAt(group, listing, displayCurrency)));
 
         return CartQuoteLine.builder()
                 .quote(quote)
@@ -434,6 +435,15 @@ public class CartSessionServiceImpl implements CartSessionService {
                 .issue(item.isPurchasable() ? null : "This line cannot be checked out as it stands.")
                 .fx(fx)
                 .build();
+    }
+
+    private static LocalDateTime requireRateAt(CartResponse.VendorGroup group,
+                                                String listing, String displayCurrency) {
+        if (group.getExchangeRateAt() == null) {
+            throw new BadRequestException("The " + listing + " to " + displayCurrency
+                    + " rate has no publication date. Refresh the cart and request a new quote.");
+        }
+        return group.getExchangeRateAt();
     }
 
     private CartQuoteResponse toResponse(CartQuote quote, CartResponse priced,

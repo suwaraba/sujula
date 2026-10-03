@@ -288,6 +288,34 @@ class MoneyLedgerTest {
     }
 
     @Test
+    void missingFrozenCurrencyFailsClosedBeforeWritingAnyLedgerEntry() {
+        VendorOrder historic = slice("SJL-L-MISSING-CURRENCY", "GMD", "100.00", "10.00");
+        historic.setNativeCurrency(null);
+        banjul.setSettlementCurrency("XOF");
+
+        IllegalStateException failure = assertThrows(
+                IllegalStateException.class, () -> ledger.postSale(historic));
+
+        assertTrue(failure.getMessage().contains("no frozen native currency"));
+        assertTrue(entries.findByVendorOrderIdOrderByOccurredAtAsc(historic.getId()).isEmpty(),
+                "a rejected historical mutation must not fabricate an entry");
+    }
+
+    @Test
+    void missingCurrencyOnOneSliceDoesNotContaminateAValidSibling() {
+        VendorOrder historic = slice("SJL-L-BAD-SIBLING", "GMD", "100.00", "10.00");
+        historic.setNativeCurrency(null);
+        VendorOrder valid = slice("SJL-L-GOOD-SIBLING", "GMD", "200.00", "20.00");
+
+        assertThrows(IllegalStateException.class, () -> ledger.postSale(historic));
+        List<com.sujula.model.money.VendorLedgerEntry> posted = ledger.postSale(valid);
+
+        assertEquals(2, posted.size());
+        assertTrue(posted.stream().allMatch(entry -> "GMD".equals(entry.getCurrency())));
+        assertTrue(entries.findByVendorOrderIdOrderByOccurredAtAsc(historic.getId()).isEmpty());
+    }
+
+    @Test
     void replayingOneRefundReferencePostsEachFinancialEntryOnce() {
         VendorOrder sale = slice("SJL-L-REFUND-ONCE", "GMD", "9700.00", "970.00");
         ledger.postSale(sale);

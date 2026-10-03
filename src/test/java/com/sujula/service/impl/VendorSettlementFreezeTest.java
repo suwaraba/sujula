@@ -49,6 +49,7 @@ class VendorSettlementFreezeTest {
                 .totalNative(new BigDecimal("800.00"))
                 .subtotal(new BigDecimal("10.00"))
                 .total(new BigDecimal("10.00"))
+                .commissionRate(vendor.getDefaultCommissionRate())
                 .items(items)
                 .build();
     }
@@ -134,6 +135,7 @@ class VendorSettlementFreezeTest {
                 .totalNative(BigDecimal.ZERO)
                 .subtotal(BigDecimal.ZERO)     // fully discounted
                 .total(BigDecimal.ZERO)
+                .commissionRate(new BigDecimal("10.00"))
                 .items(List.of(line("1.00")))
                 .build();
 

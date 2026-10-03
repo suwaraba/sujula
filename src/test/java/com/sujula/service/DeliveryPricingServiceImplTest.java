@@ -250,6 +250,16 @@ class DeliveryPricingServiceImplTest {
         }
 
         @Override
+        public Map<String, PublishedRate> getLatestPublishedRates(
+                String targetCurrency, Collection<String> fromCurrencies) {
+            return getLatestRates(targetCurrency, fromCurrencies).entrySet().stream()
+                    .collect(java.util.stream.Collectors.toMap(
+                            Map.Entry::getKey,
+                            entry -> new PublishedRate(entry.getValue(),
+                                    java.time.LocalDate.of(2026, 1, 1).atStartOfDay())));
+        }
+
+        @Override
         public Page<ExchangeRateResponse> findAll(Pageable pageable) {
             throw new UnsupportedOperationException();
         }
