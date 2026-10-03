@@ -181,6 +181,15 @@ public interface VendorLedgerEntryRepository extends JpaRepository<VendorLedgerE
     /** The entries a payout committed, for reversing it when the transfer fails. */
     List<VendorLedgerEntry> findByPayoutId(Long payoutId);
 
+    /** Net hold amount per stable dispute reference; negative means still outstanding. */
+    @Query("SELECT e.reference, COALESCE(SUM(e.amount), 0) FROM VendorLedgerEntry e "
+         + "WHERE e.vendor.id = :vendorId AND e.currency = :currency "
+         + "AND e.type IN (com.sujula.model.constant.LedgerEntryType.DISPUTE_HOLD, "
+         + "               com.sujula.model.constant.LedgerEntryType.DISPUTE_HOLD_RELEASE) "
+         + "GROUP BY e.reference")
+    List<Object[]> disputeHoldNetByReference(@Param("vendorId") Long vendorId,
+                                              @Param("currency") String currency);
+
     // ── The platform's own view ──────────────────────────────────────────────
     //
     // Everything above answers a question about one seller. These answer

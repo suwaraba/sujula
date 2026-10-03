@@ -229,9 +229,14 @@ public class MoneyLedger {
                     slice.getId());
             return null;
         }
-        if (!findHolds(slice).isEmpty()) {
-            // A second dispute on the same slice must not hold the money twice.
-            log.info("[Ledger] Slice {} is already held for a dispute", slice.getId());
+        if (outstandingDisputeHold(slice, reference).signum() < 0) {
+            log.info("[Ledger] Slice {} is already held for dispute {}", slice.getId(), reference);
+            return null;
+        }
+        if (hasOutstandingDisputeHoldOnSlice(slice)) {
+            // Two simultaneous disputes on one slice share the existing freeze;
+            // each reference is still netted independently when it closes.
+            log.info("[Ledger] Slice {} already has an outstanding dispute hold", slice.getId());
             return null;
         }
 
@@ -265,18 +270,14 @@ public class MoneyLedger {
      */
     @Transactional
     public VendorLedgerEntry releaseDisputeHold(VendorOrder slice, String reference, String why) {
-        List<VendorLedgerEntry> holds = findHolds(slice);
-        if (holds.isEmpty()) {
-            return null;
-        }
         String currency = currencyOf(slice);
-        BigDecimal total = BigDecimal.ZERO;
-        for (VendorLedgerEntry hold : holds) {
-            total = total.add(hold.getAmount());
-        }
-        BigDecimal giveBack = round(total, currency).abs();
+        BigDecimal outstanding = outstandingDisputeHold(slice, reference);
+        BigDecimal giveBack = round(outstanding, currency).negate();
         if (giveBack.signum() == 0) {
             return null;
+        }
+        if (giveBack.signum() < 0) {
+            throw new IllegalStateException("Dispute hold " + reference + " was over-released");
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -291,29 +292,38 @@ public class MoneyLedger {
         return entry;
     }
 
-    /** Holds on a slice that have not been lifted yet. */
-    private List<VendorLedgerEntry> findHolds(VendorOrder slice) {
+    /** Net amount still held for one stable dispute identity. */
+    private BigDecimal outstandingDisputeHold(VendorOrder slice, String reference) {
         List<VendorLedgerEntry> all = entries.findByVendorOrderIdOrderByOccurredAtAsc(slice.getId());
-        BigDecimal released = BigDecimal.ZERO;
-        List<VendorLedgerEntry> holds = new ArrayList<>();
+        BigDecimal net = BigDecimal.ZERO;
         for (VendorLedgerEntry existing : all) {
-            if (existing.getType() == LedgerEntryType.DISPUTE_HOLD) {
-                holds.add(existing);
-            } else if (existing.getType() == LedgerEntryType.DISPUTE_HOLD_RELEASE) {
-                released = released.add(existing.getAmount());
+            if (java.util.Objects.equals(reference, existing.getReference())
+                    && (existing.getType() == LedgerEntryType.DISPUTE_HOLD
+                        || existing.getType() == LedgerEntryType.DISPUTE_HOLD_RELEASE)) {
+                net = net.add(existing.getAmount());
             }
         }
-        if (released.signum() == 0) {
-            return holds;
+        return round(net, currencyOf(slice));
+    }
+
+    private boolean hasOutstandingDisputeHoldOnSlice(VendorOrder slice) {
+        Map<String, BigDecimal> byReference = new LinkedHashMap<>();
+        for (VendorLedgerEntry existing
+                : entries.findByVendorOrderIdOrderByOccurredAtAsc(slice.getId())) {
+            if (existing.getType() == LedgerEntryType.DISPUTE_HOLD
+                    || existing.getType() == LedgerEntryType.DISPUTE_HOLD_RELEASE) {
+                byReference.merge(existing.getReference(), existing.getAmount(), BigDecimal::add);
+            }
         }
-        // Everything held has already been given back, so there is nothing
-        // outstanding. Compared rather than counted, because a slice can be
-        // disputed, released and disputed again.
-        BigDecimal outstanding = BigDecimal.ZERO;
-        for (VendorLedgerEntry hold : holds) {
-            outstanding = outstanding.add(hold.getAmount());
-        }
-        return outstanding.abs().compareTo(released) <= 0 ? List.of() : holds;
+        return byReference.values().stream().anyMatch(net -> net.signum() < 0);
+    }
+
+    /** Whether this vendor/currency has any dispute reference whose hold is still outstanding. */
+    @Transactional(readOnly = true)
+    public boolean hasOutstandingDisputeHold(Long vendorId, String currency) {
+        return entries.disputeHoldNetByReference(vendorId, currency).stream()
+                .map(row -> (BigDecimal) row[1])
+                .anyMatch(net -> net != null && net.signum() < 0);
     }
 
     /**
@@ -350,6 +360,18 @@ public class MoneyLedger {
         String currency = payout.getCurrency();
         BigDecimal amount = round(payout.getAmount(), currency).abs();
 
+        BigDecimal outstanding = payoutCommitmentNet(payout);
+        if (outstanding.signum() < 0) {
+            return entries.findByPayoutId(payout.getId()).stream()
+                    .filter(row -> row.getType() == LedgerEntryType.PAYOUT)
+                    .reduce((first, second) -> second)
+                    .orElseThrow();
+        }
+        if (outstanding.signum() > 0) {
+            throw new IllegalStateException("Payout " + payout.getReference()
+                    + " has more reversal than commitment");
+        }
+
         VendorLedgerEntry entry = VendorLedgerEntry.builder()
                 .vendor(vendor)
                 .type(LedgerEntryType.PAYOUT)
@@ -378,7 +400,17 @@ public class MoneyLedger {
      */
     @Transactional
     public VendorLedgerEntry reversePayout(Payout payout, String why) {
-        BigDecimal amount = round(payout.getAmount(), payout.getCurrency()).abs();
+        BigDecimal outstanding = payoutCommitmentNet(payout);
+        if (outstanding.signum() == 0) {
+            log.debug("[Ledger] Payout {} has no outstanding commitment to reverse",
+                    payout.getReference());
+            return null;
+        }
+        if (outstanding.signum() > 0) {
+            throw new IllegalStateException("Payout " + payout.getReference()
+                    + " has more reversal than commitment");
+        }
+        BigDecimal amount = round(outstanding.negate(), payout.getCurrency());
 
         VendorLedgerEntry entry = VendorLedgerEntry.builder()
                 .vendor(payout.getVendor())
@@ -396,6 +428,24 @@ public class MoneyLedger {
         log.info("[Ledger] Payout {} reversed: {} {} back to vendor {}",
                 payout.getReference(), amount, payout.getCurrency(), payout.getVendor().getId());
         return save(entry);
+    }
+
+    /** The payout has exactly one currently-outstanding reservation amount. */
+    @Transactional(readOnly = true)
+    public boolean hasExactPayoutCommitment(Payout payout) {
+        BigDecimal expected = round(payout.getAmount(), payout.getCurrency()).abs().negate();
+        return payoutCommitmentNet(payout).compareTo(expected) == 0;
+    }
+
+    private BigDecimal payoutCommitmentNet(Payout payout) {
+        if (payout.getId() == null) {
+            return BigDecimal.ZERO;
+        }
+        return entries.findByPayoutId(payout.getId()).stream()
+                .filter(row -> row.getType() == LedgerEntryType.PAYOUT
+                        || row.getType() == LedgerEntryType.PAYOUT_REVERSAL)
+                .map(VendorLedgerEntry::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     /** A correction somebody made by hand, which is the one row a person may write. */

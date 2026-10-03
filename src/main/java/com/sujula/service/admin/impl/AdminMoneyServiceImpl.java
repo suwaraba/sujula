@@ -609,15 +609,15 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
 
         for (Object[] row : rows) {
             Long vendorId = ((Number) row[0]).longValue();
-            BigDecimal available = currencies.round(orZero((BigDecimal) row[2]), currency);
-
             if (request.vendorIds() != null && !request.vendorIds().isEmpty()
                     && !request.vendorIds().contains(vendorId)) {
                 continue;
             }
 
-            Vendor vendor = vendors.findById(vendorId).orElse(null);
+            // Same lock root and lock order as self-service payout requests.
+            Vendor vendor = vendors.findByIdForPayout(vendorId).orElse(null);
             if (vendor == null) continue;
+            BigDecimal available = money.balance(vendorId, currency).available();
 
             // A suspended store's money is HELD, not refused. The seller earned
             // it and the platform is keeping it still — so it is named in the
@@ -634,14 +634,14 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
                 continue;   // nothing owed; not worth naming
             }
 
-            BigDecimal committed = openPayoutsByCurrency(vendorId)
-                    .getOrDefault(currency, BigDecimal.ZERO);
-            BigDecimal payable = available.subtract(committed);
-            if (payable.signum() <= 0) {
-                excluded.add(vendor.getStoreName() + ": already has " + committed + " " + currency
-                        + " in flight.");
+            if (money.hasOutstandingDisputeHold(vendorId, currency)) {
+                excluded.add(vendor.getStoreName() + ": an active dispute is holding "
+                        + currency + " funds.");
                 continue;
             }
+            // PAYOUT rows are already included in the ledger sum. Subtracting
+            // open payout rows here again would reserve the same money twice.
+            BigDecimal payable = available;
             if (payable.compareTo(floor) < 0) {
                 excluded.add(vendor.getStoreName() + ": " + payable + " " + currency
                         + " is below the " + floor + " floor — a transfer would cost more than it "
@@ -666,6 +666,7 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
                     .notes("Run " + batch.getReference())
                     .build();
             payouts.save(payout);
+            money.postPayout(vendor, payout);
             items.add(payout);
             total = total.add(payable);
         }
@@ -710,7 +711,11 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
     public AdminMoneyResponses.BatchSaved approveBatch(
             User staff, Long batchId, AdminMoneyRequests.ApproveBatch request) {
 
-        PayoutBatch batch = requireBatch(batchId);
+        Map<Long, Vendor> lockedVendors = new LinkedHashMap<>();
+        for (Long vendorId : payouts.findVendorIdsByBatchId(batchId)) {
+            lockedVendors.put(vendorId, requireVendorForPayout(vendorId));
+        }
+        PayoutBatch batch = requireBatchForUpdate(batchId);
 
         if (batch.getStatus() != PayoutBatchStatus.AWAITING_APPROVAL) {
             throw new BadRequestException(
@@ -726,7 +731,27 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
         stepUp.verify(staff, request.password(), request.totpCode(),
                 "releasing " + batch.getTotal() + " " + batch.getCurrency() + " of transfers");
 
-        List<Payout> items = payouts.findByBatchIdOrderByIdAsc(batch.getId());
+        List<Payout> items = payouts.findByBatchIdForUpdateOrderByIdAsc(batch.getId());
+        for (Payout payout : items) {
+            Vendor vendor = payout.getVendor() == null ? null
+                    : lockedVendors.get(payout.getVendor().getId());
+            if (vendor == null || payout.getStatus() != PayoutStatus.REQUESTED) {
+                throw new BadRequestException("Payout " + payout.getReference()
+                        + " is no longer eligible for approval.");
+            }
+            if (vendor.arePayoutsHeld()) {
+                throw new BadRequestException(vendor.getStoreName()
+                        + " is now on payout hold. This run cannot be approved.");
+            }
+            if (money.hasOutstandingDisputeHold(vendor.getId(), payout.getCurrency())) {
+                throw new BadRequestException("A dispute is holding " + vendor.getStoreName()
+                        + "'s " + payout.getCurrency() + " balance. This run cannot be approved.");
+            }
+            if (!money.hasExactPayoutCommitment(payout)) {
+                throw new BadRequestException("Payout " + payout.getReference()
+                        + " no longer has its exact ledger reservation. Cancel and rebuild the run.");
+            }
+        }
         BigDecimal sum = items.stream().map(p -> orZero(p.getAmount()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         if (currencies.round(sum, batch.getCurrency()).compareTo(orZero(batch.getTotal())) != 0) {
@@ -741,16 +766,13 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
 
         LocalDateTime now = LocalDateTime.now();
         for (Payout payout : items) {
-            // The ledger entry is what commits the money. Posting it here rather
-            // than at assembly means a batch that is never approved has moved
-            // nothing at all.
+            // Preparation already committed the money. Approval only authorises
+            // execution of that exact reservation; posting again would double-pay.
             payout.setStatus(PayoutStatus.PENDING);
             payout.setProcessedBy(staff);
             payout.setAttempts(payout.getAttempts() + 1);
             payout.setLastAttemptAt(now);
             payouts.save(payout);
-            money.postPayout(payout.getVendor(), payout);
-
             if (payout.getVendor() != null && payout.getVendor().getUser() != null) {
                 notifications.send(payout.getVendor().getUser().getId(),
                         "A payout is on its way",
@@ -788,15 +810,19 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
     public AdminMoneyResponses.BatchSaved cancelBatch(
             User staff, Long batchId, AdminMoneyRequests.CancelBatch request) {
 
-        PayoutBatch batch = requireBatch(batchId);
+        for (Long vendorId : payouts.findVendorIdsByBatchId(batchId)) {
+            requireVendorForPayout(vendorId);
+        }
+        PayoutBatch batch = requireBatchForUpdate(batchId);
         if (!batch.getStatus().isOpen()) {
             throw new BadRequestException(
                     "That run is " + batch.getStatus() + ". Once transfers are released they are "
                             + "with a bank, and cancelling the batch here would not recall them.");
         }
 
-        List<Payout> items = payouts.findByBatchIdOrderByIdAsc(batch.getId());
+        List<Payout> items = payouts.findByBatchIdForUpdateOrderByIdAsc(batch.getId());
         for (Payout payout : items) {
+            money.reversePayout(payout, "Batch cancelled: " + request.reason());
             payout.setStatus(PayoutStatus.CANCELLED);
             payout.setNotes("Run " + batch.getReference() + " cancelled: " + request.reason());
             payouts.save(payout);
@@ -813,8 +839,8 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
 
         return new AdminMoneyResponses.BatchSaved(batch.getId(), batch.getReference(),
                 batch.getStatus(), batch.getCurrency(), batch.getTotal(), items.size(),
-                "Cancelled before anything moved. No ledger entry was written, so no seller's "
-                        + "balance changed — they are still owed exactly what they were.");
+                "Cancelled before anything moved. Each ledger reservation was restored exactly "
+                        + "once, so every seller is still owed the committed amount.");
     }
 
     @Override
@@ -822,7 +848,13 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
     public AdminMoneyResponses.PayoutRetried retryPayout(
             User staff, Long payoutId, AdminMoneyRequests.RetryPayoutItem request) {
 
-        Payout payout = payouts.findById(payoutId).orElseThrow(
+        Payout snapshot = payouts.findById(payoutId).orElseThrow(
+                () -> new ResourceNotFoundException("No such payout."));
+        if (snapshot.getVendor() == null) {
+            throw new BadRequestException("That payout is not a vendor transfer.");
+        }
+        Vendor vendor = requireVendorForPayout(snapshot.getVendor().getId());
+        Payout payout = payouts.findByIdForUpdate(payoutId).orElseThrow(
                 () -> new ResourceNotFoundException("No such payout."));
 
         if (payout.getStatus() != PayoutStatus.FAILED) {
@@ -838,12 +870,25 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
                             + (payout.getFailureReason() == null ? "not recorded"
                                                                  : payout.getFailureReason()));
         }
+        if (vendor.arePayoutsHeld()) {
+            throw new BadRequestException(vendor.getStoreName()
+                    + " is on payout hold. The failed transfer cannot be retried.");
+        }
+        if (money.hasOutstandingDisputeHold(vendor.getId(), payout.getCurrency())) {
+            throw new BadRequestException("A dispute is holding " + vendor.getStoreName()
+                    + "'s " + payout.getCurrency() + " balance. The transfer cannot be retried.");
+        }
 
         // A retry is a new attempt on the SAME payout, never a new row. The
         // seller is owed one amount, and a second row would look like two.
         // Reversing first is what puts the money back before it is committed
         // again, so the balance is right in between the two attempts.
         money.reversePayout(payout, "Retry: " + request.reason());
+        BigDecimal available = money.balance(vendor.getId(), payout.getCurrency()).available();
+        if (available.compareTo(payout.getAmount()) < 0) {
+            throw new BadRequestException("The restored balance is now only " + available + " "
+                    + payout.getCurrency() + "; this payout cannot be recommitted.");
+        }
 
         payout.setStatus(PayoutStatus.PENDING);
         payout.setAttempts(payout.getAttempts() + 1);
@@ -851,7 +896,7 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
         payout.setFailureReason(null);
         payout.setProcessedBy(staff);
         payouts.save(payout);
-        money.postPayout(payout.getVendor(), payout);
+        money.postPayout(vendor, payout);
 
         audit.record(AuditAction.PAYOUT_ITEM_RETRIED, "PAYOUT", payout.getId(),
                 payout.getReference(),
@@ -868,6 +913,16 @@ public class AdminMoneyServiceImpl implements AdminMoneyService {
     private PayoutBatch requireBatch(Long id) {
         return batches.findById(id).orElseThrow(
                 () -> new ResourceNotFoundException("No such payout run."));
+    }
+
+    private PayoutBatch requireBatchForUpdate(Long id) {
+        return batches.findByIdForUpdate(id).orElseThrow(
+                () -> new ResourceNotFoundException("No such payout run."));
+    }
+
+    private Vendor requireVendorForPayout(Long id) {
+        return vendors.findByIdForPayout(id).orElseThrow(
+                () -> new ResourceNotFoundException("No such vendor."));
     }
 
     private BigDecimal payoutFloor() {

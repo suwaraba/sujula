@@ -6,9 +6,12 @@ import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+
+import jakarta.persistence.LockModeType;
 
 import com.sujula.model.constant.PayoutStatus;
 import com.sujula.model.user.Payout;
@@ -34,6 +37,10 @@ public interface PayoutRepository extends JpaRepository<Payout, Long> {
 
     @Query("SELECT p FROM Payout p WHERE p.id = :id AND p.vendor.id = :vendorId")
     Optional<Payout> findByIdAndVendorId(@Param("id") Long id, @Param("vendorId") Long vendorId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Payout p WHERE p.id = :id")
+    Optional<Payout> findByIdForUpdate(@Param("id") Long id);
 
     /**
      * Transfers in this currency that have not settled.
@@ -76,6 +83,14 @@ public interface PayoutRepository extends JpaRepository<Payout, Long> {
      * between the two readings is a list nobody can check.
      */
     java.util.List<Payout> findByBatchIdOrderByIdAsc(Long batchId);
+
+    @Query("SELECT DISTINCT p.vendor.id FROM Payout p "
+         + "WHERE p.batch.id = :batchId AND p.vendor IS NOT NULL ORDER BY p.vendor.id")
+    List<Long> findVendorIdsByBatchId(@Param("batchId") Long batchId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Payout p WHERE p.batch.id = :batchId ORDER BY p.id ASC")
+    List<Payout> findByBatchIdForUpdateOrderByIdAsc(@Param("batchId") Long batchId);
 
     long countByBatchIdAndStatus(Long batchId, com.sujula.model.constant.PayoutStatus status);
 

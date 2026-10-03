@@ -6,9 +6,12 @@ import com.sujula.model.user.Vendor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+
+import jakarta.persistence.LockModeType;
 
 import java.util.Optional;
 
@@ -52,6 +55,16 @@ public interface VendorRepository extends JpaRepository<Vendor, Long> {
                              @org.springframework.data.repository.query.Param("payoutsHeld") Boolean payoutsHeld,
                              Pageable pageable);
     long countByStatus(PartnerStatus status);
+
+    /** Canonical serialization root for every operation that commits vendor money. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT v FROM Vendor v WHERE v.id = :id")
+    Optional<Vendor> findByIdForPayout(@Param("id") Long id);
+
+    /** Ownership lookup and payout serialization in one database lock. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT v FROM Vendor v WHERE v.user.id = :userId")
+    Optional<Vendor> findByUserIdForPayout(@Param("userId") Long userId);
 
     /**
      * One store, but only if this user owns it.

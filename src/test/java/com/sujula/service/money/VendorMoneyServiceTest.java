@@ -196,6 +196,62 @@ class VendorMoneyServiceTest {
     }
 
     @Test
+    void aVendorHoldBlocksSelfServiceUntilRemovedThenUsesTheCurrentBalance() {
+        sold("SJL-M-HOLD", "GMD", "100.00", "0.00");
+        vendor.setPayoutsHeldAt(LocalDateTime.now());
+        vendor.setPayoutsHeldReason("Identity review");
+        vendors.save(vendor);
+        entityManager.flush();
+
+        BadRequestException held = assertThrows(BadRequestException.class,
+                () -> money.requestPayout(sellerUser.getId(),
+                        new MoneyRequests.RequestPayout("GMD", null)));
+        assertTrue(held.getMessage().contains("on hold"), held.getMessage());
+        assertEquals(0, payouts.count(), "a hold must prevent a new commitment row");
+
+        vendor.setPayoutsHeldAt(null);
+        vendor.setPayoutsHeldReason(null);
+        vendors.save(vendor);
+        entityManager.flush();
+
+        MoneyResponses.PayoutRequested requested = money.requestPayout(
+                sellerUser.getId(), new MoneyRequests.RequestPayout("GMD", null));
+        assertEquals(0, requested.amount().compareTo(new BigDecimal("100.00")));
+    }
+
+    @Test
+    void anActiveDisputeHoldBlocksSelfServicePayout() {
+        VendorOrder disputed = sold("SJL-M-DISPUTE-HOLD", "GMD", "100.00", "0.00");
+        ledger.holdForDispute(disputed, "DSP-SELF-HOLD", "claim is open");
+        entityManager.flush();
+
+        BadRequestException held = assertThrows(BadRequestException.class,
+                () -> money.requestPayout(sellerUser.getId(),
+                        new MoneyRequests.RequestPayout("GMD", null)));
+        assertTrue(held.getMessage().contains("dispute"), held.getMessage());
+        assertEquals(0, payouts.count());
+    }
+
+    @Test
+    void payoutCommitmentInOneCurrencyDoesNotConsumeAnotherCurrency() {
+        sold("SJL-M-CURRENCY-GMD", "GMD", "100.00", "0.00");
+        sold("SJL-M-CURRENCY-XOF", "XOF", "1000", "0");
+
+        money.requestPayout(sellerUser.getId(), new MoneyRequests.RequestPayout("GMD", null));
+        entityManager.flush();
+
+        MoneyResponses.Balance balance = money.balance(sellerUser.getId());
+        MoneyResponses.CurrencyBalance gmd = balance.byCurrency().stream()
+                .filter(row -> row.currency().equals("GMD")).findFirst().orElseThrow();
+        MoneyResponses.CurrencyBalance xof = balance.byCurrency().stream()
+                .filter(row -> row.currency().equals("XOF")).findFirst().orElseThrow();
+        assertEquals(0, gmd.available().signum());
+        assertEquals(0, xof.available().compareTo(new BigDecimal("1000")));
+        assertEquals("GMD", payouts.findForVendor(
+                vendor.getId(), null, PageRequest.of(0, 10)).getContent().get(0).getCurrency());
+    }
+
+    @Test
     void moneyStillInEscrowCannotBeRequestedAndTheRefusalSaysSo() {
         Order order = new Order();
         order.setOrderNumber("SJL-M-8");

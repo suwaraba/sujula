@@ -39,6 +39,7 @@ import com.sujula.service.reference.ReferenceDataProperties;
 import jakarta.persistence.EntityManager;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -392,7 +393,7 @@ class MoneyLedgerTest {
 
         // Otherwise a second request claims the same money while the first is
         // still being decided.
-        assertEquals(0, balance.available().compareTo(BigDecimal.ZERO));
+        assertEquals(0, balance.available().compareTo(BigDecimal.ZERO), balance::toString);
         assertEquals(0, balance.inFlight().compareTo(new BigDecimal("8730.00")));
     }
 
@@ -410,6 +411,7 @@ class MoneyLedgerTest {
         attempt.setStatus(PayoutStatus.FAILED);
         payouts.save(attempt);
         ledger.reversePayout(attempt, "Bank rejected the account number");
+        ledger.reversePayout(attempt, "Failure callback replayed");
         entityManager.flush();
 
         // The money is back ...
@@ -419,6 +421,93 @@ class MoneyLedgerTest {
         // seller can explain the gap in their statement.
         List<com.sujula.model.money.VendorLedgerEntry> all = entries.findByPayoutId(attempt.getId());
         assertEquals(2, all.size());
+        assertEquals(1, all.stream()
+                .filter(entry -> entry.getType() == LedgerEntryType.PAYOUT_REVERSAL).count(),
+                "replaying failure handling must not restore the balance twice");
+    }
+
+    @Test
+    void completingAPayoutDoesNotCommitTheMoneyTwice() {
+        ledger.postAdjustment(banjul, new BigDecimal("100.00"), "GMD", "Opening balance", seller);
+        Payout payout = payouts.save(Payout.builder()
+                .user(seller).vendor(banjul).amount(new BigDecimal("60.00"))
+                .currency("GMD").status(PayoutStatus.PENDING).reference("PAY-SUCCESS").build());
+        ledger.postPayout(banjul, payout);
+        entityManager.flush();
+
+        payout.setStatus(PayoutStatus.COMPLETED);
+        payouts.save(payout);
+        // A replay at the completion boundary is harmless as well: the stable
+        // payout id already owns this commitment.
+        ledger.postPayout(banjul, payout);
+        entityManager.flush();
+
+        List<com.sujula.model.money.VendorLedgerEntry> rows = entries.findByPayoutId(payout.getId());
+        assertEquals(1, rows.stream()
+                .filter(entry -> entry.getType() == LedgerEntryType.PAYOUT).count());
+        assertEquals(0, ledger.balance(banjul.getId(), "GMD").available()
+                .compareTo(new BigDecimal("40.00")));
+    }
+
+    @Test
+    void twoDisputeCyclesNetOnlyTheirOwnReferenceAndResolutionReplayIsANoOp() {
+        VendorOrder sale = slice("SJL-L-DISPUTE-CYCLES", "GMD", "100.00", "0.00");
+        ledger.postSale(sale);
+        ledger.releaseEscrow(sale, LocalDateTime.now());
+        entityManager.flush();
+
+        ledger.holdForDispute(sale, "DSP-CYCLE-1", "first claim");
+        ledger.releaseDisputeHold(sale, "DSP-CYCLE-1", "first claim closed");
+        ledger.holdForDispute(sale, "DSP-CYCLE-2", "second claim");
+        ledger.releaseDisputeHold(sale, "DSP-CYCLE-2", "second claim closed");
+        assertNull(ledger.releaseDisputeHold(sale, "DSP-CYCLE-2", "resolution replay"));
+        entityManager.flush();
+
+        List<com.sujula.model.money.VendorLedgerEntry> rows =
+                entries.findByVendorOrderIdOrderByOccurredAtAsc(sale.getId());
+        BigDecimal holds = rows.stream()
+                .filter(entry -> entry.getType() == LedgerEntryType.DISPUTE_HOLD)
+                .map(com.sujula.model.money.VendorLedgerEntry::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal releases = rows.stream()
+                .filter(entry -> entry.getType() == LedgerEntryType.DISPUTE_HOLD_RELEASE)
+                .map(com.sujula.model.money.VendorLedgerEntry::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        assertEquals(0, holds.negate().compareTo(releases));
+        assertEquals(2, rows.stream()
+                .filter(entry -> entry.getType() == LedgerEntryType.DISPUTE_HOLD_RELEASE).count());
+        assertEquals(0, ledger.balance(banjul.getId(), "GMD").available()
+                .compareTo(new BigDecimal("100.00")));
+    }
+
+    @Test
+    void oneVendorsPayoutAndDisputeHoldDoNotMutateAnotherVendor() {
+        User otherUser = users.save(User.builder()
+                .email("other-ledger@sujula.gm").password("x").firstName("Other")
+                .lastName("Seller").role(UserRole.VENDOR).build());
+        Vendor other = vendors.save(Vendor.builder()
+                .user(otherUser).storeName("Other Store").storeSlug("other-ledger-store")
+                .status(PartnerStatus.APPROVED).settlementCurrency("GMD").build());
+        ledger.postAdjustment(other, new BigDecimal("75.00"), "GMD",
+                "Other vendor opening balance", seller);
+
+        VendorOrder disputed = slice("SJL-L-VENDOR-ISOLATION", "GMD", "100.00", "0.00");
+        ledger.postSale(disputed);
+        ledger.releaseEscrow(disputed, LocalDateTime.now());
+        ledger.holdForDispute(disputed, "DSP-VENDOR-A", "Vendor A dispute");
+        Payout payout = payouts.save(Payout.builder()
+                .user(seller).vendor(banjul).amount(new BigDecimal("10.00"))
+                .currency("GMD").status(PayoutStatus.REQUESTED).reference("PAY-VENDOR-A").build());
+        ledger.postPayout(banjul, payout);
+        entityManager.flush();
+
+        assertEquals(0, ledger.balance(other.getId(), "GMD").available()
+                .compareTo(new BigDecimal("75.00")));
+        assertTrue(payouts.findForVendor(other.getId(), null,
+                org.springframework.data.domain.PageRequest.of(0, 10)).isEmpty());
+        assertFalse(ledger.hasOutstandingDisputeHold(other.getId(), "GMD"));
+        assertFalse(other.arePayoutsHeld());
     }
 
     // ── Adjustments ──────────────────────────────────────────────────────────

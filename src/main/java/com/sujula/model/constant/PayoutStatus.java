@@ -10,7 +10,7 @@ package com.sujula.model.constant;
  */
 public enum PayoutStatus {
 
-    /** A seller has asked. Nothing has moved and nothing is committed. */
+    /** A seller has asked, and the ledger commitment has reserved the money. */
     REQUESTED,
 
     /**

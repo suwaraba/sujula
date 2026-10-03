@@ -344,7 +344,51 @@ class AdminMoneyServiceTest {
                         "admin-password", "123456"));
 
         assertEquals(PayoutBatchStatus.APPROVED, released.status());
+        Payout payout = payouts.findByBatchIdOrderByIdAsc(prepared.batchId()).get(0);
+        assertEquals(1, ledger.findByPayoutId(payout.getId()).stream()
+                .filter(entry -> entry.getType() == LedgerEntryType.PAYOUT).count(),
+                "approval executes the preparation reservation; it does not post another one");
         verify(stepUp).verify(eq(second), eq("admin-password"), eq("123456"), anyString());
+    }
+
+    @Test
+    void aVendorHoldAddedAfterPreparationBlocksApproval() {
+        releaseEscrow();
+        AdminMoneyResponses.BatchSaved prepared = money.prepareBatch(operator,
+                new AdminMoneyRequests.PrepareBatch("GMD", BigDecimal.ONE, null, null,
+                        "admin-password", "123456"));
+        kombo.setPayoutsHeldAt(LocalDateTime.now());
+        kombo.setPayoutsHeldReason("Review opened after preparation");
+        vendors.save(kombo);
+        entityManager.flush();
+
+        BadRequestException refused = assertThrows(BadRequestException.class,
+                () -> money.approveBatch(second, prepared.batchId(),
+                        new AdminMoneyRequests.ApproveBatch(null,
+                                "admin-password", "123456")));
+        assertTrue(refused.getMessage().contains("payout hold"), refused.getMessage());
+        assertEquals(PayoutStatus.REQUESTED,
+                payouts.findByBatchIdOrderByIdAsc(prepared.batchId()).get(0).getStatus());
+        verify(notifications, never()).send(any(), anyString(), anyString(), any(), anyString());
+    }
+
+    @Test
+    void aDisputeHoldAddedAfterPreparationBlocksApproval() {
+        releaseEscrow();
+        AdminMoneyResponses.BatchSaved prepared = money.prepareBatch(operator,
+                new AdminMoneyRequests.PrepareBatch("GMD", BigDecimal.ONE, null, null,
+                        "admin-password", "123456"));
+        moneyLedger.holdForDispute(slice, "DSP-BATCH-HOLD", "claim opened after preparation");
+        entityManager.flush();
+
+        BadRequestException refused = assertThrows(BadRequestException.class,
+                () -> money.approveBatch(second, prepared.batchId(),
+                        new AdminMoneyRequests.ApproveBatch(null,
+                                "admin-password", "123456")));
+        assertTrue(refused.getMessage().contains("dispute"), refused.getMessage());
+        assertEquals(PayoutStatus.REQUESTED,
+                payouts.findByBatchIdOrderByIdAsc(prepared.batchId()).get(0).getStatus());
+        verify(notifications, never()).send(any(), anyString(), anyString(), any(), anyString());
     }
 
     @Test
@@ -379,6 +423,22 @@ class AdminMoneyServiceTest {
     }
 
     @Test
+    void anActiveDisputeHoldCannotEnterANewBatch() {
+        releaseEscrow();
+        moneyLedger.holdForDispute(slice, "DSP-PREP-HOLD", "claim is open");
+        entityManager.flush();
+
+        AdminMoneyResponses.BatchSaved prepared = money.prepareBatch(operator,
+                new AdminMoneyRequests.PrepareBatch("GMD", BigDecimal.ONE, null, null,
+                        "admin-password", "123456"));
+        entityManager.flush();
+
+        assertEquals(0, prepared.itemCount());
+        assertTrue(payouts.findByBatchIdOrderByIdAsc(prepared.batchId()).isEmpty());
+        assertEquals(PayoutBatchStatus.CANCELLED, prepared.status());
+    }
+
+    @Test
     void aBalanceBelowTheFloorRollsIntoTheNextRunRatherThanCostingAFee() {
         releaseEscrow();
         AdminMoneyResponses.BatchSaved prepared = money.prepareBatch(operator,
@@ -406,6 +466,37 @@ class AdminMoneyServiceTest {
     }
 
     @Test
+    void preparationUsesLedgerAvailabilityWithoutSubtractingOpenPayoutsTwice() {
+        releaseEscrow();
+        moneyLedger.postAdjustment(kombo, new BigDecimal("-8630.00"), "GMD",
+                "Reduce fixture to exactly 100", operator);
+        Payout first = payouts.save(Payout.builder()
+                .user(kombo.getUser()).vendor(kombo).amount(new BigDecimal("60.00"))
+                .currency("GMD").status(PayoutStatus.REQUESTED).reference("PAY-FIRST-60").build());
+        moneyLedger.postPayout(kombo, first);
+        entityManager.flush();
+
+        assertEquals(0, moneyLedger.balance(kombo.getId(), "GMD").available()
+                .compareTo(new BigDecimal("40.00")));
+        AdminMoneyResponses.BatchSaved prepared = money.prepareBatch(operator,
+                new AdminMoneyRequests.PrepareBatch("GMD", BigDecimal.ONE, null, null,
+                        "admin-password", "123456"));
+        entityManager.flush();
+
+        Payout secondPayout = payouts.findByBatchIdOrderByIdAsc(prepared.batchId()).get(0);
+        assertEquals(0, secondPayout.getAmount().compareTo(new BigDecimal("40.00")));
+        assertEquals(0, moneyLedger.balance(kombo.getId(), "GMD").available().signum());
+        BigDecimal committed = ledger.findByPayoutId(first.getId()).stream()
+                .filter(entry -> entry.getType() == LedgerEntryType.PAYOUT)
+                .map(entry -> entry.getAmount().abs()).reduce(BigDecimal.ZERO, BigDecimal::add)
+                .add(ledger.findByPayoutId(secondPayout.getId()).stream()
+                        .filter(entry -> entry.getType() == LedgerEntryType.PAYOUT)
+                        .map(entry -> entry.getAmount().abs())
+                        .reduce(BigDecimal.ZERO, BigDecimal::add));
+        assertEquals(0, committed.compareTo(new BigDecimal("100.00")));
+    }
+
+    @Test
     void cancellingAnUnreleasedRunMovesNobodysBalance() {
         releaseEscrow();
         BigDecimal before = money.listBalances(kombo.getId(), "GMD", false, PageRequest.of(0, 10))
@@ -420,9 +511,11 @@ class AdminMoneyServiceTest {
 
         BigDecimal after = money.listBalances(kombo.getId(), "GMD", false, PageRequest.of(0, 10))
                 .getContent().get(0).available();
-        // No ledger entry was written at assembly, so the seller is still owed
-        // exactly what they were.
+        // Preparation reserved it and cancellation restored that reservation.
         assertEquals(before, after);
+        Payout payout = payouts.findByBatchIdOrderByIdAsc(prepared.batchId()).get(0);
+        assertEquals(1, ledger.findByPayoutId(payout.getId()).stream()
+                .filter(entry -> entry.getType() == LedgerEntryType.PAYOUT_REVERSAL).count());
     }
 
     @Test

@@ -176,11 +176,24 @@ public class VendorMoneyServiceImpl implements VendorMoneyService {
     @PreAuthorize("hasRole('ADMIN') or (hasRole('VENDOR') and #vendorUserId == authentication.principal.id)")
     public MoneyResponses.PayoutRequested requestPayout(Long vendorUserId,
                                                         MoneyRequests.RequestPayout request) {
-        Vendor vendor = requireVendor(vendorUserId);
+        // Vendor is the canonical serialization root for all payout commitments.
+        // The balance read and PAYOUT posting remain inside this same transaction.
+        Vendor vendor = vendors.findByUserIdForPayout(vendorUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Vendor for user", vendorUserId));
+        if (vendor.arePayoutsHeld()) {
+            throw new BadRequestException("Payouts for this store are on hold"
+                    + (vendor.getPayoutsHeldReason() == null ? "."
+                            : ": " + vendor.getPayoutsHeldReason()));
+        }
         String currency = request != null && request.normalisedCurrency() != null
                 ? request.normalisedCurrency()
                 : vendor.getSettlementCurrency();
-        currencies.require(currency);
+        currency = currencies.require(currency);
+
+        if (ledger.hasOutstandingDisputeHold(vendor.getId(), currency)) {
+            throw new BadRequestException("A dispute is holding this " + currency
+                    + " balance. Resolve the dispute before requesting a payout.");
+        }
 
         MoneyLedger.Balance balance = ledger.balance(vendor.getId(), currency);
         BigDecimal available = balance.available();

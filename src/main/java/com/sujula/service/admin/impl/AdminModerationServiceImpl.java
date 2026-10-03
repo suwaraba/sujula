@@ -175,7 +175,11 @@ public class AdminModerationServiceImpl implements AdminModerationService {
     @Transactional
     public AdminModerationResponses.StoreDecision suspendStore(
             User staff, Long vendorId, AdminModerationRequests.SuspendStore request) {
-        Vendor vendor = requireVendor(vendorId);
+        // A payout hold participates in the same serialization boundary as
+        // payout commitment. Once this lock returns, a concurrent payout has
+        // either committed before the hold or must observe the hold afterwards.
+        Vendor vendor = vendors.findByIdForPayout(vendorId)
+                .orElseThrow(() -> new ResourceNotFoundException("Store", vendorId));
         boolean holdMoney = request.holdPayouts() == null || request.holdPayouts();
         LocalDateTime now = LocalDateTime.now();
 
